@@ -95,3 +95,28 @@ flowchart LR
   - 通知のグルーピング仕様
   - API 呼び出し順序とエラーリカバリ
   - 再実行時の運用詳細
+
+## Phase 1 実行手順
+- 依存関係をインストールする:
+  - `npm install`
+- Cloudflare Secret を設定する:
+  - `wrangler secret put SLACK_BOT_TOKEN`
+  - `wrangler secret put SLACK_SIGNING_SECRET`
+- 変数を設定する:
+  - `wrangler.jsonc` の `vars.SLACK_ABSENCE_LIST_ID` を setup 後の list id に設定
+  - 必要なら `vars.SLACK_LIST_ACCESS_USER_IDS` に共有先ユーザー ID をカンマ区切りで設定
+- ローカル起動:
+  - `npm run dev`
+- setup 手動実行:
+  - `curl http://localhost:8787/setup`
+  - レスポンスの `accessGranted` が `true` なら user 共有まで完了
+- daily 手動実行:
+  - `curl http://localhost:8787/run-daily`
+  - 週末でも強制実行する場合: `curl "http://localhost:8787/run-daily?force=true"`
+- scheduled テスト:
+  - `curl http://localhost:8787/__scheduled`
+
+## ログと再実行方針
+- ログは JSON 形式で出力し、`processed/sent/skipped/errors` を確認する。
+- skip 理由（例: `missing_notify_channels`, `invalid_date_range`）を記録する。
+- 同日再実行は再投稿を許可する（重複抑止なし）。
