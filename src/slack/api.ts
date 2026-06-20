@@ -12,6 +12,9 @@ type SlackListItem = {
 
 type SlackListItemsListResponse = {
   items?: SlackListItem[];
+  response_metadata?: {
+    next_cursor?: string;
+  };
 };
 
 const apiCall = async <T>(
@@ -73,22 +76,24 @@ export const slackApi = {
 
   reconcileAbsenceListFields: async (config: AppConfig, listId: string) =>
     apiCall<Record<string, unknown>>(config, "slackLists.update", {
-      list_id: listId,
-      add_fields: [
-        { name: "target_user", type: "person", required: true },
-        { name: "start_date", type: "date", required: true },
-        { name: "end_date", type: "date", required: false },
-        { name: "type", type: "single_select", required: false, default: "absence" },
-        { name: "notify_channels", type: "channel", required: true, multi: true },
-        { name: "notify_users", type: "person", required: false, multi: true },
-        { name: "note", type: "text", required: false }
-      ]
+      id: listId,
+      name: "absence_list"
     }),
 
-  listAbsences: async (config: AppConfig, listId: string) =>
-    apiCall<SlackListItemsListResponse>(config, "slackLists.items.list", {
-      list_id: listId
-    }),
+  listAbsences: async (config: AppConfig, listId: string) => {
+    const items: SlackListItem[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await apiCall<SlackListItemsListResponse>(config, "slackLists.items.list", {
+        list_id: listId,
+        limit: 200,
+        cursor
+      });
+      items.push(...(page.items ?? []));
+      cursor = page.response_metadata?.next_cursor || undefined;
+    } while (cursor);
+    return { items };
+  },
 
   postChannelMessage: async (config: AppConfig, channel: string, text: string) =>
     apiCall<Record<string, unknown>>(config, "chat.postMessage", {
@@ -101,13 +106,6 @@ export const slackApi = {
       list_id: listId,
       access_level: "write",
       user_ids: userIds
-    }),
-
-  setListAccessForChannels: async (config: AppConfig, listId: string, channelIds: string[]) =>
-    apiCall<Record<string, unknown>>(config, "slackLists.access.set", {
-      list_id: listId,
-      access_level: "write",
-      channel_ids: channelIds
     })
 };
 

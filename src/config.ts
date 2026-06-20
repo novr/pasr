@@ -4,7 +4,6 @@ export type Env = {
   SLACK_ABSENCE_LIST_ID: string;
   TZ: string;
   SLACK_LIST_ACCESS_USER_IDS?: string;
-  SLACK_LIST_ACCESS_CHANNEL_IDS?: string;
 };
 
 export type AppConfig = {
@@ -13,7 +12,6 @@ export type AppConfig = {
   absenceListId: string;
   timezone: string;
   listAccessUserIds: string[];
-  listAccessChannelIds: string[];
 };
 
 export const getConfig = (env: Env): AppConfig => {
@@ -30,10 +28,6 @@ export const getConfig = (env: Env): AppConfig => {
     absenceListId: env.SLACK_ABSENCE_LIST_ID ?? "",
     timezone: env.TZ || "Asia/Tokyo",
     listAccessUserIds: (env.SLACK_LIST_ACCESS_USER_IDS ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0),
-    listAccessChannelIds: (env.SLACK_LIST_ACCESS_CHANNEL_IDS ?? "")
       .split(",")
       .map((value) => value.trim())
       .filter((value) => value.length > 0)
