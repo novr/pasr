@@ -1,5 +1,7 @@
 import { getConfig, type Env } from "./config";
 import { runDailyNotify } from "./jobs/daily-notify";
+import { verifySlackSignature } from "./slack/signature";
+import { SLACK_EVENT_DEDUPE_TTL_SEC, isDuplicateSlackEvent } from "./state/event-dedupe";
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {
@@ -25,8 +27,58 @@ const hasValidRunToken = (request: Request, expectedToken: string): boolean => {
   return scheme === "Bearer" && token === expectedToken;
 };
 
+type SlackEventEnvelope = {
+  type: string;
+  challenge?: string;
+  event_id?: string;
+  team_id?: string;
+  event?: {
+    type?: string;
+  };
+};
+
+const parseSlackEnvelope = (rawBody: string): SlackEventEnvelope | undefined => {
+  try {
+    return JSON.parse(rawBody) as SlackEventEnvelope;
+  } catch {
+    return undefined;
+  }
+};
+
+const handleSlackEventCallback = async (
+  config: ReturnType<typeof getConfig>,
+  envelope: SlackEventEnvelope
+): Promise<void> => {
+  const eventId = envelope.event_id ?? "";
+  if (eventId) {
+    const duplicate = await isDuplicateSlackEvent(config, eventId);
+    if (duplicate) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "duplicate_event_dropped",
+          event_id: eventId,
+          team_id: envelope.team_id ?? "",
+          dedupe_ttl_sec: SLACK_EVENT_DEDUPE_TTL_SEC
+        })
+      );
+      return;
+    }
+  }
+
+  console.log(
+    JSON.stringify({
+      level: "info",
+      event: "slack_event_callback_received",
+      event_id: envelope.event_id ?? "",
+      team_id: envelope.team_id ?? "",
+      slack_event_type: envelope.event?.type ?? ""
+    })
+  );
+};
+
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const config = getConfig(env);
     const url = new URL(request.url);
     const { pathname } = url;
@@ -50,7 +102,34 @@ export default {
       const result = await runDailyNotify(config, { runId, trigger: "manual" });
       return json({ ok: true, ...result });
     }
-    if (pathname === "/run" || pathname === "/health") {
+
+    if (pathname === "/slack/events" && request.method === "POST") {
+      const rawBody = await request.text();
+      const signatureOk = await verifySlackSignature({
+        signingSecret: config.slackSigningSecret,
+        rawBody,
+        timestampHeader: request.headers.get("x-slack-request-timestamp"),
+        signatureHeader: request.headers.get("x-slack-signature")
+      });
+      if (!signatureOk) {
+        return json({ ok: false, error: "Unauthorized" }, 401);
+      }
+
+      const envelope = parseSlackEnvelope(rawBody);
+      if (!envelope?.type) {
+        return json({ ok: false, error: "Bad Request" }, 400);
+      }
+      if (envelope.type === "url_verification" && envelope.challenge) {
+        return json({ challenge: envelope.challenge });
+      }
+      if (envelope.type === "event_callback") {
+        ctx.waitUntil(handleSlackEventCallback(config, envelope));
+        return json({ ok: true });
+      }
+      return json({ ok: true });
+    }
+
+    if (pathname === "/run" || pathname === "/health" || pathname === "/slack/events") {
       return json({ ok: false, error: "Method Not Allowed" }, 405);
     }
     return json({ ok: false, error: "Not Found" }, 404);

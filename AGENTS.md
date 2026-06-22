@@ -20,6 +20,13 @@
 - `scheduled` の週末スキップを回避するための強制フラグを導入しない。
 - 本番障害時は「原因修正 -> `/run` 再実行 -> run summary確認」の順序を維持する。
 
+## Phase 2.1 Slack Events Rules
+- Slack 起点 endpoint は `POST /slack/events` を入口とし、署名検証必須で受け付ける。
+- 署名検証は `request.text()` の生ボディを使用し、JSON 再構成文字列で検証しない。
+- `event_callback` は 200 ACK を先に返し、重い処理は必ず非同期へ委譲する。
+- `event_id` の短期 TTL 重複抑止を必須とし、重複イベントは捨てる。
+- 重複抑止時は `duplicate_event_dropped` を構造化ログで記録する。
+
 ## Configuration
 - 組織ごとに Slack App / Cloudflare 環境を分離する。
 - Secrets は Cloudflare 側で管理し、リポジトリへ保存しない。
