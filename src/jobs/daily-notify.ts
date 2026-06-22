@@ -3,6 +3,7 @@ import { filterToday, groupByChannel, parseAbsence, type AbsenceRecord, type Ski
 import { runSetup } from "./setup";
 import { slackApi } from "../slack/api";
 import {
+  writeLastRunSummary,
   readPersistedListId,
   readPostedMessageTs,
   writePersistedListId,
@@ -237,5 +238,26 @@ export const runDailyNotify = async (
       skipReasons: result.skipReasons
     })
   );
+  try {
+    await writeLastRunSummary(config, {
+      runId: result.runId,
+      trigger: result.trigger,
+      listId: result.listId,
+      processed: result.processed,
+      sent: result.sent,
+      skipped: result.skipped,
+      errors: result.errors,
+      executedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "write_last_run_summary_failed",
+        run_id: result.runId,
+        message: error instanceof Error ? error.message : String(error)
+      })
+    );
+  }
   return result;
 };

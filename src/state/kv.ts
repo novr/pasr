@@ -1,6 +1,7 @@
 import type { AppConfig } from "../config";
 
 const LIST_ID_KEY = "absence:config:list_id";
+const LAST_RUN_SUMMARY_KEY = "absence:run:last_summary";
 
 const postTsKey = (jstDate: string, channelId: string): string =>
   `absence:post:${jstDate}:${channelId}`;
@@ -32,4 +33,29 @@ export const writePostedMessageTs = async (
 ): Promise<void> => {
   if (!ts) return;
   await config.stateKv.put(postTsKey(jstDate, channelId), ts);
+};
+
+export type LastRunSummary = {
+  runId: string;
+  trigger: "manual" | "scheduled";
+  listId: string;
+  processed: number;
+  sent: number;
+  skipped: number;
+  errors: number;
+  executedAt: string;
+};
+
+export const readLastRunSummary = async (config: AppConfig): Promise<LastRunSummary | undefined> => {
+  const value = await config.stateKv.get(LAST_RUN_SUMMARY_KEY);
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value) as LastRunSummary;
+  } catch {
+    return undefined;
+  }
+};
+
+export const writeLastRunSummary = async (config: AppConfig, summary: LastRunSummary): Promise<void> => {
+  await config.stateKv.put(LAST_RUN_SUMMARY_KEY, JSON.stringify(summary));
 };

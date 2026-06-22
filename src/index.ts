@@ -3,6 +3,7 @@ import { runDailyNotify } from "./jobs/daily-notify";
 import {
   COMMAND_ACK_ACCEPTED,
   COMMAND_ACK_UNAUTHORIZED,
+  getSlashCommandImmediateText,
   isSlackAdminUser,
   parseSlackCommandPayload,
   runSlackCommandAsync
@@ -170,6 +171,10 @@ export default {
           })
         );
         return text(COMMAND_ACK_UNAUTHORIZED);
+      }
+      const immediateText = await getSlashCommandImmediateText(config, payload);
+      if (immediateText) {
+        return text(immediateText);
       }
 
       ctx.waitUntil(runSlackCommandAsync(config, payload));
