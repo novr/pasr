@@ -2,3 +2,5 @@ node_modules/
 .wrangler/
 .dev.vars
 .cursor/
+wrangler.jsonc
+!wrangler.jsonc.template

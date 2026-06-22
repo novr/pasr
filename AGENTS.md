@@ -27,12 +27,20 @@
 - `event_id` の短期 TTL 重複抑止を必須とし、重複イベントは捨てる。
 - 重複抑止時は `duplicate_event_dropped` を構造化ログで記録する。
 
+## Phase 2.2 Slash Command Rules
+- Slash Command 入口は `POST /slack/command` とし、署名検証必須で受け付ける。
+- 実行権限は `SLACK_ADMIN_USER_IDS` で判定し、allowlist 非該当は no-op とする。
+- Slash Command ACK 本文は固定する（許可: `Accepted` / 非許可: `Received. Processing...`）。
+- コマンド処理は ACK 後に非同期実行し、同期処理で重い処理を行わない。
+- `trigger_id` の TTL=300秒重複抑止を必須とし、重複コマンドは捨てる。
+
 ## Configuration
 - 組織ごとに Slack App / Cloudflare 環境を分離する。
 - Secrets は Cloudflare 側で管理し、リポジトリへ保存しない。
   - 例: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`
 - vars:
   - `TZ=Asia/Tokyo`
+  - `SLACK_ADMIN_USER_IDS`
 
 ## Architecture Boundary
 - Slack は入力/UI境界、Cloudflare Workers は実行/通知境界として扱う。

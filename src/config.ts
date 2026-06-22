@@ -5,7 +5,7 @@ export type Env = {
   SLACK_ABSENCE_LIST_ID: string;
   RUN_ENDPOINT_TOKEN?: string;
   TZ: string;
-  SLACK_LIST_ACCESS_USER_IDS?: string;
+  SLACK_ADMIN_USER_IDS?: string;
 };
 
 export type AppConfig = {
@@ -15,7 +15,7 @@ export type AppConfig = {
   slackSigningSecret: string;
   absenceListId: string;
   timezone: string;
-  listAccessUserIds: string[];
+  adminUserIds: string[];
 };
 
 export const getConfig = (env: Env): AppConfig => {
@@ -36,7 +36,7 @@ export const getConfig = (env: Env): AppConfig => {
     slackSigningSecret: env.SLACK_SIGNING_SECRET,
     absenceListId: env.SLACK_ABSENCE_LIST_ID ?? "",
     timezone: env.TZ || "Asia/Tokyo",
-    listAccessUserIds: (env.SLACK_LIST_ACCESS_USER_IDS ?? "")
+    adminUserIds: (env.SLACK_ADMIN_USER_IDS ?? "")
       .split(",")
       .map((value) => value.trim())
       .filter((value) => value.length > 0)

@@ -1,5 +1,12 @@
 import { getConfig, type Env } from "./config";
 import { runDailyNotify } from "./jobs/daily-notify";
+import {
+  COMMAND_ACK_ACCEPTED,
+  COMMAND_ACK_UNAUTHORIZED,
+  isSlackAdminUser,
+  parseSlackCommandPayload,
+  runSlackCommandAsync
+} from "./slack/command";
 import { verifySlackSignature } from "./slack/signature";
 import { SLACK_EVENT_DEDUPE_TTL_SEC, isDuplicateSlackEvent } from "./state/event-dedupe";
 
@@ -7,6 +14,12 @@ const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json; charset=utf-8" }
+  });
+
+const text = (body: string, status = 200): Response =>
+  new Response(body, {
+    status,
+    headers: { "content-type": "text/plain; charset=utf-8" }
   });
 
 const isWeekdayInJst = (): boolean => {
@@ -129,7 +142,41 @@ export default {
       return json({ ok: true });
     }
 
-    if (pathname === "/run" || pathname === "/health" || pathname === "/slack/events") {
+    if (pathname === "/slack/command" && request.method === "POST") {
+      const rawBody = await request.text();
+      const signatureOk = await verifySlackSignature({
+        signingSecret: config.slackSigningSecret,
+        rawBody,
+        timestampHeader: request.headers.get("x-slack-request-timestamp"),
+        signatureHeader: request.headers.get("x-slack-signature")
+      });
+      if (!signatureOk) {
+        return json({ ok: false, error: "Unauthorized" }, 401);
+      }
+
+      const payload = parseSlackCommandPayload(rawBody);
+      if (!payload) {
+        return json({ ok: false, error: "Bad Request" }, 400);
+      }
+      if (!isSlackAdminUser(config, payload.userId)) {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "slash_command_unauthorized_user",
+            command: payload.command,
+            trigger_id: payload.triggerId,
+            user_id: payload.userId,
+            team_id: payload.teamId
+          })
+        );
+        return text(COMMAND_ACK_UNAUTHORIZED);
+      }
+
+      ctx.waitUntil(runSlackCommandAsync(config, payload));
+      return text(COMMAND_ACK_ACCEPTED);
+    }
+
+    if (pathname === "/run" || pathname === "/health" || pathname === "/slack/events" || pathname === "/slack/command") {
       return json({ ok: false, error: "Method Not Allowed" }, 405);
     }
     return json({ ok: false, error: "Not Found" }, 404);

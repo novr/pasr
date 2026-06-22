@@ -17,6 +17,20 @@ type SlackListItemsListResponse = {
   };
 };
 
+type SlackList = {
+  id?: string;
+  name?: string;
+};
+
+type SlackListsListResponse = {
+  lists?: SlackList[];
+  response_metadata?: {
+    next_cursor?: string;
+  };
+};
+
+const ABSENCE_LIST_NAME = "absence_list";
+
 const apiCall = async <T>(
   config: AppConfig,
   method: string,
@@ -43,7 +57,7 @@ const apiCall = async <T>(
 export const slackApi = {
   createAbsenceList: async (config: AppConfig) =>
     apiCall<{ list_id?: string; list?: { id?: string } }>(config, "slackLists.create", {
-      name: "absence_list",
+      name: ABSENCE_LIST_NAME,
       schema: [
         { key: "absence_title", name: "Absence", type: "text", is_primary_column: true },
         {
@@ -77,8 +91,22 @@ export const slackApi = {
   reconcileAbsenceListFields: async (config: AppConfig, listId: string) =>
     apiCall<Record<string, unknown>>(config, "slackLists.update", {
       id: listId,
-      name: "absence_list"
+      name: ABSENCE_LIST_NAME
     }),
+
+  findAbsenceListIdByName: async (config: AppConfig): Promise<string | undefined> => {
+    let cursor: string | undefined;
+    do {
+      const page = await apiCall<SlackListsListResponse>(config, "slackLists.list", {
+        limit: 200,
+        cursor
+      });
+      const found = (page.lists ?? []).find((list) => list.name === ABSENCE_LIST_NAME)?.id;
+      if (found) return found;
+      cursor = page.response_metadata?.next_cursor || undefined;
+    } while (cursor);
+    return undefined;
+  },
 
   listAbsences: async (config: AppConfig, listId: string) => {
     const items: SlackListItem[] = [];
