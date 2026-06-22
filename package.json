@@ -1,7 +1,7 @@
 {
   "name": "pasr",
   "version": "0.1.0",
-  "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --test-scheduled",
