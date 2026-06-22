@@ -210,7 +210,7 @@ export default {
         return json({
           response_action: "errors",
           errors: {
-            active_block: handled.error ?? "update failed"
+            [handled.errorBlockId ?? "active_block"]: handled.error ?? "更新に失敗しました。"
           }
         });
       }

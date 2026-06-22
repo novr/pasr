@@ -30,6 +30,12 @@ type SlackInteractionPayload = {
   };
 };
 
+type SlackInteractionResult = {
+  ok: boolean;
+  error?: string;
+  errorBlockId?: "active_block" | "channels_block";
+};
+
 const parseValue = (params: URLSearchParams, key: string): string => params.get(key)?.trim() ?? "";
 
 export const parseSlackCommandPayload = (rawBody: string): SlackCommandPayload | undefined => {
@@ -82,15 +88,38 @@ const postEphemeralResponse = async (payload: SlackCommandPayload, text: string)
 };
 
 const buildHelpText = (): string =>
-  ["/pasr help - 使い方表示", "/pasr view - 自分の通知設定を表示", "/pasr update - 自分の通知設定を編集"].join("\n");
+  [
+    "/pasr help - ユーザ向けコマンドの使い方表示",
+    "/pasr view - 自分の通知設定を表示",
+    "/pasr update - 自分の通知設定を編集"
+  ].join("\n");
 
 const buildAdminHelpText = (): string =>
-  ["/pasr-admin run - 通知処理を手動実行", "/pasr-admin status - 直近実行の要約表示", "/pasr-admin help - 使い方表示"].join(
-    "\n"
-  );
+  [
+    "/pasr-admin help - 管理者向けコマンドの使い方表示",
+    "/pasr-admin run - 通知処理を手動実行",
+    "/pasr-admin status - 直近実行の要約表示"
+  ].join("\n");
 
 const buildSlackListLink = (teamId: string, listId: string): string =>
   `https://app.slack.com/lists/${teamId}/${listId}`;
+
+type CommandKind = "self" | "admin" | "unsupported";
+
+const SELF_ACTIONS = ["help", "view", "update"] as const;
+const ADMIN_ACTIONS = ["help", "run", "status"] as const;
+
+const getCommandKind = (command: string): CommandKind => {
+  if (command === "/pasr") return "self";
+  if (command === "/pasr-admin") return "admin";
+  return "unsupported";
+};
+
+const isSelfAction = (action: string): action is (typeof SELF_ACTIONS)[number] =>
+  SELF_ACTIONS.includes(action as (typeof SELF_ACTIONS)[number]);
+
+const isAdminAction = (action: string): action is (typeof ADMIN_ACTIONS)[number] =>
+  ADMIN_ACTIONS.includes(action as (typeof ADMIN_ACTIONS)[number]);
 
 export const parseSlackCommandAction = (text: string): string =>
   text.split(/\s+/).filter((part) => part.length > 0)[0] ?? "help";
@@ -127,17 +156,13 @@ const MEMBER_MASTER_MODAL_CALLBACK_ID = "pasr_member_master_update";
 
 const buildMemberMasterModalView = (params: {
   userId: string;
-  listId: string;
-  rowId: string;
   active: boolean;
   defaultNotifyChannels: string[];
 }): Record<string, unknown> => ({
   type: "modal",
   callback_id: MEMBER_MASTER_MODAL_CALLBACK_ID,
   private_metadata: JSON.stringify({
-    userId: params.userId,
-    listId: params.listId,
-    rowId: params.rowId
+    userId: params.userId
   }),
   title: { type: "plain_text", text: "PASR Self Profile" },
   submit: { type: "plain_text", text: "Save" },
@@ -195,55 +220,85 @@ const formatDefaultChannelsForView = (channelIds: string[]): string => {
   return channelIds.map((channelId) => `<#${channelId}>`).join(",");
 };
 
+const buildSelfViewMessage = (resolved: {
+  active: boolean;
+  defaultNotifyChannels: string[];
+  created: boolean;
+  deleted: string[];
+}): string => {
+  const lines = [
+    "あなたの通知設定です。",
+    `通知対象: ${resolved.active ? "有効" : "無効"}`,
+    `既定の通知先: ${formatDefaultChannelsForView(resolved.defaultNotifyChannels)}`
+  ];
+  if (resolved.created) lines.push("note: レコードが存在しなかったため新規作成しました。");
+  if (resolved.deleted.length > 0) lines.push(`note: 重複レコードを掃除しました (${resolved.deleted.length}件)。`);
+  return lines.join("\n");
+};
+
+const handleSelfImmediateText = async (
+  config: AppConfig,
+  payload: SlackCommandPayload,
+  action: string
+): Promise<string> => {
+  if (!isSelfAction(action)) {
+    if (action === "run" || action === "status") {
+      return "この操作は /pasr-admin で実行してください。";
+    }
+    return `unsupported action: ${action}\n${buildHelpText()}`;
+  }
+  switch (action) {
+    case "help":
+      return buildHelpText();
+    case "update":
+      await slackApi.openModal(
+        config,
+        payload.triggerId,
+        buildMemberMasterModalView({
+          userId: payload.userId,
+          active: true,
+          defaultNotifyChannels: []
+        })
+      );
+      return "設定フォームを開きました。";
+    case "view": {
+      const resolved = await resolveSelfMasterRecord(config, payload);
+      return buildSelfViewMessage(resolved);
+    }
+    default: {
+      const _never: never = action;
+      return _never;
+    }
+  }
+};
+
 export const getSlashCommandImmediateText = async (
   config: AppConfig,
   payload: SlackCommandPayload
 ): Promise<string | undefined> => {
-  if (payload.command === "/pasr-admin") {
-    return getAdminImmediateText(config, payload);
-  }
+  const commandKind = getCommandKind(payload.command);
   const action = parseSlackCommandAction(payload.text);
-  if (action === "help") return buildHelpText();
-  if (action === "view" || action === "update") {
+  if (commandKind === "admin") {
+    return getAdminImmediateText(config, payload, action);
+  }
+  if (commandKind === "self") {
     try {
-      const resolved = await resolveSelfMasterRecord(config, payload);
-      if (action === "update") {
-        await slackApi.openModal(
-          config,
-          payload.triggerId,
-          buildMemberMasterModalView({
-            userId: payload.userId,
-            listId: resolved.memberMasterListId,
-            rowId: resolved.recordId,
-            active: resolved.active,
-            defaultNotifyChannels: resolved.defaultNotifyChannels
-          })
-        );
-        const notes: string[] = ["設定フォームを開きました。"];
-        if (resolved.created) notes.push("note: レコードが存在しなかったため新規作成しました。");
-        if (resolved.deleted.length > 0) notes.push(`note: 重複レコードを掃除しました (${resolved.deleted.length}件)。`);
-        return notes.join("\n");
-      }
-      const lines = [
-        "あなたの通知設定です。",
-        `通知対象: ${resolved.active ? "有効" : "無効"}`,
-        `既定の通知先: ${formatDefaultChannelsForView(resolved.defaultNotifyChannels)}`
-      ];
-      if (resolved.created) lines.push("note: レコードが存在しなかったため新規作成しました。");
-      if (resolved.deleted.length > 0) lines.push(`note: 重複レコードを掃除しました (${resolved.deleted.length}件)。`);
-      return lines.join("\n");
+      return await handleSelfImmediateText(config, payload, action);
     } catch (error) {
       return `self record の準備に失敗しました: ${error instanceof Error ? error.message : String(error)}`;
     }
   }
-  if (action === "run" || action === "status") {
-    return "この操作は /pasr-admin で実行してください。";
-  }
-  return `unsupported action: ${action}\n${buildHelpText()}`;
+  return "unsupported slash command.";
 };
 
-const getAdminImmediateText = async (config: AppConfig, payload: SlackCommandPayload): Promise<string | undefined> => {
-  const action = parseSlackCommandAction(payload.text);
+const getAdminImmediateText = async (
+  config: AppConfig,
+  payload: SlackCommandPayload,
+  action: string
+): Promise<string | undefined> => {
+  if (!isAdminAction(action)) {
+    return `unsupported action: ${action}\n${buildAdminHelpText()}`;
+  }
   if (action === "help") return buildAdminHelpText();
   if (action === "status") {
     const summary = await readLastRunSummary(config);
@@ -257,9 +312,6 @@ const getAdminImmediateText = async (config: AppConfig, payload: SlackCommandPay
           `executed_at: ${summary.executedAt}`
         ].join("\n")
       : "No run history yet.";
-  }
-  if (action !== "run") {
-    return `unsupported action: ${action}\n${buildAdminHelpText()}`;
   }
   return undefined;
 };
@@ -281,11 +333,11 @@ export const runSlackCommandAsync = async (config: AppConfig, payload: SlackComm
   }
 
   const action = parseSlackCommandAction(payload.text);
-  if (payload.command !== "/pasr-admin") {
+  if (getCommandKind(payload.command) !== "admin") {
     return;
   }
 
-  if (action !== "run") {
+  if (!isAdminAction(action) || action !== "run") {
     console.warn(
       JSON.stringify({
         level: "warn",
@@ -330,7 +382,7 @@ export const runSlackCommandAsync = async (config: AppConfig, payload: SlackComm
 export const handleSlackInteraction = async (
   config: AppConfig,
   payload: SlackInteractionPayload
-): Promise<{ ok: boolean; error?: string }> => {
+): Promise<SlackInteractionResult> => {
   if (payload.type !== "view_submission") {
     return { ok: true };
   }
@@ -339,31 +391,60 @@ export const handleSlackInteraction = async (
     return { ok: true };
   }
   const metadataRaw = payload.view?.private_metadata ?? "";
-  let metadata: { userId: string; listId: string; rowId: string } | undefined;
+  let metadata: { userId: string } | undefined;
   try {
-    metadata = JSON.parse(metadataRaw) as { userId: string; listId: string; rowId: string };
+    metadata = JSON.parse(metadataRaw) as { userId: string };
   } catch {
-    return { ok: false, error: "invalid_private_metadata" };
+    return {
+      ok: false,
+      error: "フォーム情報の読み取りに失敗しました。もう一度 /pasr update を実行してください。",
+      errorBlockId: "active_block"
+    };
   }
-  if (!metadata || !metadata.userId || !metadata.listId || !metadata.rowId) {
-    return { ok: false, error: "missing_private_metadata" };
+  if (!metadata || !metadata.userId) {
+    return {
+      ok: false,
+      error: "フォーム情報が不足しています。もう一度 /pasr update を実行してください。",
+      errorBlockId: "active_block"
+    };
   }
   const actorUserId = payload.user?.id ?? "";
   if (actorUserId !== metadata.userId) {
-    return { ok: false, error: "forbidden_user_mismatch" };
+    return { ok: false, error: "本人以外の設定は更新できません。", errorBlockId: "active_block" };
   }
   const values = payload.view?.state?.values ?? {};
   const channelsValue = values.channels_block?.default_channels_select;
   const activeValue = values.active_block?.active_checkbox;
   const defaultChannels = parseSelectedChannels(channelsValue);
   const active = parseActiveValue(activeValue);
-  await slackApi.updateMemberMasterItem(
-    config,
-    metadata.listId,
-    metadata.rowId,
-    metadata.userId,
-    defaultChannels,
-    active
-  );
-  return { ok: true };
+  try {
+    const memberMasterListId = await ensureMemberMasterList(config);
+    const resolved = await slackApi.resolveMemberMasterRecord(config, memberMasterListId, metadata.userId);
+    await slackApi.updateMemberMasterItem(
+      config,
+      memberMasterListId,
+      resolved.kept,
+      metadata.userId,
+      defaultChannels,
+      active
+    );
+    if (resolved.deleted.length > 0) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "member_master_duplicates_cleaned_on_update",
+          targetUser: metadata.userId,
+          deletedCount: resolved.deleted.length,
+          keptRecordId: resolved.kept
+        })
+      );
+    }
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `設定の保存に失敗しました: ${error instanceof Error ? error.message : String(error)}`,
+      errorBlockId: "active_block"
+    };
+  }
 };
