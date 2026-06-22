@@ -34,6 +34,13 @@
 - コマンド処理は ACK 後に非同期実行し、同期処理で重い処理を行わない。
 - `trigger_id` の TTL=300秒重複抑止を必須とし、重複コマンドは捨てる。
 
+## Phase #4 User Master Rules
+- user master list 名は `member_master` とし、主キー相当は `Target User`（Slack user entity）を使う。
+- list 作成時は user 通知を無効化する（`notify_users=false`）。
+- `active` は checkbox フィールドで運用し、checked=true を通知対象とする。
+- master 未登録ユーザーは daily 実行時に最小レコードで自動 insert する。
+- `active` が unchecked（false）の場合は `inactive_user_master` として明示スキップし、skip 集計へ加算する。
+
 ## Configuration
 - 組織ごとに Slack App / Cloudflare 環境を分離する。
 - Secrets は Cloudflare 側で管理し、リポジトリへ保存しない。

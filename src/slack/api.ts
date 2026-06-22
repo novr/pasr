@@ -30,6 +30,28 @@ type SlackListsListResponse = {
 };
 
 const ABSENCE_LIST_NAME = "absence_list";
+const MEMBER_MASTER_LIST_NAME = "member_master";
+
+const memberMasterSchema = [
+  {
+    key: "target_user",
+    name: "Target User",
+    type: "user",
+    is_primary_column: true,
+    options: { format: "single_entity", notify_users: false }
+  },
+  {
+    key: "default_notify_channels",
+    name: "Default Notify Channels",
+    type: "channel",
+    options: { format: "multi_entity" }
+  },
+  {
+    key: "active",
+    name: "Active",
+    type: "checkbox"
+  }
+] as const;
 
 const apiCall = async <T>(
   config: AppConfig,
@@ -107,6 +129,58 @@ export const slackApi = {
     } while (cursor);
     return undefined;
   },
+
+  createMemberMasterList: async (config: AppConfig) =>
+    apiCall<{ list_id?: string; list?: { id?: string } }>(config, "slackLists.create", {
+      name: MEMBER_MASTER_LIST_NAME,
+      schema: memberMasterSchema
+    }),
+
+  reconcileMemberMasterListFields: async (config: AppConfig, listId: string) =>
+    apiCall<Record<string, unknown>>(config, "slackLists.update", {
+      id: listId,
+      name: MEMBER_MASTER_LIST_NAME,
+      schema: memberMasterSchema
+    }),
+
+  findMemberMasterListIdByName: async (config: AppConfig): Promise<string | undefined> => {
+    let cursor: string | undefined;
+    do {
+      const page = await apiCall<SlackListsListResponse>(config, "slackLists.list", {
+        limit: 200,
+        cursor
+      });
+      const found = (page.lists ?? []).find((list) => list.name === MEMBER_MASTER_LIST_NAME)?.id;
+      if (found) return found;
+      cursor = page.response_metadata?.next_cursor || undefined;
+    } while (cursor);
+    return undefined;
+  },
+
+  listMemberMasterItems: async (config: AppConfig, listId: string) => {
+    const items: SlackListItem[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await apiCall<SlackListItemsListResponse>(config, "slackLists.items.list", {
+        list_id: listId,
+        limit: 200,
+        cursor
+      });
+      items.push(...(page.items ?? []));
+      cursor = page.response_metadata?.next_cursor || undefined;
+    } while (cursor);
+    return { items };
+  },
+
+  createMemberMasterItem: async (config: AppConfig, listId: string, targetUser: string, defaultChannels: string[]) =>
+    apiCall<Record<string, unknown>>(config, "slackLists.items.create", {
+      list_id: listId,
+      values: {
+        target_user: [{ id: targetUser }],
+        default_notify_channels: defaultChannels.map((id) => ({ id })),
+        active: true
+      }
+    }),
 
   listAbsences: async (config: AppConfig, listId: string) => {
     const items: SlackListItem[] = [];
