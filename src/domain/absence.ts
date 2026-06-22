@@ -15,7 +15,8 @@ export type SkipReason =
   | "missing_target_user"
   | "missing_start_date"
   | "missing_notify_channels"
-  | "invalid_date_range";
+  | "invalid_date_range"
+  | "inactive_user_master";
 
 type ParseResult =
   | { ok: true; record: AbsenceRecord }
@@ -112,9 +113,6 @@ export const parseAbsence = (item: SlackListItem): ParseResult => {
 
   if (!targetUser) return { ok: false, itemId: item.id, reason: "missing_target_user" };
   if (!startDate) return { ok: false, itemId: item.id, reason: "missing_start_date" };
-  if (notifyChannels.length === 0) {
-    return { ok: false, itemId: item.id, reason: "missing_notify_channels" };
-  }
   if (startDate > endDate) return { ok: false, itemId: item.id, reason: "invalid_date_range" };
 
   return {

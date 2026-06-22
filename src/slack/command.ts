@@ -1,6 +1,6 @@
 import type { AppConfig } from "../config";
 import { runDailyNotify } from "../jobs/daily-notify";
-import { readLastRunSummary } from "../state/kv";
+import { readLastRunSummary, readPersistedMemberMasterListId } from "../state/kv";
 import { SLACK_EVENT_DEDUPE_TTL_SEC, isDuplicateSlackCommandTrigger } from "../state/event-dedupe";
 
 export const COMMAND_ACK_ACCEPTED = "Accepted";
@@ -69,6 +69,9 @@ const postEphemeralResponse = async (payload: SlackCommandPayload, text: string)
 const buildHelpText = (): string =>
   ["/pasr run - 通知処理を手動実行", "/pasr status - 直近実行の要約表示", "/pasr help - 使い方表示"].join("\n");
 
+const buildSlackListLink = (teamId: string, listId: string): string =>
+  `https://app.slack.com/lists/${teamId}/${listId}`;
+
 export const parseSlackCommandAction = (text: string): string =>
   text.split(/\s+/).filter((part) => part.length > 0)[0] ?? "run";
 
@@ -80,10 +83,13 @@ export const getSlashCommandImmediateText = async (
   if (action === "help") return buildHelpText();
   if (action === "status") {
     const summary = await readLastRunSummary(config);
+    const memberMasterListId = await readPersistedMemberMasterListId(config);
     return summary
       ? [
           `last run: processed=${summary.processed} sent=${summary.sent} skipped=${summary.skipped} errors=${summary.errors}`,
           `run_id: ${summary.runId}`,
+          `absent: ${buildSlackListLink(payload.teamId, summary.listId)}`,
+          `master: ${memberMasterListId ? buildSlackListLink(payload.teamId, memberMasterListId) : "N/A"}`,
           `executed_at: ${summary.executedAt}`
         ].join("\n")
       : "No run history yet.";

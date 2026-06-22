@@ -1,7 +1,7 @@
 import type { AppConfig } from "../config";
 import { filterToday, groupByChannel, parseAbsence, type AbsenceRecord, type SkipReason } from "../domain/absence";
-import { runSetup } from "./setup";
-import { slackApi } from "../slack/api";
+import { ensureMemberMasterList, runSetup } from "./setup";
+import { slackApi, type SlackListItem } from "../slack/api";
 import {
   writeLastRunSummary,
   readPersistedListId,
@@ -30,8 +30,102 @@ const zeroedReasons = (): Record<SkipReason, number> => ({
   missing_target_user: 0,
   missing_start_date: 0,
   missing_notify_channels: 0,
-  invalid_date_range: 0
+  invalid_date_range: 0,
+  inactive_user_master: 0
 });
+
+type MemberMasterRecord = {
+  itemId: string;
+  targetUser: string;
+  active: boolean;
+  defaultNotifyChannels: string[];
+};
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+
+const toBooleanValue = (value: unknown): boolean | undefined => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") return true;
+    if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") return false;
+    return undefined;
+  }
+  const obj = asRecord(value);
+  if (!obj) return undefined;
+  for (const key of ["value", "checked", "is_checked", "selected"]) {
+    if (obj[key] !== undefined) {
+      const nested = toBooleanValue(obj[key]);
+      if (nested !== undefined) return nested;
+    }
+  }
+  return undefined;
+};
+
+const toStringValue = (value: unknown): string => {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const nested = toStringValue(entry);
+      if (nested) return nested;
+    }
+    return "";
+  }
+  const obj = asRecord(value);
+  if (!obj) return "";
+  const direct = ["id", "user_id", "channel_id", "entity_id", "value", "name"].find(
+    (key) => typeof obj[key] === "string" && String(obj[key]).length > 0
+  );
+  if (direct) return String(obj[direct]);
+  for (const nestedKey of ["value", "user", "channel", "select"]) {
+    if (obj[nestedKey] != null) {
+      const nested = toStringValue(obj[nestedKey]);
+      if (nested) return nested;
+    }
+  }
+  return "";
+};
+
+const toStringArray = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => toStringValue(entry)).filter((entry) => entry.length > 0);
+  }
+  const obj = asRecord(value);
+  if (!obj) return [];
+  for (const key of ["channel", "user", "select"]) {
+    if (Array.isArray(obj[key])) {
+      return obj[key].map((entry) => toStringValue(entry)).filter((entry) => entry.length > 0);
+    }
+  }
+  const single = toStringValue(value);
+  return single ? [single] : [];
+};
+
+const pick = (item: SlackListItem, key: string): unknown => {
+  if (Array.isArray(item.fields)) {
+    const fromFields = item.fields.find((entry) => {
+      const record = asRecord(entry);
+      return record?.key === key;
+    });
+    if (fromFields) return fromFields;
+  }
+  return item.fields?.[key] ?? item.values?.[key];
+};
+
+const parseMemberMaster = (item: SlackListItem): MemberMasterRecord | undefined => {
+  const targetUser = toStringValue(pick(item, "target_user")) || toStringValue(pick(item, "member_key"));
+  if (!targetUser) return undefined;
+  const active = toBooleanValue(pick(item, "active")) ?? true;
+  const defaultNotifyChannels = toStringArray(pick(item, "default_notify_channels"));
+  return {
+    itemId: item.id,
+    targetUser,
+    active,
+    defaultNotifyChannels: [...new Set(defaultNotifyChannels)]
+  };
+};
 
 const toJstDate = (): { day: string; weekday: number } => {
   const now = new Date();
@@ -135,12 +229,32 @@ export const runDailyNotify = async (
   }
   resolvedListId = listId;
   result.listId = resolvedListId;
+  const memberMasterListId = await ensureMemberMasterList(config);
+
+  const masterItems = await slackApi.listMemberMasterItems(config, memberMasterListId);
+  const memberMasterMap = new Map<string, MemberMasterRecord>();
+  for (const item of masterItems.items ?? []) {
+    const parsed = parseMemberMaster(item);
+    if (!parsed) continue;
+    if (memberMasterMap.has(parsed.targetUser)) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "duplicate_member_master_user",
+          targetUser: parsed.targetUser,
+          itemId: parsed.itemId
+        })
+      );
+      continue;
+    }
+    memberMasterMap.set(parsed.targetUser, parsed);
+  }
 
   const listResponse = await slackApi.listAbsences(config, listId);
   const parsed = (listResponse.items ?? []).map(parseAbsence);
   result.processed = parsed.length;
 
-  const validRecords = [];
+  const validRecords: AbsenceRecord[] = [];
   for (const item of parsed) {
     if (!item.ok) {
       result.skipped += 1;
@@ -158,7 +272,70 @@ export const runDailyNotify = async (
       );
       continue;
     }
-    validRecords.push(item.record);
+    const record = item.record;
+    let master = memberMasterMap.get(record.targetUser);
+    if (!master) {
+      try {
+        await slackApi.createMemberMasterItem(config, memberMasterListId, record.targetUser, record.notifyChannels);
+        master = {
+          itemId: "auto-created",
+          targetUser: record.targetUser,
+          active: true,
+          defaultNotifyChannels: [...new Set(record.notifyChannels)]
+        };
+        memberMasterMap.set(record.targetUser, master);
+      } catch (error) {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "member_master_auto_insert_failed",
+            targetUser: record.targetUser,
+            message: error instanceof Error ? error.message : String(error)
+          })
+        );
+      }
+    }
+    if (master && !master.active) {
+      result.skipped += 1;
+      result.skipReasons.inactive_user_master += 1;
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "skip_record",
+          run_id: context.runId,
+          trigger: context.trigger,
+          listId: resolvedListId,
+          itemId: record.itemId,
+          reason: "inactive_user_master",
+          targetUser: record.targetUser
+        })
+      );
+      continue;
+    }
+    const effectiveChannels =
+      record.notifyChannels.length > 0
+        ? record.notifyChannels
+        : (master?.defaultNotifyChannels ?? []).filter((entry) => entry.length > 0);
+    if (effectiveChannels.length === 0) {
+      result.skipped += 1;
+      result.skipReasons.missing_notify_channels += 1;
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "skip_record",
+          run_id: context.runId,
+          trigger: context.trigger,
+          listId: resolvedListId,
+          itemId: record.itemId,
+          reason: "missing_notify_channels"
+        })
+      );
+      continue;
+    }
+    validRecords.push({
+      ...record,
+      notifyChannels: [...new Set(effectiveChannels)]
+    });
   }
 
   const todays = filterToday(validRecords, day);

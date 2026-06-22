@@ -1,12 +1,69 @@
 import type { AppConfig } from "../config";
 import { slackApi } from "../slack/api";
-import { writePersistedListId } from "../state/kv";
+import {
+  readPersistedMemberMasterListId,
+  writePersistedListId,
+  writePersistedMemberMasterListId
+} from "../state/kv";
 
 export type SetupResult = {
   listId: string;
+  memberMasterListId: string;
   created: boolean;
   reconciled: boolean;
   accessGranted: boolean;
+};
+
+export const ensureMemberMasterList = async (config: AppConfig): Promise<string> => {
+  const ensureMemberMasterAccess = async (listId: string): Promise<void> => {
+    if (config.adminUserIds.length === 0) return;
+    await slackApi.setListAccessForUsers(config, listId, config.adminUserIds);
+  };
+
+  const ensureMemberMasterSchema = async (listId: string): Promise<void> => {
+    try {
+      await slackApi.reconcileMemberMasterListFields(config, listId);
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "member_master_reconcile_failed",
+          listId,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      );
+    }
+  };
+
+  const persisted = await readPersistedMemberMasterListId(config);
+  if (persisted) {
+    await ensureMemberMasterSchema(persisted);
+    await ensureMemberMasterAccess(persisted);
+    return persisted;
+  }
+
+  let foundByName: string | undefined;
+  try {
+    foundByName = await slackApi.findMemberMasterListIdByName(config);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(JSON.stringify({ level: "warn", event: "member_master_lookup_skipped", message }));
+  }
+  if (foundByName) {
+    await writePersistedMemberMasterListId(config, foundByName);
+    await ensureMemberMasterSchema(foundByName);
+    await ensureMemberMasterAccess(foundByName);
+    return foundByName;
+  }
+
+  const created = await slackApi.createMemberMasterList(config);
+  const createdListId = created.list_id ?? created.list?.id;
+  if (!createdListId) {
+    throw new Error("slackLists.create response missing member master list id");
+  }
+  await writePersistedMemberMasterListId(config, createdListId);
+  await ensureMemberMasterAccess(createdListId);
+  return createdListId;
 };
 
 export const runSetup = async (
@@ -48,6 +105,7 @@ export const runSetup = async (
       await writePersistedListId(config, existingListId);
       return {
         listId: existingListId,
+        memberMasterListId: await ensureMemberMasterList(config),
         created: false,
         reconciled,
         accessGranted: await ensureAccess(existingListId)
@@ -63,6 +121,7 @@ export const runSetup = async (
     const accessGranted = await ensureAccess(createdListId);
     return {
       listId: createdListId,
+      memberMasterListId: await ensureMemberMasterList(config),
       created: true,
       reconciled: false,
       accessGranted
@@ -88,6 +147,7 @@ export const runSetup = async (
 
   return {
     listId: targetListId,
+    memberMasterListId: await ensureMemberMasterList(config),
     created: false,
     reconciled,
     accessGranted: await ensureAccess(targetListId)
