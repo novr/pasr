@@ -66,6 +66,12 @@ type SlackViewOpenResponse = {
   view?: { id?: string };
 };
 
+type SlackConversationOpenResponse = {
+  channel?: {
+    id?: string;
+  };
+};
+
 const ABSENCE_LIST_NAME = "absence_list";
 const MEMBER_MASTER_LIST_NAME = "member_master";
 
@@ -448,6 +454,17 @@ export const slackApi = {
       trigger_id: triggerId,
       view
     }),
+
+  openDirectMessage: async (config: AppConfig, userId: string): Promise<string> => {
+    const opened = await apiCall<SlackConversationOpenResponse>(config, "conversations.open", {
+      users: userId
+    });
+    const channelId = opened.channel?.id;
+    if (!channelId) {
+      throw new Error("conversations.open response missing channel id");
+    }
+    return channelId;
+  },
 
   deleteMemberMasterItem: async (config: AppConfig, listId: string, itemId: string) =>
     apiCall<Record<string, unknown>>(config, "slackLists.items.delete", {

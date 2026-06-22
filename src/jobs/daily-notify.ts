@@ -252,6 +252,31 @@ const buildMessage = (today: string, records: AbsenceRecord[]): string => {
   return [`本日（${today}）の不在予定`, ...lines].join("\n");
 };
 
+const sortNotifyUserRecords = (records: AbsenceRecord[]): AbsenceRecord[] =>
+  [...records].sort((a, b) => {
+    const startDate = a.startDate.localeCompare(b.startDate);
+    if (startDate !== 0) return startDate;
+    return a.targetUser.localeCompare(b.targetUser);
+  });
+
+const buildDirectMessage = (today: string, records: AbsenceRecord[]): string => {
+  const sorted = sortNotifyUserRecords(records);
+  const lines = sorted.map(buildMessageLine);
+  return [`本日の不在予定です（${today} JST）`, ...lines].join("\n");
+};
+
+const groupByNotifyUser = (records: AbsenceRecord[]): Map<string, AbsenceRecord[]> => {
+  const grouped = new Map<string, AbsenceRecord[]>();
+  for (const record of records) {
+    for (const notifyUser of record.notifyUsers) {
+      const current = grouped.get(notifyUser) ?? [];
+      current.push(record);
+      grouped.set(notifyUser, current);
+    }
+  }
+  return grouped;
+};
+
 const collectTextNodes = (value: unknown, bucket: string[]): void => {
   if (Array.isArray(value)) {
     for (const entry of value) collectTextNodes(entry, bucket);
@@ -320,6 +345,7 @@ export const runDailyNotify = async (
   result.processed = parsed.length;
 
   const validRecords: AbsenceRecord[] = [];
+  const dmCandidateRecords: AbsenceRecord[] = [];
   for (const item of parsed) {
     if (!item.ok) {
       markSkipped(result, context, resolvedListId, item.itemId, item.reason);
@@ -331,6 +357,7 @@ export const runDailyNotify = async (
       markSkipped(result, context, resolvedListId, record.itemId, "inactive_user_master");
       continue;
     }
+    dmCandidateRecords.push(record);
     const effectiveChannels = normalizeRecordChannels(record, master);
     if (effectiveChannels.length === 0) {
       markSkipped(result, context, resolvedListId, record.itemId, "missing_notify_channels");
@@ -343,6 +370,7 @@ export const runDailyNotify = async (
   }
 
   const todays = filterToday(validRecords, day);
+  const todaysForDm = filterToday(dmCandidateRecords, day);
   const grouped =
     todays.length > 0
       ? groupByChannel(todays)
@@ -400,6 +428,39 @@ export const runDailyNotify = async (
           listId: resolvedListId,
           channel,
           message
+        })
+      );
+    }
+  }
+
+  const groupedNotifyUsers = groupByNotifyUser(todaysForDm);
+  for (const [notifyUser, records] of groupedNotifyUsers.entries()) {
+    if (records.length === 0) continue;
+    const text = buildDirectMessage(day, records);
+    try {
+      const dmChannelId = await slackApi.openDirectMessage(config, notifyUser);
+      await slackApi.postChannelMessage(config, dmChannelId, text);
+      console.log(
+        JSON.stringify({
+          level: "info",
+          event: "notify_user_dm_sent",
+          run_id: context.runId,
+          trigger: context.trigger,
+          listId: resolvedListId,
+          notifyUser
+        })
+      );
+    } catch (error) {
+      result.errors += 1;
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "notify_user_dm_failed",
+          run_id: context.runId,
+          trigger: context.trigger,
+          listId: resolvedListId,
+          notifyUser,
+          message: error instanceof Error ? error.message : String(error)
         })
       );
     }
