@@ -1,4 +1,13 @@
 import type { AppConfig } from "../config";
+import { ABSENCE_LIST_NAME, absenceSchema } from "../domain/absence";
+import {
+  MEMBER_MASTER_LIST_NAME,
+  memberMasterSchema,
+  type MemberMasterColumnIds,
+  type MemberMasterRow,
+  type ResolveMemberMasterRecordResult
+} from "../domain/member-master";
+import { pickListField, toBooleanValue, toStringArray, toStringValue } from "../domain/slack-list-value";
 
 type SlackOkResponse<T> = T & { ok: true };
 type SlackErrorResponse = { ok: false; error: string };
@@ -72,148 +81,24 @@ type SlackConversationOpenResponse = {
   };
 };
 
-const ABSENCE_LIST_NAME = "absence_list";
-const MEMBER_MASTER_LIST_NAME = "member_master";
-
-const memberMasterSchema = [
-  {
-    key: "member_key",
-    name: "Member Key",
-    type: "text",
-    is_primary_column: true
-  },
-  {
-    key: "target_user",
-    name: "Target User",
-    type: "user",
-    options: { format: "single_entity", notify_users: false }
-  },
-  {
-    key: "default_notify_channels",
-    name: "Default Notify Channels",
-    type: "channel",
-    options: { format: "multi_entity" }
-  },
-  {
-    key: "active",
-    name: "Active",
-    type: "checkbox"
-  }
-] as const;
-
-type MemberMasterColumnIds = {
-  primaryText: string;
-  targetUser: string;
-  defaultNotifyChannels?: string;
-  active: string;
-};
-
-type MemberMasterRow = {
-  itemId: string;
-  targetUser: string;
-  active: boolean;
-  defaultNotifyChannels: string[];
-  updatedTimestamp: number;
-};
-
-type ResolveMemberMasterRecordResult = {
-  kept: string;
-  deleted: string[];
-  created: boolean;
-  targetUser: string;
-  active: boolean;
-  defaultNotifyChannels: string[];
-};
-
 const memberMasterColumnIdsCache = new Map<string, MemberMasterColumnIds>();
 
 const getSchemaColumns = (metadata: SlackListMetadataResponse): SlackListMetadataSchemaColumn[] =>
   metadata.list?.list_metadata?.schema ?? metadata.list_metadata?.schema ?? [];
 
-const asRecord = (value: unknown): Record<string, unknown> | null =>
-  value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-
-const pickField = (item: SlackListItem, key: string): unknown => {
-  if (Array.isArray(item.fields)) {
-    const fromFields = item.fields.find((entry) => {
-      const record = asRecord(entry);
-      return record?.key === key;
-    });
-    if (fromFields) return fromFields;
-  }
-  return item.fields?.[key] ?? item.values?.[key];
-};
-
-const toStringValue = (value: unknown): string => {
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      const nested = toStringValue(entry);
-      if (nested) return nested;
-    }
-    return "";
-  }
-  const obj = asRecord(value);
-  if (!obj) return "";
-  const direct = ["id", "user_id", "channel_id", "entity_id", "value", "name"].find(
-    (key) => typeof obj[key] === "string" && String(obj[key]).length > 0
-  );
-  if (direct) return String(obj[direct]);
-  for (const nestedKey of ["value", "user", "channel", "select"]) {
-    if (obj[nestedKey] != null) {
-      const nested = toStringValue(obj[nestedKey]);
-      if (nested) return nested;
-    }
-  }
-  return "";
-};
-
-const toStringArray = (value: unknown): string[] => {
-  if (Array.isArray(value)) {
-    return value.map((entry) => toStringValue(entry)).filter((entry) => entry.length > 0);
-  }
-  const obj = asRecord(value);
-  if (!obj) return [];
-  for (const key of ["channel", "user", "select"]) {
-    if (Array.isArray(obj[key])) {
-      return obj[key].map((entry) => toStringValue(entry)).filter((entry) => entry.length > 0);
-    }
-  }
-  const single = toStringValue(value);
-  return single ? [single] : [];
-};
-
-const toBooleanValue = (value: unknown): boolean | undefined => {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value !== 0;
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") return true;
-    if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") return false;
-    return undefined;
-  }
-  const obj = asRecord(value);
-  if (!obj) return undefined;
-  for (const key of ["value", "checked", "is_checked", "selected"]) {
-    if (obj[key] !== undefined) {
-      const nested = toBooleanValue(obj[key]);
-      if (nested !== undefined) return nested;
-    }
-  }
-  return undefined;
-};
-
 const parseMemberMasterRow = (item: SlackListItem): MemberMasterRow | undefined => {
-  const targetUser = toStringValue(pickField(item, "target_user")) || toStringValue(pickField(item, "member_key"));
+  const targetUser = toStringValue(pickListField(item, "target_user")) || toStringValue(pickListField(item, "member_key"));
   if (!targetUser) return undefined;
-  const active = toBooleanValue(pickField(item, "active")) ?? true;
-  const defaultNotifyChannels = [...new Set(toStringArray(pickField(item, "default_notify_channels")))];
+  const active = toBooleanValue(pickListField(item, "active")) ?? true;
+  const defaultNotifyChannels = [...new Set(toStringArray(pickListField(item, "default_notify_channels")))];
+  const defaultNotifyUsers = [...new Set(toStringArray(pickListField(item, "default_notify_users")))];
   const updatedTimestamp = Number(item.updated_timestamp ?? "") || 0;
   return {
     itemId: item.id,
     targetUser,
     active,
     defaultNotifyChannels,
+    defaultNotifyUsers,
     updatedTimestamp
   };
 };
@@ -280,6 +165,7 @@ const resolveMemberMasterColumnIds = async (config: AppConfig, listId: string): 
   const primaryText = schema.find((column) => column.is_primary_column && column.id)?.id;
   const targetUserColumn = byKey.get("target_user") ?? findByName("Target User");
   const defaultNotifyChannels = byKey.get("default_notify_channels") ?? findByName("Default Notify Channels");
+  const defaultNotifyUsers = byKey.get("default_notify_users") ?? findByName("Default Notify Users");
   const active = byKey.get("active") ?? findByName("Active");
 
   if (!primaryText || !targetUserColumn || !active) {
@@ -297,7 +183,7 @@ const resolveMemberMasterColumnIds = async (config: AppConfig, listId: string): 
     return undefined;
   }
 
-  const resolved = { primaryText, targetUser: targetUserColumn, defaultNotifyChannels, active };
+  const resolved = { primaryText, targetUser: targetUserColumn, defaultNotifyChannels, defaultNotifyUsers, active };
   memberMasterColumnIdsCache.set(listId, resolved);
   return resolved;
 };
@@ -329,34 +215,7 @@ export const slackApi = {
   createAbsenceList: async (config: AppConfig) =>
     apiCall<{ list_id?: string; list?: { id?: string } }>(config, "slackLists.create", {
       name: ABSENCE_LIST_NAME,
-      schema: [
-        { key: "absence_title", name: "Absence", type: "text", is_primary_column: true },
-        {
-          key: "target_user",
-          name: "Target User",
-          type: "user",
-          options: { format: "single_entity", notify_users: false }
-        },
-        { key: "start_date", name: "Start Date", type: "date" },
-        { key: "end_date", name: "End Date", type: "date" },
-        {
-          key: "type",
-          name: "Type",
-          type: "select",
-          options: {
-            format: "single_select",
-            choices: [{ value: "absence", label: "absence", color: "blue" }]
-          }
-        },
-        { key: "notify_channels", name: "Notify Channels", type: "channel", options: { format: "multi_entity" } },
-        {
-          key: "notify_users",
-          name: "Notify Users",
-          type: "user",
-          options: { format: "multi_entity", notify_users: false }
-        },
-        { key: "note", name: "Note", type: "text" }
-      ]
+      schema: absenceSchema
     }),
 
   reconcileAbsenceListFields: async (config: AppConfig, listId: string) =>
@@ -388,7 +247,13 @@ export const slackApi = {
 
   listMemberMasterItems: async (config: AppConfig, listId: string) => listItems(config, listId),
 
-  createMemberMasterItem: async (config: AppConfig, listId: string, targetUser: string, defaultChannels: string[]) =>
+  createMemberMasterItem: async (
+    config: AppConfig,
+    listId: string,
+    targetUser: string,
+    defaultChannels: string[],
+    defaultUsers: string[] = []
+  ) =>
     (async () => {
       const columnIds = await resolveMemberMasterColumnIds(config, listId);
 
@@ -409,6 +274,9 @@ export const slackApi = {
         if (columnIds.defaultNotifyChannels && defaultChannels.length > 0) {
           initialFields.push({ column_id: columnIds.defaultNotifyChannels, channel: defaultChannels });
         }
+        if (columnIds.defaultNotifyUsers && defaultUsers.length > 0) {
+          initialFields.push({ column_id: columnIds.defaultNotifyUsers, user: defaultUsers });
+        }
         return apiCall<Record<string, unknown>>(config, "slackLists.items.create", {
           list_id: listId,
           initial_fields: initialFields
@@ -420,12 +288,14 @@ export const slackApi = {
           member_key: targetUser,
           target_user: { user: [targetUser] },
           default_notify_channels: { channel: defaultChannels },
+          default_notify_users: { user: defaultUsers },
           active: true
         },
         {
           member_key: targetUser,
           target_user: [targetUser],
           default_notify_channels: defaultChannels,
+          default_notify_users: defaultUsers,
           active: true
         },
         {
@@ -490,7 +360,8 @@ export const slackApi = {
           created: true,
           targetUser,
           active: true,
-          defaultNotifyChannels: []
+          defaultNotifyChannels: [],
+          defaultNotifyUsers: []
         };
       }
       const relisted = await listItems(config, listId);
@@ -507,7 +378,8 @@ export const slackApi = {
         created: true,
         targetUser: keptAfterCreate.targetUser,
         active: keptAfterCreate.active,
-        defaultNotifyChannels: keptAfterCreate.defaultNotifyChannels
+        defaultNotifyChannels: keptAfterCreate.defaultNotifyChannels,
+        defaultNotifyUsers: keptAfterCreate.defaultNotifyUsers
       };
     }
 
@@ -525,7 +397,8 @@ export const slackApi = {
       created: false,
       targetUser: kept.targetUser,
       active: kept.active,
-      defaultNotifyChannels: kept.defaultNotifyChannels
+      defaultNotifyChannels: kept.defaultNotifyChannels,
+      defaultNotifyUsers: kept.defaultNotifyUsers
     };
   },
 
@@ -535,6 +408,7 @@ export const slackApi = {
     rowId: string,
     targetUser: string,
     defaultChannels: string[],
+    defaultUsers: string[],
     active: boolean
   ) => {
     const columnIds = await resolveMemberMasterColumnIds(config, listId);
@@ -558,6 +432,13 @@ export const slackApi = {
         row_id: rowId,
         column_id: columnIds.defaultNotifyChannels,
         channel: defaultChannels
+      });
+    }
+    if (columnIds.defaultNotifyUsers) {
+      cells.push({
+        row_id: rowId,
+        column_id: columnIds.defaultNotifyUsers,
+        user: defaultUsers
       });
     }
     return apiCall<Record<string, unknown>>(config, "slackLists.items.update", {

@@ -1,4 +1,36 @@
 import type { SlackListItem } from "../slack/api";
+import { pickListField, toStringArray, toStringValue } from "./slack-list-value";
+
+export const ABSENCE_LIST_NAME = "absence_list";
+
+export const absenceSchema = [
+  { key: "absence_title", name: "Absence", type: "text", is_primary_column: true },
+  {
+    key: "target_user",
+    name: "Target User",
+    type: "user",
+    options: { format: "single_entity", notify_users: false }
+  },
+  { key: "start_date", name: "Start Date", type: "date" },
+  { key: "end_date", name: "End Date", type: "date" },
+  {
+    key: "type",
+    name: "Type",
+    type: "select",
+    options: {
+      format: "single_select",
+      choices: [{ value: "absence", label: "absence", color: "blue" }]
+    }
+  },
+  { key: "notify_channels", name: "Notify Channels", type: "channel", options: { format: "multi_entity" } },
+  {
+    key: "notify_users",
+    name: "Notify Users",
+    type: "user",
+    options: { format: "multi_entity", notify_users: false }
+  },
+  { key: "note", name: "Note", type: "text" }
+] as const;
 
 export type AbsenceRecord = {
   itemId: string;
@@ -22,93 +54,14 @@ type ParseResult =
   | { ok: true; record: AbsenceRecord }
   | { ok: false; itemId: string; reason: SkipReason };
 
-const pick = (item: SlackListItem, key: string): unknown => {
-  if (Array.isArray(item.fields)) {
-    const fromFields = item.fields.find((entry) => {
-      const record = asRecord(entry);
-      return record?.key === key;
-    });
-    if (fromFields) return fromFields;
-  }
-  return item.fields?.[key] ?? item.values?.[key];
-};
-
-const asRecord = (value: unknown): Record<string, unknown> | null =>
-  value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-
-const tryKeys = (obj: Record<string, unknown>, keys: string[]): string => {
-  for (const key of keys) {
-    const raw = obj[key];
-    if (typeof raw === "string" && raw.length > 0) return raw;
-  }
-  return "";
-};
-
-const toStringValue = (value: unknown): string => {
-  if (typeof value === "string") return value;
-  const obj = asRecord(value);
-  if (obj) {
-    const direct = tryKeys(obj, [
-      "id",
-      "user_id",
-      "channel_id",
-      "entity_id",
-      "value",
-      "name",
-      "username",
-      "email",
-      "date"
-    ]);
-    if (direct) return direct;
-
-    const nestedValue = obj.value;
-    if (nestedValue) {
-      const nested = toStringValue(nestedValue);
-      if (nested) return nested;
-    }
-    const nestedUser = obj.user;
-    if (nestedUser) {
-      const nested = toStringValue(nestedUser);
-      if (nested) return nested;
-    }
-    const nestedChannel = obj.channel;
-    if (nestedChannel) {
-      const nested = toStringValue(nestedChannel);
-      if (nested) return nested;
-    }
-  }
-  return "";
-};
-
-const toStringArray = (value: unknown): string[] => {
-  const obj = asRecord(value);
-  if (obj) {
-    const entityArrays = [obj.user, obj.channel, obj.select, obj.date];
-    for (const candidate of entityArrays) {
-      if (Array.isArray(candidate)) {
-        return candidate
-          .map((entry) => toStringValue(entry))
-          .filter((entry) => entry.length > 0);
-      }
-    }
-    const single = toStringValue(value);
-    return single ? [single] : [];
-  }
-
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((entry) => toStringValue(entry))
-    .filter((entry) => entry.length > 0);
-};
-
 export const parseAbsence = (item: SlackListItem): ParseResult => {
-  const targetUser = toStringValue(pick(item, "target_user"));
-  const absenceType = toStringValue(pick(item, "type"));
-  const startDate = toStringValue(pick(item, "start_date"));
-  const endDateRaw = toStringValue(pick(item, "end_date"));
-  const notifyChannels = toStringArray(pick(item, "notify_channels"));
-  const notifyUsers = toStringArray(pick(item, "notify_users"));
-  const note = toStringValue(pick(item, "note"));
+  const targetUser = toStringValue(pickListField(item, "target_user"));
+  const absenceType = toStringValue(pickListField(item, "type"));
+  const startDate = toStringValue(pickListField(item, "start_date"));
+  const endDateRaw = toStringValue(pickListField(item, "end_date"));
+  const notifyChannels = toStringArray(pickListField(item, "notify_channels"));
+  const notifyUsers = toStringArray(pickListField(item, "notify_users"));
+  const note = toStringValue(pickListField(item, "note"));
   const endDate = endDateRaw || startDate;
 
   if (!targetUser) return { ok: false, itemId: item.id, reason: "missing_target_user" };
