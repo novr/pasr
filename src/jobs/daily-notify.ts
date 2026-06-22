@@ -127,6 +127,89 @@ const parseMemberMaster = (item: SlackListItem): MemberMasterRecord | undefined 
   };
 };
 
+const loadMemberMasterMap = async (
+  config: AppConfig,
+  memberMasterListId: string
+): Promise<Map<string, MemberMasterRecord>> => {
+  const masterItems = await slackApi.listMemberMasterItems(config, memberMasterListId);
+  const memberMasterMap = new Map<string, MemberMasterRecord>();
+  for (const item of masterItems.items ?? []) {
+    const parsed = parseMemberMaster(item);
+    if (!parsed) continue;
+    if (memberMasterMap.has(parsed.targetUser)) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "duplicate_member_master_user",
+          targetUser: parsed.targetUser,
+          itemId: parsed.itemId
+        })
+      );
+      continue;
+    }
+    memberMasterMap.set(parsed.targetUser, parsed);
+  }
+  return memberMasterMap;
+};
+
+const markSkipped = (
+  result: DailyResult,
+  context: RunContext,
+  listId: string,
+  itemId: string,
+  reason: SkipReason
+): void => {
+  result.skipped += 1;
+  result.skipReasons[reason] += 1;
+  console.warn(
+    JSON.stringify({
+      level: "warn",
+      event: "skip_record",
+      run_id: context.runId,
+      trigger: context.trigger,
+      listId,
+      itemId,
+      reason
+    })
+  );
+};
+
+const resolveMasterForRecord = async (
+  config: AppConfig,
+  memberMasterListId: string,
+  memberMasterMap: Map<string, MemberMasterRecord>,
+  record: AbsenceRecord
+): Promise<MemberMasterRecord | undefined> => {
+  const existing = memberMasterMap.get(record.targetUser);
+  if (existing) return existing;
+  try {
+    await slackApi.createMemberMasterItem(config, memberMasterListId, record.targetUser, record.notifyChannels);
+    const created: MemberMasterRecord = {
+      itemId: "auto-created",
+      targetUser: record.targetUser,
+      active: true,
+      defaultNotifyChannels: [...new Set(record.notifyChannels)]
+    };
+    memberMasterMap.set(record.targetUser, created);
+    return created;
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "member_master_auto_insert_failed",
+        targetUser: record.targetUser,
+        message: error instanceof Error ? error.message : String(error)
+      })
+    );
+    return undefined;
+  }
+};
+
+const normalizeRecordChannels = (record: AbsenceRecord, master?: MemberMasterRecord): string[] =>
+  record.notifyChannels.length > 0
+    ? record.notifyChannels
+    : (master?.defaultNotifyChannels ?? []).filter((entry) => entry.length > 0);
+
 const toJstDate = (): { day: string; weekday: number } => {
   const now = new Date();
   const day = new Intl.DateTimeFormat("en-CA", {
@@ -230,25 +313,7 @@ export const runDailyNotify = async (
   resolvedListId = listId;
   result.listId = resolvedListId;
   const memberMasterListId = await ensureMemberMasterList(config);
-
-  const masterItems = await slackApi.listMemberMasterItems(config, memberMasterListId);
-  const memberMasterMap = new Map<string, MemberMasterRecord>();
-  for (const item of masterItems.items ?? []) {
-    const parsed = parseMemberMaster(item);
-    if (!parsed) continue;
-    if (memberMasterMap.has(parsed.targetUser)) {
-      console.warn(
-        JSON.stringify({
-          level: "warn",
-          event: "duplicate_member_master_user",
-          targetUser: parsed.targetUser,
-          itemId: parsed.itemId
-        })
-      );
-      continue;
-    }
-    memberMasterMap.set(parsed.targetUser, parsed);
-  }
+  const memberMasterMap = await loadMemberMasterMap(config, memberMasterListId);
 
   const listResponse = await slackApi.listAbsences(config, listId);
   const parsed = (listResponse.items ?? []).map(parseAbsence);
@@ -257,79 +322,18 @@ export const runDailyNotify = async (
   const validRecords: AbsenceRecord[] = [];
   for (const item of parsed) {
     if (!item.ok) {
-      result.skipped += 1;
-      result.skipReasons[item.reason] += 1;
-      console.warn(
-        JSON.stringify({
-          level: "warn",
-          event: "skip_record",
-          run_id: context.runId,
-          trigger: context.trigger,
-          listId: resolvedListId,
-          itemId: item.itemId,
-          reason: item.reason
-        })
-      );
+      markSkipped(result, context, resolvedListId, item.itemId, item.reason);
       continue;
     }
     const record = item.record;
-    let master = memberMasterMap.get(record.targetUser);
-    if (!master) {
-      try {
-        await slackApi.createMemberMasterItem(config, memberMasterListId, record.targetUser, record.notifyChannels);
-        master = {
-          itemId: "auto-created",
-          targetUser: record.targetUser,
-          active: true,
-          defaultNotifyChannels: [...new Set(record.notifyChannels)]
-        };
-        memberMasterMap.set(record.targetUser, master);
-      } catch (error) {
-        console.warn(
-          JSON.stringify({
-            level: "warn",
-            event: "member_master_auto_insert_failed",
-            targetUser: record.targetUser,
-            message: error instanceof Error ? error.message : String(error)
-          })
-        );
-      }
-    }
+    const master = await resolveMasterForRecord(config, memberMasterListId, memberMasterMap, record);
     if (master && !master.active) {
-      result.skipped += 1;
-      result.skipReasons.inactive_user_master += 1;
-      console.warn(
-        JSON.stringify({
-          level: "warn",
-          event: "skip_record",
-          run_id: context.runId,
-          trigger: context.trigger,
-          listId: resolvedListId,
-          itemId: record.itemId,
-          reason: "inactive_user_master",
-          targetUser: record.targetUser
-        })
-      );
+      markSkipped(result, context, resolvedListId, record.itemId, "inactive_user_master");
       continue;
     }
-    const effectiveChannels =
-      record.notifyChannels.length > 0
-        ? record.notifyChannels
-        : (master?.defaultNotifyChannels ?? []).filter((entry) => entry.length > 0);
+    const effectiveChannels = normalizeRecordChannels(record, master);
     if (effectiveChannels.length === 0) {
-      result.skipped += 1;
-      result.skipReasons.missing_notify_channels += 1;
-      console.warn(
-        JSON.stringify({
-          level: "warn",
-          event: "skip_record",
-          run_id: context.runId,
-          trigger: context.trigger,
-          listId: resolvedListId,
-          itemId: record.itemId,
-          reason: "missing_notify_channels"
-        })
-      );
+      markSkipped(result, context, resolvedListId, record.itemId, "missing_notify_channels");
       continue;
     }
     validRecords.push({

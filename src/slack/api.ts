@@ -8,6 +8,7 @@ type SlackListItem = {
   id: string;
   fields?: Record<string, unknown>;
   values?: Record<string, unknown>;
+  updated_timestamp?: string;
 };
 
 type SlackListItemsListResponse = {
@@ -56,6 +57,15 @@ type SlackListItemInfoResponse = {
   };
 };
 
+type SlackListItemCreateResponse = {
+  id?: string;
+  item?: { id?: string };
+};
+
+type SlackViewOpenResponse = {
+  view?: { id?: string };
+};
+
 const ABSENCE_LIST_NAME = "absence_list";
 const MEMBER_MASTER_LIST_NAME = "member_master";
 
@@ -92,10 +102,115 @@ type MemberMasterColumnIds = {
   active: string;
 };
 
+type MemberMasterRow = {
+  itemId: string;
+  targetUser: string;
+  active: boolean;
+  defaultNotifyChannels: string[];
+  updatedTimestamp: number;
+};
+
+type ResolveMemberMasterRecordResult = {
+  kept: string;
+  deleted: string[];
+  created: boolean;
+  targetUser: string;
+  active: boolean;
+  defaultNotifyChannels: string[];
+};
+
 const memberMasterColumnIdsCache = new Map<string, MemberMasterColumnIds>();
 
 const getSchemaColumns = (metadata: SlackListMetadataResponse): SlackListMetadataSchemaColumn[] =>
   metadata.list?.list_metadata?.schema ?? metadata.list_metadata?.schema ?? [];
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+
+const pickField = (item: SlackListItem, key: string): unknown => {
+  if (Array.isArray(item.fields)) {
+    const fromFields = item.fields.find((entry) => {
+      const record = asRecord(entry);
+      return record?.key === key;
+    });
+    if (fromFields) return fromFields;
+  }
+  return item.fields?.[key] ?? item.values?.[key];
+};
+
+const toStringValue = (value: unknown): string => {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const nested = toStringValue(entry);
+      if (nested) return nested;
+    }
+    return "";
+  }
+  const obj = asRecord(value);
+  if (!obj) return "";
+  const direct = ["id", "user_id", "channel_id", "entity_id", "value", "name"].find(
+    (key) => typeof obj[key] === "string" && String(obj[key]).length > 0
+  );
+  if (direct) return String(obj[direct]);
+  for (const nestedKey of ["value", "user", "channel", "select"]) {
+    if (obj[nestedKey] != null) {
+      const nested = toStringValue(obj[nestedKey]);
+      if (nested) return nested;
+    }
+  }
+  return "";
+};
+
+const toStringArray = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => toStringValue(entry)).filter((entry) => entry.length > 0);
+  }
+  const obj = asRecord(value);
+  if (!obj) return [];
+  for (const key of ["channel", "user", "select"]) {
+    if (Array.isArray(obj[key])) {
+      return obj[key].map((entry) => toStringValue(entry)).filter((entry) => entry.length > 0);
+    }
+  }
+  const single = toStringValue(value);
+  return single ? [single] : [];
+};
+
+const toBooleanValue = (value: unknown): boolean | undefined => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") return true;
+    if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") return false;
+    return undefined;
+  }
+  const obj = asRecord(value);
+  if (!obj) return undefined;
+  for (const key of ["value", "checked", "is_checked", "selected"]) {
+    if (obj[key] !== undefined) {
+      const nested = toBooleanValue(obj[key]);
+      if (nested !== undefined) return nested;
+    }
+  }
+  return undefined;
+};
+
+const parseMemberMasterRow = (item: SlackListItem): MemberMasterRow | undefined => {
+  const targetUser = toStringValue(pickField(item, "target_user")) || toStringValue(pickField(item, "member_key"));
+  if (!targetUser) return undefined;
+  const active = toBooleanValue(pickField(item, "active")) ?? true;
+  const defaultNotifyChannels = [...new Set(toStringArray(pickField(item, "default_notify_channels")))];
+  const updatedTimestamp = Number(item.updated_timestamp ?? "") || 0;
+  return {
+    itemId: item.id,
+    targetUser,
+    active,
+    defaultNotifyChannels,
+    updatedTimestamp
+  };
+};
 
 const listItems = async (config: AppConfig, listId: string): Promise<{ items: SlackListItem[] }> => {
   const items: SlackListItem[] = [];
@@ -327,6 +442,112 @@ export const slackApi = {
       }
       throw lastError instanceof Error ? lastError : new Error(String(lastError));
     })(),
+
+  openModal: async (config: AppConfig, triggerId: string, view: Record<string, unknown>) =>
+    apiCall<SlackViewOpenResponse>(config, "views.open", {
+      trigger_id: triggerId,
+      view
+    }),
+
+  deleteMemberMasterItem: async (config: AppConfig, listId: string, itemId: string) =>
+    apiCall<Record<string, unknown>>(config, "slackLists.items.delete", {
+      list_id: listId,
+      id: itemId
+    }),
+
+  resolveMemberMasterRecord: async (
+    config: AppConfig,
+    listId: string,
+    targetUser: string
+  ): Promise<ResolveMemberMasterRecordResult> => {
+    const listed = await listItems(config, listId);
+    const rows = (listed.items ?? []).map(parseMemberMasterRow).filter((row): row is MemberMasterRow => !!row);
+    const matches = rows.filter((row) => row.targetUser === targetUser);
+    if (matches.length === 0) {
+      const created = await slackApi.createMemberMasterItem(config, listId, targetUser, []);
+      const createdId = (created as SlackListItemCreateResponse).id ?? (created as SlackListItemCreateResponse).item?.id;
+      if (createdId) {
+        return {
+          kept: createdId,
+          deleted: [],
+          created: true,
+          targetUser,
+          active: true,
+          defaultNotifyChannels: []
+        };
+      }
+      const relisted = await listItems(config, listId);
+      const refreshed = (relisted.items ?? [])
+        .map(parseMemberMasterRow)
+        .filter((row): row is MemberMasterRow => !!row && row.targetUser === targetUser);
+      const keptAfterCreate = refreshed.sort((a, b) => b.updatedTimestamp - a.updatedTimestamp)[0];
+      if (!keptAfterCreate) {
+        throw new Error("member_master record creation verification failed");
+      }
+      return {
+        kept: keptAfterCreate.itemId,
+        deleted: [],
+        created: true,
+        targetUser: keptAfterCreate.targetUser,
+        active: keptAfterCreate.active,
+        defaultNotifyChannels: keptAfterCreate.defaultNotifyChannels
+      };
+    }
+
+    const sorted = [...matches].sort((a, b) => b.updatedTimestamp - a.updatedTimestamp);
+    const kept = sorted[0];
+    const duplicates = sorted.slice(1);
+    const deleted: string[] = [];
+    for (const duplicate of duplicates) {
+      await slackApi.deleteMemberMasterItem(config, listId, duplicate.itemId);
+      deleted.push(duplicate.itemId);
+    }
+    return {
+      kept: kept.itemId,
+      deleted,
+      created: false,
+      targetUser: kept.targetUser,
+      active: kept.active,
+      defaultNotifyChannels: kept.defaultNotifyChannels
+    };
+  },
+
+  updateMemberMasterItem: async (
+    config: AppConfig,
+    listId: string,
+    rowId: string,
+    targetUser: string,
+    defaultChannels: string[],
+    active: boolean
+  ) => {
+    const columnIds = await resolveMemberMasterColumnIds(config, listId);
+    if (!columnIds) {
+      throw new Error("member_master column resolution failed");
+    }
+    const cells: Array<Record<string, unknown>> = [
+      {
+        row_id: rowId,
+        column_id: columnIds.targetUser,
+        user: [targetUser]
+      },
+      {
+        row_id: rowId,
+        column_id: columnIds.active,
+        checkbox: active
+      }
+    ];
+    if (columnIds.defaultNotifyChannels) {
+      cells.push({
+        row_id: rowId,
+        column_id: columnIds.defaultNotifyChannels,
+        channel: defaultChannels
+      });
+    }
+    return apiCall<Record<string, unknown>>(config, "slackLists.items.update", {
+      list_id: listId,
+      cells
+    });
+  },
 
   listAbsences: async (config: AppConfig, listId: string) => listItems(config, listId),
 

@@ -4,6 +4,7 @@ import {
   COMMAND_ACK_ACCEPTED,
   COMMAND_ACK_UNAUTHORIZED,
   getSlashCommandImmediateText,
+  handleSlackInteraction,
   isSlackAdminUser,
   parseSlackCommandPayload,
   runSlackCommandAsync
@@ -159,7 +160,8 @@ export default {
       if (!payload) {
         return json({ ok: false, error: "Bad Request" }, 400);
       }
-      if (!isSlackAdminUser(config, payload.userId)) {
+      const requiresAdmin = payload.command === "/pasr-admin";
+      if (requiresAdmin && !isSlackAdminUser(config, payload.userId)) {
         console.warn(
           JSON.stringify({
             level: "warn",
@@ -181,7 +183,47 @@ export default {
       return text(COMMAND_ACK_ACCEPTED);
     }
 
-    if (pathname === "/run" || pathname === "/health" || pathname === "/slack/events" || pathname === "/slack/command") {
+    if (pathname === "/slack/interactions" && request.method === "POST") {
+      const rawBody = await request.text();
+      const signatureOk = await verifySlackSignature({
+        signingSecret: config.slackSigningSecret,
+        rawBody,
+        timestampHeader: request.headers.get("x-slack-request-timestamp"),
+        signatureHeader: request.headers.get("x-slack-signature")
+      });
+      if (!signatureOk) {
+        return json({ ok: false, error: "Unauthorized" }, 401);
+      }
+      const params = new URLSearchParams(rawBody);
+      const payloadRaw = params.get("payload");
+      if (!payloadRaw) {
+        return json({ ok: false, error: "Bad Request" }, 400);
+      }
+      let payload: unknown;
+      try {
+        payload = JSON.parse(payloadRaw);
+      } catch {
+        return json({ ok: false, error: "Bad Request" }, 400);
+      }
+      const handled = await handleSlackInteraction(config, payload as Parameters<typeof handleSlackInteraction>[1]);
+      if (!handled.ok) {
+        return json({
+          response_action: "errors",
+          errors: {
+            active_block: handled.error ?? "update failed"
+          }
+        });
+      }
+      return json({ response_action: "clear" });
+    }
+
+    if (
+      pathname === "/run" ||
+      pathname === "/health" ||
+      pathname === "/slack/events" ||
+      pathname === "/slack/command" ||
+      pathname === "/slack/interactions"
+    ) {
       return json({ ok: false, error: "Method Not Allowed" }, 405);
     }
     return json({ ok: false, error: "Not Found" }, 404);

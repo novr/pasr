@@ -15,12 +15,12 @@ export type SetupResult = {
 };
 
 export const ensureMemberMasterList = async (config: AppConfig): Promise<string> => {
-  const ensureMemberMasterAccess = async (listId: string): Promise<void> => {
+  const ensureListAccess = async (listId: string): Promise<void> => {
     if (config.adminUserIds.length === 0) return;
     await slackApi.setListAccessForUsers(config, listId, config.adminUserIds);
   };
 
-  const ensureMemberMasterSchema = async (listId: string): Promise<void> => {
+  const ensureListSchema = async (listId: string): Promise<void> => {
     try {
       await slackApi.reconcileMemberMasterListFields(config, listId);
     } catch (error) {
@@ -37,8 +37,8 @@ export const ensureMemberMasterList = async (config: AppConfig): Promise<string>
 
   const persisted = await readPersistedMemberMasterListId(config);
   if (persisted) {
-    await ensureMemberMasterSchema(persisted);
-    await ensureMemberMasterAccess(persisted);
+    await ensureListSchema(persisted);
+    await ensureListAccess(persisted);
     return persisted;
   }
 
@@ -51,8 +51,8 @@ export const ensureMemberMasterList = async (config: AppConfig): Promise<string>
   }
   if (foundByName) {
     await writePersistedMemberMasterListId(config, foundByName);
-    await ensureMemberMasterSchema(foundByName);
-    await ensureMemberMasterAccess(foundByName);
+    await ensureListSchema(foundByName);
+    await ensureListAccess(foundByName);
     return foundByName;
   }
 
@@ -62,7 +62,7 @@ export const ensureMemberMasterList = async (config: AppConfig): Promise<string>
     throw new Error("slackLists.create response missing member master list id");
   }
   await writePersistedMemberMasterListId(config, createdListId);
-  await ensureMemberMasterAccess(createdListId);
+  await ensureListAccess(createdListId);
   return createdListId;
 };
 
@@ -70,10 +70,26 @@ export const runSetup = async (
   config: AppConfig,
   options?: { preferredListId?: string }
 ): Promise<SetupResult> => {
-  const ensureAccess = async (listId: string): Promise<boolean> => {
+  const ensureAbsenceListAccess = async (listId: string): Promise<boolean> => {
     if (config.adminUserIds.length === 0) return false;
     await slackApi.setListAccessForUsers(config, listId, config.adminUserIds);
     return true;
+  };
+  const reconcileAbsenceList = async (listId: string): Promise<boolean> => {
+    try {
+      await slackApi.reconcileAbsenceListFields(config, listId);
+      return true;
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "setup_reconcile_failed",
+          listId,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      );
+      return false;
+    }
   };
 
   const targetListId = options?.preferredListId ?? config.absenceListId;
@@ -88,27 +104,14 @@ export const runSetup = async (
       console.warn(JSON.stringify({ level: "warn", event: "setup_list_lookup_skipped", message }));
     }
     if (existingListId) {
-      let reconciled = false;
-      try {
-        await slackApi.reconcileAbsenceListFields(config, existingListId);
-        reconciled = true;
-      } catch (error) {
-        console.warn(
-          JSON.stringify({
-            level: "warn",
-            event: "setup_reconcile_failed",
-            listId: existingListId,
-            message: error instanceof Error ? error.message : String(error)
-          })
-        );
-      }
+      const reconciled = await reconcileAbsenceList(existingListId);
       await writePersistedListId(config, existingListId);
       return {
         listId: existingListId,
         memberMasterListId: await ensureMemberMasterList(config),
         created: false,
         reconciled,
-        accessGranted: await ensureAccess(existingListId)
+        accessGranted: await ensureAbsenceListAccess(existingListId)
       };
     }
 
@@ -118,30 +121,16 @@ export const runSetup = async (
       throw new Error("slackLists.create response missing list id");
     }
     await writePersistedListId(config, createdListId);
-    const accessGranted = await ensureAccess(createdListId);
     return {
       listId: createdListId,
       memberMasterListId: await ensureMemberMasterList(config),
       created: true,
       reconciled: false,
-      accessGranted
+      accessGranted: await ensureAbsenceListAccess(createdListId)
     };
   }
 
-  let reconciled = false;
-  try {
-    await slackApi.reconcileAbsenceListFields(config, targetListId);
-    reconciled = true;
-  } catch (error) {
-    console.warn(
-      JSON.stringify({
-        level: "warn",
-        event: "setup_reconcile_failed",
-        listId: targetListId,
-        message: error instanceof Error ? error.message : String(error)
-      })
-    );
-  }
+  const reconciled = await reconcileAbsenceList(targetListId);
 
   await writePersistedListId(config, targetListId);
 
@@ -150,6 +139,6 @@ export const runSetup = async (
     memberMasterListId: await ensureMemberMasterList(config),
     created: false,
     reconciled,
-    accessGranted: await ensureAccess(targetListId)
+    accessGranted: await ensureAbsenceListAccess(targetListId)
   };
 };
