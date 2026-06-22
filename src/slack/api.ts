@@ -184,7 +184,22 @@ const resolveMemberMasterColumnIds = async (config: AppConfig, listId: string): 
   }
 
   const resolved = { primaryText, targetUser: targetUserColumn, defaultNotifyChannels, defaultNotifyUsers, active };
-  memberMasterColumnIdsCache.set(listId, resolved);
+  // Optional columns may be added later by schema reconciliation.
+  // Avoid caching incomplete optional-column resolution to let later calls re-resolve.
+  if (defaultNotifyChannels && defaultNotifyUsers) {
+    memberMasterColumnIdsCache.set(listId, resolved);
+  } else {
+    memberMasterColumnIdsCache.delete(listId);
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "member_master_optional_columns_missing",
+        listId,
+        hasDefaultNotifyChannels: Boolean(defaultNotifyChannels),
+        hasDefaultNotifyUsers: Boolean(defaultNotifyUsers)
+      })
+    );
+  }
   return resolved;
 };
 

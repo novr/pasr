@@ -1,6 +1,6 @@
 import type { AppConfig } from "../config";
 import { runDailyNotify } from "../jobs/daily-notify";
-import { ensureMemberMasterList } from "../jobs/setup";
+import { ensureMemberMasterList, runMemberMasterMigration } from "../jobs/setup";
 import { slackApi } from "./api";
 import { readLastRunSummary, readPersistedMemberMasterListId } from "../state/kv";
 import { SLACK_EVENT_DEDUPE_TTL_SEC, isDuplicateSlackCommandTrigger } from "../state/event-dedupe";
@@ -98,7 +98,8 @@ const buildAdminHelpText = (): string =>
   [
     "/pasr-admin help - 管理者向けコマンドの使い方表示",
     "/pasr-admin run - 通知処理を手動実行",
-    "/pasr-admin status - 直近実行の要約表示"
+    "/pasr-admin status - 直近実行の要約表示",
+    "/pasr-admin migrate - member_master を新スキーマへ移行"
   ].join("\n");
 
 const buildSlackListLink = (teamId: string, listId: string): string =>
@@ -107,7 +108,7 @@ const buildSlackListLink = (teamId: string, listId: string): string =>
 type CommandKind = "self" | "admin" | "unsupported";
 
 const SELF_ACTIONS = ["help", "view", "update"] as const;
-const ADMIN_ACTIONS = ["help", "run", "status"] as const;
+const ADMIN_ACTIONS = ["help", "run", "status", "migrate"] as const;
 
 const getCommandKind = (command: string): CommandKind => {
   if (command === "/pasr") return "self";
@@ -279,16 +280,19 @@ const handleSelfImmediateText = async (
     case "help":
       return buildHelpText();
     case "update":
-      await slackApi.openModal(
-        config,
-        payload.triggerId,
-        buildMemberMasterModalView({
-          userId: payload.userId,
-          active: true,
-          defaultNotifyChannels: [],
-          defaultNotifyUsers: []
-        })
-      );
+      {
+        const resolved = await resolveSelfMasterRecord(config, payload);
+        await slackApi.openModal(
+          config,
+          payload.triggerId,
+          buildMemberMasterModalView({
+            userId: payload.userId,
+            active: resolved.active,
+            defaultNotifyChannels: resolved.defaultNotifyChannels,
+            defaultNotifyUsers: resolved.defaultNotifyUsers
+          })
+        );
+      }
       return "設定フォームを開きました。";
     case "view": {
       const resolved = await resolveSelfMasterRecord(config, payload);
@@ -342,6 +346,9 @@ const getAdminImmediateText = async (
         ].join("\n")
       : "No run history yet.";
   }
+  if (action === "migrate") {
+    return undefined;
+  }
   return undefined;
 };
 
@@ -366,7 +373,7 @@ export const runSlackCommandAsync = async (config: AppConfig, payload: SlackComm
     return;
   }
 
-  if (!isAdminAction(action) || action !== "run") {
+  if (!isAdminAction(action) || (action !== "run" && action !== "migrate")) {
     console.warn(
       JSON.stringify({
         level: "warn",
@@ -381,31 +388,62 @@ export const runSlackCommandAsync = async (config: AppConfig, payload: SlackComm
     return;
   }
 
-  const runId = `cmd_${crypto.randomUUID()}`;
-  const result = await runDailyNotify(config, { runId, trigger: "manual" });
-  console.log(
-    JSON.stringify({
-      level: "info",
-      event: "slash_command_run_done",
-      command: payload.command,
-      action,
-      trigger_id: payload.triggerId,
-      user_id: payload.userId,
-      team_id: payload.teamId,
-      run_id: runId,
-      processed: result.processed,
-      sent: result.sent,
-      skipped: result.skipped,
-      errors: result.errors
-    })
-  );
+  if (action === "run") {
+    const runId = `cmd_${crypto.randomUUID()}`;
+    const result = await runDailyNotify(config, { runId, trigger: "manual" });
+    console.log(
+      JSON.stringify({
+        level: "info",
+        event: "slash_command_run_done",
+        command: payload.command,
+        action,
+        trigger_id: payload.triggerId,
+        user_id: payload.userId,
+        team_id: payload.teamId,
+        run_id: runId,
+        processed: result.processed,
+        sent: result.sent,
+        skipped: result.skipped,
+        errors: result.errors
+      })
+    );
 
-  const status = result.errors > 0 ? "一部エラーあり" : "完了";
-  const resultText = [
-    `run ${status}: processed=${result.processed} sent=${result.sent} skipped=${result.skipped} errors=${result.errors}`,
-    `run_id: ${runId}`
-  ].join("\n");
-  await postEphemeralResponse(payload, resultText);
+    const status = result.errors > 0 ? "一部エラーあり" : "完了";
+    const resultText = [
+      `run ${status}: processed=${result.processed} sent=${result.sent} skipped=${result.skipped} errors=${result.errors}`,
+      `run_id: ${runId}`
+    ].join("\n");
+    await postEphemeralResponse(payload, resultText);
+    return;
+  }
+
+  if (action === "migrate") {
+    const result = await runMemberMasterMigration(config);
+    const status = result.errors > 0 ? "一部エラーあり" : "完了";
+    console.log(
+      JSON.stringify({
+        level: "info",
+        event: "slash_command_migrate_done",
+        command: payload.command,
+        action,
+        trigger_id: payload.triggerId,
+        user_id: payload.userId,
+        team_id: payload.teamId,
+        fromListId: result.fromListId,
+        toListId: result.toListId,
+        sourceRows: result.sourceRows,
+        migratedRows: result.migratedRows,
+        skippedRows: result.skippedRows,
+        errors: result.errors
+      })
+    );
+    const resultText = [
+      `migrate ${status}: source=${result.sourceRows} migrated=${result.migratedRows} skipped=${result.skippedRows} errors=${result.errors}`,
+      `from: ${buildSlackListLink(payload.teamId, result.fromListId)}`,
+      `to: ${buildSlackListLink(payload.teamId, result.toListId)}`
+    ].join("\n");
+    await postEphemeralResponse(payload, resultText);
+  }
 };
 
 export const handleSlackInteraction = async (

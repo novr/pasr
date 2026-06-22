@@ -1,5 +1,6 @@
 import type { AppConfig } from "../config";
-import { slackApi } from "../slack/api";
+import { pickListField, toBooleanValue, toStringArray, toStringValue } from "../domain/slack-list-value";
+import { slackApi, type SlackListItem } from "../slack/api";
 import {
   readPersistedMemberMasterListId,
   writePersistedListId,
@@ -12,6 +13,50 @@ export type SetupResult = {
   created: boolean;
   reconciled: boolean;
   accessGranted: boolean;
+};
+
+type MemberMasterMigrationRow = {
+  targetUser: string;
+  active: boolean;
+  defaultNotifyChannels: string[];
+  defaultNotifyUsers: string[];
+  updatedTimestamp: number;
+};
+
+export type MemberMasterMigrationResult = {
+  fromListId: string;
+  toListId: string;
+  sourceRows: number;
+  migratedRows: number;
+  skippedRows: number;
+  errors: number;
+};
+
+const parseMemberMasterMigrationRow = (item: SlackListItem): MemberMasterMigrationRow | undefined => {
+  const targetUser = toStringValue(pickListField(item, "target_user")) || toStringValue(pickListField(item, "member_key"));
+  if (!targetUser) return undefined;
+  const active = toBooleanValue(pickListField(item, "active")) ?? true;
+  const defaultNotifyChannels = [...new Set(toStringArray(pickListField(item, "default_notify_channels")))];
+  const defaultNotifyUsers = [...new Set(toStringArray(pickListField(item, "default_notify_users")))];
+  const updatedTimestamp = Number(item.updated_timestamp ?? "") || 0;
+  return {
+    targetUser,
+    active,
+    defaultNotifyChannels,
+    defaultNotifyUsers,
+    updatedTimestamp
+  };
+};
+
+const dedupeMemberMasterRows = (rows: MemberMasterMigrationRow[]): MemberMasterMigrationRow[] => {
+  const deduped = new Map<string, MemberMasterMigrationRow>();
+  for (const row of rows) {
+    const existing = deduped.get(row.targetUser);
+    if (!existing || row.updatedTimestamp >= existing.updatedTimestamp) {
+      deduped.set(row.targetUser, row);
+    }
+  }
+  return [...deduped.values()];
 };
 
 export const ensureMemberMasterList = async (config: AppConfig): Promise<string> => {
@@ -140,5 +185,73 @@ export const runSetup = async (
     created: false,
     reconciled,
     accessGranted: await ensureAbsenceListAccess(targetListId)
+  };
+};
+
+export const runMemberMasterMigration = async (config: AppConfig): Promise<MemberMasterMigrationResult> => {
+  const sourceListId = await ensureMemberMasterList(config);
+  const source = await slackApi.listMemberMasterItems(config, sourceListId);
+  const parsedRows = (source.items ?? []).map(parseMemberMasterMigrationRow);
+  const validRows = parsedRows.filter((row): row is MemberMasterMigrationRow => !!row);
+  const dedupedRows = dedupeMemberMasterRows(validRows);
+  const skippedRows = (source.items ?? []).length - validRows.length;
+
+  const created = await slackApi.createMemberMasterList(config);
+  const destinationListId = created.list_id ?? created.list?.id;
+  if (!destinationListId) {
+    throw new Error("slackLists.create response missing member master list id");
+  }
+
+  if (config.adminUserIds.length > 0) {
+    await slackApi.setListAccessForUsers(config, destinationListId, config.adminUserIds);
+  }
+
+  let migratedRows = 0;
+  let errors = 0;
+  for (const row of dedupedRows) {
+    try {
+      await slackApi.createMemberMasterItem(
+        config,
+        destinationListId,
+        row.targetUser,
+        row.defaultNotifyChannels,
+        row.defaultNotifyUsers
+      );
+      if (!row.active) {
+        const resolved = await slackApi.resolveMemberMasterRecord(config, destinationListId, row.targetUser);
+        await slackApi.updateMemberMasterItem(
+          config,
+          destinationListId,
+          resolved.kept,
+          row.targetUser,
+          row.defaultNotifyChannels,
+          row.defaultNotifyUsers,
+          false
+        );
+      }
+      migratedRows += 1;
+    } catch (error) {
+      errors += 1;
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "member_master_migration_row_failed",
+          fromListId: sourceListId,
+          toListId: destinationListId,
+          targetUser: row.targetUser,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      );
+    }
+  }
+
+  await writePersistedMemberMasterListId(config, destinationListId);
+  return {
+    fromListId: sourceListId,
+    toListId: destinationListId,
+    sourceRows: source.items?.length ?? 0,
+    migratedRows,
+    skippedRows,
+    errors
   };
 };

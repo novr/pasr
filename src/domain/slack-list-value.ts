@@ -44,7 +44,18 @@ export const toStringArray = (value: unknown): string[] => {
   }
   const obj = asRecord(value);
   if (!obj) return [];
-  for (const key of ["channel", "user", "select", "date"]) {
+  for (const key of [
+    "channel",
+    "channels",
+    "conversation",
+    "conversations",
+    "user",
+    "users",
+    "select",
+    "date",
+    "selected_users",
+    "selected_conversations"
+  ]) {
     if (Array.isArray(obj[key])) {
       return obj[key].map((entry) => toStringValue(entry)).filter((entry) => entry.length > 0);
     }
