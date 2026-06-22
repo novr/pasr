@@ -22,7 +22,14 @@ export const runSetup = async (
   const targetListId = options?.preferredListId ?? config.absenceListId;
 
   if (!targetListId) {
-    const existingListId = await slackApi.findAbsenceListIdByName(config);
+    let existingListId: string | undefined;
+    try {
+      existingListId = await slackApi.findAbsenceListIdByName(config);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // Some workspaces do not expose slackLists.list; in that case keep legacy create flow.
+      console.warn(JSON.stringify({ level: "warn", event: "setup_list_lookup_skipped", message }));
+    }
     if (existingListId) {
       let reconciled = false;
       try {

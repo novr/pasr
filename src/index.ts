@@ -113,7 +113,7 @@ export default {
         return json({ ok: false, error: "Unauthorized" }, 401);
       }
       const result = await runDailyNotify(config, { runId, trigger: "manual" });
-      return json({ ok: true, ...result });
+      return json({ ok: true, runId: result.runId });
     }
 
     if (pathname === "/slack/events" && request.method === "POST") {
