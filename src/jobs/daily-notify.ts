@@ -1,6 +1,6 @@
 import type { AppConfig } from "../config";
 import { filterToday, groupByChannel, parseAbsence, type AbsenceRecord, type SkipReason } from "../domain/absence";
-import { pickListField, toBooleanValue, toStringArray, toStringValue } from "../domain/slack-list-value";
+import { pickListField, toBooleanValue, toStringValue } from "../domain/slack-list-value";
 import { ensureMemberMasterList, runSetup } from "./setup";
 import { slackApi, type SlackListItem } from "../slack/api";
 import {
@@ -41,19 +41,16 @@ type MemberMasterRecord = {
   itemId: string;
   targetUser: string;
   active: boolean;
-  defaultNotifyChannels: string[];
 };
 
 const parseMemberMaster = (item: SlackListItem): MemberMasterRecord | undefined => {
   const targetUser = toStringValue(pickListField(item, "target_user")) || toStringValue(pickListField(item, "member_key"));
   if (!targetUser) return undefined;
   const active = toBooleanValue(pickListField(item, "active")) ?? true;
-  const defaultNotifyChannels = toStringArray(pickListField(item, "default_notify_channels"));
   return {
     itemId: item.id,
     targetUser,
-    active,
-    defaultNotifyChannels: [...new Set(defaultNotifyChannels)]
+    active
   };
 };
 
@@ -113,12 +110,11 @@ const resolveMasterForRecord = async (
   const existing = memberMasterMap.get(record.targetUser);
   if (existing) return existing;
   try {
-    await slackApi.createMemberMasterItem(config, memberMasterListId, record.targetUser, record.notifyChannels);
+    await slackApi.createMemberMasterItem(config, memberMasterListId, record.targetUser, []);
     const created: MemberMasterRecord = {
       itemId: "auto-created",
       targetUser: record.targetUser,
-      active: true,
-      defaultNotifyChannels: [...new Set(record.notifyChannels)]
+      active: true
     };
     memberMasterMap.set(record.targetUser, created);
     return created;
@@ -134,11 +130,6 @@ const resolveMasterForRecord = async (
     return undefined;
   }
 };
-
-const normalizeRecordChannels = (record: AbsenceRecord, master?: MemberMasterRecord): string[] =>
-  record.notifyChannels.length > 0
-    ? record.notifyChannels
-    : (master?.defaultNotifyChannels ?? []).filter((entry) => entry.length > 0);
 
 const toJstDate = (): { day: string; weekday: number } => {
   const now = new Date();
@@ -407,15 +398,11 @@ export const runDailyNotify = async (
       continue;
     }
     dmCandidateRecords.push(record);
-    const effectiveChannels = normalizeRecordChannels(record, master);
-    if (effectiveChannels.length === 0) {
+    if (record.notifyChannels.length === 0) {
       markSkipped(result, context, resolvedListId, record.itemId, "missing_notify_channels");
       continue;
     }
-    validRecords.push({
-      ...record,
-      notifyChannels: [...new Set(effectiveChannels)]
-    });
+    validRecords.push(record);
   }
 
   const todays = filterToday(validRecords, day);
