@@ -135,6 +135,7 @@ const resolveSelfMasterRecord = async (
   targetUser: string;
   active: boolean;
   defaultNotifyChannels: string[];
+  defaultNotifyUsers: string[];
 }> => {
   const memberMasterListId = await ensureMemberMasterList(config);
   const resolved = await slackApi.resolveMemberMasterRecord(config, memberMasterListId, payload.userId);
@@ -148,7 +149,8 @@ const resolveSelfMasterRecord = async (
     deleted: resolved.deleted,
     targetUser: resolved.targetUser,
     active: resolved.active,
-    defaultNotifyChannels: resolved.defaultNotifyChannels
+    defaultNotifyChannels: resolved.defaultNotifyChannels,
+    defaultNotifyUsers: resolved.defaultNotifyUsers
   };
 };
 
@@ -158,6 +160,7 @@ const buildMemberMasterModalView = (params: {
   userId: string;
   active: boolean;
   defaultNotifyChannels: string[];
+  defaultNotifyUsers: string[];
 }): Record<string, unknown> => ({
   type: "modal",
   callback_id: MEMBER_MASTER_MODAL_CALLBACK_ID,
@@ -194,6 +197,17 @@ const buildMemberMasterModalView = (params: {
         action_id: "default_channels_select",
         initial_conversations: params.defaultNotifyChannels
       }
+    },
+    {
+      type: "input",
+      block_id: "users_block",
+      optional: true,
+      label: { type: "plain_text", text: "Default Notify Users" },
+      element: {
+        type: "multi_users_select",
+        action_id: "default_users_select",
+        initial_users: params.defaultNotifyUsers
+      }
     }
   ]
 });
@@ -201,6 +215,13 @@ const buildMemberMasterModalView = (params: {
 const parseSelectedChannels = (value: unknown): string[] => {
   const record = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
   const selected = record?.selected_conversations;
+  if (!Array.isArray(selected)) return [];
+  return selected.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+};
+
+const parseSelectedUsers = (value: unknown): string[] => {
+  const record = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+  const selected = record?.selected_users;
   if (!Array.isArray(selected)) return [];
   return selected.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
 };
@@ -220,16 +241,23 @@ const formatDefaultChannelsForView = (channelIds: string[]): string => {
   return channelIds.map((channelId) => `<#${channelId}>`).join(",");
 };
 
+const formatDefaultUsersForView = (userIds: string[]): string => {
+  if (userIds.length === 0) return "none";
+  return userIds.map((userId) => `<@${userId}>`).join(",");
+};
+
 const buildSelfViewMessage = (resolved: {
   active: boolean;
   defaultNotifyChannels: string[];
+  defaultNotifyUsers: string[];
   created: boolean;
   deleted: string[];
 }): string => {
   const lines = [
     "あなたの通知設定です。",
     `通知対象: ${resolved.active ? "有効" : "無効"}`,
-    `既定の通知先: ${formatDefaultChannelsForView(resolved.defaultNotifyChannels)}`
+    `既定の通知先チャンネル: ${formatDefaultChannelsForView(resolved.defaultNotifyChannels)}`,
+    `既定の通知先ユーザー: ${formatDefaultUsersForView(resolved.defaultNotifyUsers)}`
   ];
   if (resolved.created) lines.push("note: レコードが存在しなかったため新規作成しました。");
   if (resolved.deleted.length > 0) lines.push(`note: 重複レコードを掃除しました (${resolved.deleted.length}件)。`);
@@ -257,7 +285,8 @@ const handleSelfImmediateText = async (
         buildMemberMasterModalView({
           userId: payload.userId,
           active: true,
-          defaultNotifyChannels: []
+          defaultNotifyChannels: [],
+          defaultNotifyUsers: []
         })
       );
       return "設定フォームを開きました。";
@@ -414,8 +443,10 @@ export const handleSlackInteraction = async (
   }
   const values = payload.view?.state?.values ?? {};
   const channelsValue = values.channels_block?.default_channels_select;
+  const usersValue = values.users_block?.default_users_select;
   const activeValue = values.active_block?.active_checkbox;
   const defaultChannels = parseSelectedChannels(channelsValue);
+  const defaultUsers = parseSelectedUsers(usersValue);
   const active = parseActiveValue(activeValue);
   try {
     const memberMasterListId = await ensureMemberMasterList(config);
@@ -426,6 +457,7 @@ export const handleSlackInteraction = async (
       resolved.kept,
       metadata.userId,
       defaultChannels,
+      defaultUsers,
       active
     );
     if (resolved.deleted.length > 0) {
