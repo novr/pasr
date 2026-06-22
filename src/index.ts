@@ -30,11 +30,11 @@ export default {
     const config = getConfig(env);
     const url = new URL(request.url);
     const { pathname } = url;
-    if (pathname === "/health") {
+    if (pathname === "/health" && request.method === "GET") {
       return json({ ok: true });
     }
 
-    if (pathname === "/run") {
+    if (pathname === "/run" && request.method === "POST") {
       const runId = newRunId();
       if (!hasValidRunToken(request, config.runEndpointToken)) {
         console.warn(
@@ -49,6 +49,9 @@ export default {
       }
       const result = await runDailyNotify(config, { runId, trigger: "manual" });
       return json({ ok: true, ...result });
+    }
+    if (pathname === "/run" || pathname === "/health") {
+      return json({ ok: false, error: "Method Not Allowed" }, 405);
     }
     return json({ ok: false, error: "Not Found" }, 404);
   },
