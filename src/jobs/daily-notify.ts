@@ -115,7 +115,7 @@ const pick = (item: SlackListItem, key: string): unknown => {
 };
 
 const parseMemberMaster = (item: SlackListItem): MemberMasterRecord | undefined => {
-  const targetUser = toStringValue(pick(item, "target_user"));
+  const targetUser = toStringValue(pick(item, "target_user")) || toStringValue(pick(item, "member_key"));
   if (!targetUser) return undefined;
   const active = toBooleanValue(pick(item, "active")) ?? true;
   const defaultNotifyChannels = toStringArray(pick(item, "default_notify_channels"));
