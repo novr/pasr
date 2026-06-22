@@ -10,11 +10,19 @@ import {
 } from "../state/kv";
 
 type DailyResult = {
+  runId: string;
+  trigger: "manual" | "scheduled";
+  listId: string;
   processed: number;
   sent: number;
   skipped: number;
   errors: number;
   skipReasons: Record<SkipReason, number>;
+};
+
+type RunContext = {
+  runId: string;
+  trigger: "manual" | "scheduled";
 };
 
 const zeroedReasons = (): Record<SkipReason, number> => ({
@@ -100,9 +108,14 @@ const parseNoteText = (note?: string): string | undefined => {
 };
 
 export const runDailyNotify = async (
-  config: AppConfig
+  config: AppConfig,
+  context: RunContext
 ): Promise<DailyResult> => {
+  let resolvedListId = "";
   const result: DailyResult = {
+    runId: context.runId,
+    trigger: context.trigger,
+    listId: resolvedListId,
     processed: 0,
     sent: 0,
     skipped: 0,
@@ -119,6 +132,8 @@ export const runDailyNotify = async (
     const setupResult = await runSetup(config);
     listId = setupResult.listId;
   }
+  resolvedListId = listId;
+  result.listId = resolvedListId;
 
   const listResponse = await slackApi.listAbsences(config, listId);
   const parsed = (listResponse.items ?? []).map(parseAbsence);
@@ -129,7 +144,17 @@ export const runDailyNotify = async (
     if (!item.ok) {
       result.skipped += 1;
       result.skipReasons[item.reason] += 1;
-      console.warn(JSON.stringify({ level: "warn", event: "skip_record", itemId: item.itemId, reason: item.reason }));
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "skip_record",
+          run_id: context.runId,
+          trigger: context.trigger,
+          listId: resolvedListId,
+          itemId: item.itemId,
+          reason: item.reason
+        })
+      );
       continue;
     }
     validRecords.push(item.record);
@@ -173,6 +198,9 @@ export const runDailyNotify = async (
             JSON.stringify({
               level: "error",
               event: "notify_fallback_failed",
+              run_id: context.runId,
+              trigger: context.trigger,
+              listId: resolvedListId,
               channel,
               message: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
             })
@@ -185,6 +213,9 @@ export const runDailyNotify = async (
         JSON.stringify({
           level: "error",
           event: "notify_failed",
+          run_id: context.runId,
+          trigger: context.trigger,
+          listId: resolvedListId,
           channel,
           message
         })
@@ -192,6 +223,19 @@ export const runDailyNotify = async (
     }
   }
 
-  console.log(JSON.stringify({ level: "info", event: "daily_notify_done", ...result }));
+  console.log(
+    JSON.stringify({
+      level: "info",
+      event: "daily_notify_done",
+      run_id: context.runId,
+      trigger: context.trigger,
+      listId: resolvedListId,
+      processed: result.processed,
+      sent: result.sent,
+      skipped: result.skipped,
+      errors: result.errors,
+      skipReasons: result.skipReasons
+    })
+  );
   return result;
 };

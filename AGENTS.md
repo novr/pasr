@@ -7,6 +7,19 @@
 - 判定基準時刻は常に JST（`Asia/Tokyo`）。
 - 失敗はレコード単位で隔離し、全体処理は継続する。
 
+## Phase 2 Deploy-First Rules
+- 優先事項は deploy-first（先に安全なデプロイ運用を固定する）。
+- `README.md` を運用Runbookの正本として扱い、手順変更時は実装と同時更新する。
+- `/run` は手動再実行専用入口とし、Bearer token 認証なしの実行を許可しない。
+- 実行ログは `run_id`, `listId`, `processed`, `sent`, `skipped`, `errors` を必須キーとして扱う。
+- 可観測性の高度化（ダッシュボード/集計ストア）は Phase 2.x へ分離し、Phase 2 では実施しない。
+
+## Production Operation Guardrails
+- Secret 値やトークンをレスポンス本文やログへ出力しない。
+- 認証失敗時は `401` と最小エラーボディで返す。
+- `scheduled` の週末スキップを回避するための強制フラグを導入しない。
+- 本番障害時は「原因修正 -> `/run` 再実行 -> run summary確認」の順序を維持する。
+
 ## Configuration
 - 組織ごとに Slack App / Cloudflare 環境を分離する。
 - Secrets は Cloudflare 側で管理し、リポジトリへ保存しない。

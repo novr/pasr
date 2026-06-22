@@ -1,126 +1,81 @@
-# pasr Slack不在通知 App
+# PASR Slack不在通知 App
 
-## 目的
-- Slack List を入力台帳として利用し、不在通知運用を実現する。
-- 入力UIは Slack、業務ロジックは Slack Platform/SDK + Cloudflare Workers に分離する。
+Slack List を入力台帳として、Cloudflare Workers で平日の日次通知を実行します。  
+Phase 2 は deploy-first 運用を優先し、初回デプロイから障害時再実行までをこの Runbook で完結させます。
 
-## アーキテクチャ
-```mermaid
-flowchart LR
-  subgraph slackSide [Slack]
-    absenceList[absence_list]
-    memberMasterList[member_master_list]
-    absenceWorkflow[AbsenceRegistrationWorkflow]
-    channelNotify[NotifyChannels]
-  end
+## 運用の前提
+- 判定時刻は JST（`Asia/Tokyo`）固定。
+- 失敗はレコード単位で隔離し、全体処理は継続。
+- 手動実行 endpoint `/run` は Bearer 認証必須。
+- `scheduled` 実行は内部トリガーのため HTTP 認証対象外。
 
-  subgraph cloudflareSide [CloudflareWorkers]
-    setupJob[BootstrapSetup]
-    dailyJob[WeekdayCronNotifier]
-    holidayResolver[HolidayResolverAPI]
-  end
+## 必須設定（Secrets / Vars / Binding）
 
-  absenceWorkflow --> absenceList
-  memberMasterList --> absenceWorkflow
-  setupJob --> absenceList
-  setupJob --> memberMasterList
-  dailyJob --> absenceList
-  dailyJob --> holidayResolver
-  dailyJob --> channelNotify
-```
+### 1) 依存関係
+- `npm install`
 
-## 境界（責務分離）
-- Slack 側:
-  - 入力 UI と台帳管理（List / Workflow）を担当する。
-  - 不在データの登録起点を提供する。
-- Cloudflare 側:
-  - setup、定期実行、抽出判定、通知実行を担当する。
-  - 失敗時はレコード単位で skip して処理継続する。
-- データ境界:
-  - `absence_list` は入力ソース・通知判定ソースとして扱う。
-  - `member_master_list` は Phase 3 まで参照のみの概念として扱う。
-- セキュリティ境界:
-  - Token/Secret は Cloudflare Secrets のみで管理し、リポジトリに保存しない。
+### 2) KV Namespace
+- `npx wrangler kv namespace create PASR_STATE`
+- 返却された namespace ID を `wrangler.jsonc` の `kv_namespaces[0].id` に反映
 
-## Agents SDK 境界
-- Cloudflare 側の実装基盤は `agents` を採用する前提とする。
-- Workers のエントリ境界:
-  - HTTP 入口は `routeAgentRequest` を優先し、非該当ルートのみ通常 `Response` を返す。
-- 状態/実行境界:
-  - 状態管理は Agent の `setState` と永続化機構を利用する。
-  - 定期実行・遅延実行は Agent のスケジューリング API で扱う。
-- 設定境界:
-  - `wrangler` には Durable Object binding と migration を定義する。
-  - 過去 migration は編集せず、新しい tag を追加する運用とする。
-- TypeScript 境界:
-  - `@callable` 互換性のため `experimentalDecorators` は有効化しない。
+### 3) Cloudflare Secrets
+- `npx wrangler secret put SLACK_BOT_TOKEN`
+- `npx wrangler secret put SLACK_SIGNING_SECRET`
+- `npx wrangler secret put RUN_ENDPOINT_TOKEN`
 
-## Cloudflare ガードレール
-- 仕様・制限・CLI オプションは固定知識で判断せず、Cloudflare 公式ドキュメントを都度確認する。
-- Workers 設定は `wrangler.jsonc` を正本として管理する。
-- `compatibility_date` は新規作成時点で最新寄りの値を採用し、定期更新を前提にする。
-- `compatibility_flags` は `nodejs_compat` を基本有効化方針とする。
-- binding 変更後は `wrangler types` を実行し、`Env` は手書きしない。
-- Secret は `wrangler secret` 系で管理し、ソース・設定ファイル・コミットへ含めない。
+### 4) Vars（`wrangler.jsonc`）
+- `vars.TZ=Asia/Tokyo`
+- `vars.SLACK_ABSENCE_LIST_ID`（任意: 空なら setup/lazy setup で作成）
+- `vars.SLACK_LIST_ACCESS_USER_IDS`（任意: カンマ区切り）
 
-## Workers Best Practices 境界
-- request スコープの値をモジュールグローバル変数に保持しない。
-- 非同期処理は `await` / `return` / `ctx.waitUntil()` のいずれかで明示的に扱う。
-- 例外制御は明示的な `try/catch` を基本とし、障害調査可能なログを残す。
-- セキュリティ用途の乱数は Web Crypto を使用し、`Math.random()` に依存しない。
+## デプロイ手順（deploy-first）
 
-## フェーズ計画
-- **Phase 1（MVP）**
-  - `absence_list` のみ運用
-  - 平日 Cron 実行
-  - `notify_channels` へのチャンネル投稿のみ
-- **Phase 2（運用安定）**
-  - ログ可観測性の強化（エラー分類、skip理由集計）
-- **Phase 2.5（通知拡張）**
-  - `notify_users` への DM 通知追加
-- **Phase 3（入力体験）**
-  - `member_master_list` の導入（既定通知先の管理）
-  - 入力補助の強化（既定値適用、入力ミスの事前ガイド）
-  - 外部カレンダー/祝日 API 判定の追加
+### dev
+1. `npm run dev`
+2. `curl http://localhost:8787/health`
+3. `curl -H "Authorization: Bearer <RUN_ENDPOINT_TOKEN>" http://localhost:8787/run`
+4. `curl http://localhost:8787/__scheduled`
 
-## 受け入れ条件
-- 平日定時に JST 基準で `start_date <= today <= end_date` のみが通知される。
-- List 未作成環境でも setup 1回で初期化できる。
-- 不在登録が `absence_list` の必要項目だけで成立する。
-- `notify_channels` 未入力時は登録拒否、またはエラー通知される。
-- `start_date > end_date` のレコードは通知されず、ログに記録される。
+### staging / prod
+1. Secret が環境に投入済みであることを確認
+2. `npx wrangler deploy`
+3. `/health` で readiness を確認
+4. `/run` をトークン付きで 1 回実行し、ログに run summary が出ることを確認
 
-## 詳細実装の扱い
-- 以下は後続タスクで定義する:
-  - 通知のグルーピング仕様
-  - API 呼び出し順序とエラーリカバリ
-  - 再実行時の運用詳細
+## 運用時の確認ポイント
+- 実行ログは JSON を前提に確認する。
+- `event=daily_notify_done` を基点に、以下を最低限追跡する:
+  - `run_id`
+  - `listId`
+  - `processed`
+  - `sent`
+  - `skipped`
+  - `errors`
+- skip は `event=skip_record` の `reason` で確認する（例: `missing_notify_channels`, `invalid_date_range`）。
 
-## Phase 1 実行手順
-- 依存関係をインストールする:
-  - `npm install`
-- Cloudflare Secret を設定する:
-  - `npx wrangler secret put SLACK_BOT_TOKEN`
-  - `npx wrangler secret put SLACK_SIGNING_SECRET`
-- KV Namespace を作成し `wrangler.jsonc` に ID を設定する:
-  - `npx wrangler kv namespace create PASR_STATE`
-- 変数を設定する:
-  - `vars.SLACK_ABSENCE_LIST_ID` は fallback 用（空でも実行可）
-  - 必要なら `vars.SLACK_LIST_ACCESS_USER_IDS` に共有先ユーザー ID をカンマ区切りで設定
-- ローカル起動:
-  - `npm run dev`
-- run 手動実行:
-  - `curl http://localhost:8787/run`
-- scheduled テスト:
-  - `curl http://localhost:8787/__scheduled`
+## 再実行 Runbook（障害時）
+1. 失敗 run の `run_id` とエラーイベントを確認
+2. 原因（Slack 側データ不備、token 期限、チャネル権限など）を修正
+3. 当日分を `/run` で再実行（Bearer 必須）
+4. `daily_notify_done` の `errors=0` または許容範囲を確認
+5. Slack 投稿が既存メッセージ更新（`chat.update`）で重複していないことを確認
 
-## ログと再実行方針
-- ログは JSON 形式で出力し、`processed/sent/skipped/errors` を確認する。
-- skip 理由（例: `missing_notify_channels`, `invalid_date_range`）を記録する。
-- 同日再実行は同一チャンネルの既存投稿を `chat.update` で更新する。
-- `message_not_found` 時は新規投稿にフォールバックし、保存済み `ts` を更新する。
-- 平日判定は `scheduled` 側で行い、`run` は手動実行用に判定なしで実行する。
+## Endpoint 仕様（Phase 2）
+- `GET /health`
+  - 認証不要
+  - `200 {"ok":true}`
+- `GET /run`
+  - `Authorization: Bearer <RUN_ENDPOINT_TOKEN>` 必須
+  - 認証失敗時は `401 {"ok":false,"error":"Unauthorized"}`
+- `scheduled`
+  - 平日のみ実行
+  - 週末は `skip_weekend_scheduled` を出力して終了
 
-## Phase 1.5 の reconcile 期待値
-- `slackLists.update` はカラム追加用途では使わず、list 更新可能性の整合確認として扱う。
-- カラム定義の初期化は `setup/create` 側で行い、後続運用で差分追加を期待しない。
+## スコープ境界
+- Phase 2 で実施:
+  - deploy-first Runbook 整備
+  - `/run` 認証の導入
+  - run summary ログキー統一
+- Phase 2.x へ分離:
+  - 高度な可観測性（ダッシュボード/集計ストア/時系列分析）
+  - Slack 起点 endpoint の署名検証導線本実装
