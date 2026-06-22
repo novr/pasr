@@ -100,23 +100,27 @@ flowchart LR
 - 依存関係をインストールする:
   - `npm install`
 - Cloudflare Secret を設定する:
-  - `wrangler secret put SLACK_BOT_TOKEN`
-  - `wrangler secret put SLACK_SIGNING_SECRET`
+  - `npx wrangler secret put SLACK_BOT_TOKEN`
+  - `npx wrangler secret put SLACK_SIGNING_SECRET`
+- KV Namespace を作成し `wrangler.jsonc` に ID を設定する:
+  - `npx wrangler kv namespace create PASR_STATE`
 - 変数を設定する:
-  - `wrangler.jsonc` の `vars.SLACK_ABSENCE_LIST_ID` を setup 後の list id に設定
+  - `vars.SLACK_ABSENCE_LIST_ID` は fallback 用（空でも実行可）
   - 必要なら `vars.SLACK_LIST_ACCESS_USER_IDS` に共有先ユーザー ID をカンマ区切りで設定
 - ローカル起動:
   - `npm run dev`
-- setup 手動実行:
-  - `curl http://localhost:8787/setup`
-  - レスポンスの `accessGranted` が `true` なら user 共有まで完了
-- daily 手動実行:
-  - `curl http://localhost:8787/run-daily`
-  - 週末でも強制実行する場合: `curl "http://localhost:8787/run-daily?force=true"`
+- run 手動実行:
+  - `curl http://localhost:8787/run`
 - scheduled テスト:
   - `curl http://localhost:8787/__scheduled`
 
 ## ログと再実行方針
 - ログは JSON 形式で出力し、`processed/sent/skipped/errors` を確認する。
 - skip 理由（例: `missing_notify_channels`, `invalid_date_range`）を記録する。
-- 同日再実行は再投稿を許可する（重複抑止なし）。
+- 同日再実行は同一チャンネルの既存投稿を `chat.update` で更新する。
+- `message_not_found` 時は新規投稿にフォールバックし、保存済み `ts` を更新する。
+- 平日判定は `scheduled` 側で行い、`run` は手動実行用に判定なしで実行する。
+
+## Phase 1.5 の reconcile 期待値
+- `slackLists.update` はカラム追加用途では使わず、list 更新可能性の整合確認として扱う。
+- カラム定義の初期化は `setup/create` 側で行い、後続運用で差分追加を期待しない。

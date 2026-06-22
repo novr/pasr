@@ -1,4 +1,5 @@
 export type Env = {
+  PASR_STATE: KVNamespace;
   SLACK_BOT_TOKEN: string;
   SLACK_SIGNING_SECRET: string;
   SLACK_ABSENCE_LIST_ID: string;
@@ -7,6 +8,7 @@ export type Env = {
 };
 
 export type AppConfig = {
+  stateKv: KVNamespace;
   slackBotToken: string;
   slackSigningSecret: string;
   absenceListId: string;
@@ -21,8 +23,12 @@ export const getConfig = (env: Env): AppConfig => {
   if (!env.SLACK_SIGNING_SECRET) {
     throw new Error("Missing SLACK_SIGNING_SECRET");
   }
+  if (!env.PASR_STATE) {
+    throw new Error("Missing PASR_STATE binding");
+  }
 
   return {
+    stateKv: env.PASR_STATE,
     slackBotToken: env.SLACK_BOT_TOKEN,
     slackSigningSecret: env.SLACK_SIGNING_SECRET,
     absenceListId: env.SLACK_ABSENCE_LIST_ID ?? "",

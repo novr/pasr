@@ -1,6 +1,13 @@
 import type { AppConfig } from "../config";
 import { filterToday, groupByChannel, parseAbsence, type AbsenceRecord, type SkipReason } from "../domain/absence";
+import { runSetup } from "./setup";
 import { slackApi } from "../slack/api";
+import {
+  readPersistedListId,
+  readPostedMessageTs,
+  writePersistedListId,
+  writePostedMessageTs
+} from "../state/kv";
 
 type DailyResult = {
   processed: number;
@@ -52,6 +59,9 @@ const buildMessageLine = (record: AbsenceRecord): string => {
 };
 
 const buildMessage = (today: string, records: AbsenceRecord[]): string => {
+  if (records.length === 0) {
+    return [`本日（${today}）の不在予定`, "• 予定なし"].join("\n");
+  }
   const lines = records.map(buildMessageLine);
   return [`本日（${today}）の不在予定`, ...lines].join("\n");
 };
@@ -90,8 +100,7 @@ const parseNoteText = (note?: string): string | undefined => {
 };
 
 export const runDailyNotify = async (
-  config: AppConfig,
-  options?: { forceRun?: boolean }
+  config: AppConfig
 ): Promise<DailyResult> => {
   const result: DailyResult = {
     processed: 0,
@@ -100,15 +109,18 @@ export const runDailyNotify = async (
     errors: 0,
     skipReasons: zeroedReasons()
   };
-  const { day, weekday } = toJstDate();
-  const forceRun = options?.forceRun === true;
-  if (!forceRun && (weekday === 0 || weekday === 6)) {
-    console.log(JSON.stringify({ level: "info", event: "skip_weekend", day }));
-    return result;
+  const { day } = toJstDate();
+  let listId = await readPersistedListId(config);
+  if (!listId && config.absenceListId) {
+    listId = config.absenceListId;
+    await writePersistedListId(config, listId);
   }
-  if (!config.absenceListId) throw new Error("SLACK_ABSENCE_LIST_ID is required for daily notify");
+  if (!listId) {
+    const setupResult = await runSetup(config);
+    listId = setupResult.listId;
+  }
 
-  const listResponse = await slackApi.listAbsences(config, config.absenceListId);
+  const listResponse = await slackApi.listAbsences(config, listId);
   const parsed = (listResponse.items ?? []).map(parseAbsence);
   result.processed = parsed.length;
 
@@ -124,19 +136,57 @@ export const runDailyNotify = async (
   }
 
   const todays = filterToday(validRecords, day);
-  const grouped = groupByChannel(todays);
+  const grouped =
+    todays.length > 0
+      ? groupByChannel(todays)
+      : new Map(
+          [...new Set(validRecords.flatMap((record) => record.notifyChannels))].map((channel) => [
+            channel,
+            [] as AbsenceRecord[]
+          ])
+        );
   for (const [channel, records] of grouped.entries()) {
+    const text = buildMessage(day, records);
+    const existingTs = await readPostedMessageTs(config, day, channel);
     try {
-      await slackApi.postChannelMessage(config, channel, buildMessage(day, records));
+      if (existingTs) {
+        const updated = await slackApi.updateChannelMessage(config, channel, existingTs, text);
+        await writePostedMessageTs(config, day, channel, updated.ts ?? existingTs);
+      } else {
+        const posted = await slackApi.postChannelMessage(config, channel, text);
+        if (!posted.ts) throw new Error("chat.postMessage response missing ts");
+        await writePostedMessageTs(config, day, channel, posted.ts);
+      }
       result.sent += 1;
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (existingTs && message.includes("message_not_found")) {
+        try {
+          const posted = await slackApi.postChannelMessage(config, channel, text);
+          if (!posted.ts) throw new Error("chat.postMessage response missing ts");
+          await writePostedMessageTs(config, day, channel, posted.ts);
+          result.sent += 1;
+          continue;
+        } catch (fallbackError) {
+          result.errors += 1;
+          console.error(
+            JSON.stringify({
+              level: "error",
+              event: "notify_fallback_failed",
+              channel,
+              message: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+            })
+          );
+          continue;
+        }
+      }
       result.errors += 1;
       console.error(
         JSON.stringify({
           level: "error",
           event: "notify_failed",
           channel,
-          message: error instanceof Error ? error.message : String(error)
+          message
         })
       );
     }

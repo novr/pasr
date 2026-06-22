@@ -96,8 +96,15 @@ export const slackApi = {
   },
 
   postChannelMessage: async (config: AppConfig, channel: string, text: string) =>
-    apiCall<Record<string, unknown>>(config, "chat.postMessage", {
+    apiCall<{ ts?: string }>(config, "chat.postMessage", {
       channel,
+      text
+    }),
+
+  updateChannelMessage: async (config: AppConfig, channel: string, ts: string, text: string) =>
+    apiCall<{ ts?: string }>(config, "chat.update", {
+      channel,
+      ts,
       text
     }),
 
