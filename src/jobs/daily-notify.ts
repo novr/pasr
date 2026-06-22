@@ -1,5 +1,6 @@
 import type { AppConfig } from "../config";
 import { filterToday, groupByChannel, parseAbsence, type AbsenceRecord, type SkipReason } from "../domain/absence";
+import { pickListField, toBooleanValue, toStringArray, toStringValue } from "../domain/slack-list-value";
 import { ensureMemberMasterList, runSetup } from "./setup";
 import { slackApi, type SlackListItem } from "../slack/api";
 import {
@@ -43,84 +44,11 @@ type MemberMasterRecord = {
   defaultNotifyChannels: string[];
 };
 
-const asRecord = (value: unknown): Record<string, unknown> | null =>
-  value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-
-const toBooleanValue = (value: unknown): boolean | undefined => {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value !== 0;
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") return true;
-    if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") return false;
-    return undefined;
-  }
-  const obj = asRecord(value);
-  if (!obj) return undefined;
-  for (const key of ["value", "checked", "is_checked", "selected"]) {
-    if (obj[key] !== undefined) {
-      const nested = toBooleanValue(obj[key]);
-      if (nested !== undefined) return nested;
-    }
-  }
-  return undefined;
-};
-
-const toStringValue = (value: unknown): string => {
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      const nested = toStringValue(entry);
-      if (nested) return nested;
-    }
-    return "";
-  }
-  const obj = asRecord(value);
-  if (!obj) return "";
-  const direct = ["id", "user_id", "channel_id", "entity_id", "value", "name"].find(
-    (key) => typeof obj[key] === "string" && String(obj[key]).length > 0
-  );
-  if (direct) return String(obj[direct]);
-  for (const nestedKey of ["value", "user", "channel", "select"]) {
-    if (obj[nestedKey] != null) {
-      const nested = toStringValue(obj[nestedKey]);
-      if (nested) return nested;
-    }
-  }
-  return "";
-};
-
-const toStringArray = (value: unknown): string[] => {
-  if (Array.isArray(value)) {
-    return value.map((entry) => toStringValue(entry)).filter((entry) => entry.length > 0);
-  }
-  const obj = asRecord(value);
-  if (!obj) return [];
-  for (const key of ["channel", "user", "select"]) {
-    if (Array.isArray(obj[key])) {
-      return obj[key].map((entry) => toStringValue(entry)).filter((entry) => entry.length > 0);
-    }
-  }
-  const single = toStringValue(value);
-  return single ? [single] : [];
-};
-
-const pick = (item: SlackListItem, key: string): unknown => {
-  if (Array.isArray(item.fields)) {
-    const fromFields = item.fields.find((entry) => {
-      const record = asRecord(entry);
-      return record?.key === key;
-    });
-    if (fromFields) return fromFields;
-  }
-  return item.fields?.[key] ?? item.values?.[key];
-};
-
 const parseMemberMaster = (item: SlackListItem): MemberMasterRecord | undefined => {
-  const targetUser = toStringValue(pick(item, "target_user")) || toStringValue(pick(item, "member_key"));
+  const targetUser = toStringValue(pickListField(item, "target_user")) || toStringValue(pickListField(item, "member_key"));
   if (!targetUser) return undefined;
-  const active = toBooleanValue(pick(item, "active")) ?? true;
-  const defaultNotifyChannels = toStringArray(pick(item, "default_notify_channels"));
+  const active = toBooleanValue(pickListField(item, "active")) ?? true;
+  const defaultNotifyChannels = toStringArray(pickListField(item, "default_notify_channels"));
   return {
     itemId: item.id,
     targetUser,
@@ -279,6 +207,125 @@ const groupByNotifyUser = (records: AbsenceRecord[]): Map<string, AbsenceRecord[
   return grouped;
 };
 
+const sendChannelNotifications = async (
+  config: AppConfig,
+  context: RunContext,
+  result: DailyResult,
+  listId: string,
+  day: string,
+  grouped: Map<string, AbsenceRecord[]>
+): Promise<void> => {
+  for (const [channel, records] of grouped.entries()) {
+    const text = buildMessage(day, records);
+    const existingTs = await readPostedMessageTs(config, day, channel);
+    try {
+      if (existingTs) {
+        const updated = await slackApi.updateChannelMessage(config, channel, existingTs, text);
+        await writePostedMessageTs(config, day, channel, updated.ts ?? existingTs);
+      } else {
+        const posted = await slackApi.postChannelMessage(config, channel, text);
+        if (!posted.ts) throw new Error("chat.postMessage response missing ts");
+        await writePostedMessageTs(config, day, channel, posted.ts);
+      }
+      result.sent += 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (existingTs && message.includes("message_not_found")) {
+        try {
+          const posted = await slackApi.postChannelMessage(config, channel, text);
+          if (!posted.ts) throw new Error("chat.postMessage response missing ts");
+          await writePostedMessageTs(config, day, channel, posted.ts);
+          result.sent += 1;
+          continue;
+        } catch (fallbackError) {
+          result.errors += 1;
+          console.error(
+            JSON.stringify({
+              level: "error",
+              event: "notify_fallback_failed",
+              run_id: context.runId,
+              trigger: context.trigger,
+              listId,
+              channel,
+              message: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+            })
+          );
+          continue;
+        }
+      }
+      result.errors += 1;
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "notify_failed",
+          run_id: context.runId,
+          trigger: context.trigger,
+          listId,
+          channel,
+          message
+        })
+      );
+    }
+  }
+};
+
+const sendDirectMessageNotifications = async (
+  config: AppConfig,
+  context: RunContext,
+  result: DailyResult,
+  listId: string,
+  day: string,
+  groupedNotifyUsers: Map<string, AbsenceRecord[]>
+): Promise<void> => {
+  for (const [notifyUser, records] of groupedNotifyUsers.entries()) {
+    if (records.length === 0) continue;
+    const text = buildDirectMessage(day, records);
+    try {
+      const dmChannelId = await slackApi.openDirectMessage(config, notifyUser);
+      const existingTs = await readPostedDirectMessageTs(config, day, notifyUser);
+      if (existingTs) {
+        try {
+          const updated = await slackApi.updateChannelMessage(config, dmChannelId, existingTs, text);
+          await writePostedDirectMessageTs(config, day, notifyUser, updated.ts ?? existingTs);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (!message.includes("message_not_found")) throw error;
+          const posted = await slackApi.postChannelMessage(config, dmChannelId, text);
+          if (!posted.ts) throw new Error("chat.postMessage response missing ts");
+          await writePostedDirectMessageTs(config, day, notifyUser, posted.ts);
+        }
+      } else {
+        const posted = await slackApi.postChannelMessage(config, dmChannelId, text);
+        if (!posted.ts) throw new Error("chat.postMessage response missing ts");
+        await writePostedDirectMessageTs(config, day, notifyUser, posted.ts);
+      }
+      console.log(
+        JSON.stringify({
+          level: "info",
+          event: "notify_user_dm_sent",
+          run_id: context.runId,
+          trigger: context.trigger,
+          listId,
+          notifyUser
+        })
+      );
+    } catch (error) {
+      result.errors += 1;
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "notify_user_dm_failed",
+          run_id: context.runId,
+          trigger: context.trigger,
+          listId,
+          notifyUser,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      );
+    }
+  }
+};
+
 const collectTextNodes = (value: unknown, bucket: string[]): void => {
   if (Array.isArray(value)) {
     for (const entry of value) collectTextNodes(entry, bucket);
@@ -382,107 +429,10 @@ export const runDailyNotify = async (
             [] as AbsenceRecord[]
           ])
         );
-  for (const [channel, records] of grouped.entries()) {
-    const text = buildMessage(day, records);
-    const existingTs = await readPostedMessageTs(config, day, channel);
-    try {
-      if (existingTs) {
-        const updated = await slackApi.updateChannelMessage(config, channel, existingTs, text);
-        await writePostedMessageTs(config, day, channel, updated.ts ?? existingTs);
-      } else {
-        const posted = await slackApi.postChannelMessage(config, channel, text);
-        if (!posted.ts) throw new Error("chat.postMessage response missing ts");
-        await writePostedMessageTs(config, day, channel, posted.ts);
-      }
-      result.sent += 1;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (existingTs && message.includes("message_not_found")) {
-        try {
-          const posted = await slackApi.postChannelMessage(config, channel, text);
-          if (!posted.ts) throw new Error("chat.postMessage response missing ts");
-          await writePostedMessageTs(config, day, channel, posted.ts);
-          result.sent += 1;
-          continue;
-        } catch (fallbackError) {
-          result.errors += 1;
-          console.error(
-            JSON.stringify({
-              level: "error",
-              event: "notify_fallback_failed",
-              run_id: context.runId,
-              trigger: context.trigger,
-              listId: resolvedListId,
-              channel,
-              message: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
-            })
-          );
-          continue;
-        }
-      }
-      result.errors += 1;
-      console.error(
-        JSON.stringify({
-          level: "error",
-          event: "notify_failed",
-          run_id: context.runId,
-          trigger: context.trigger,
-          listId: resolvedListId,
-          channel,
-          message
-        })
-      );
-    }
-  }
+  await sendChannelNotifications(config, context, result, resolvedListId, day, grouped);
 
   const groupedNotifyUsers = groupByNotifyUser(todaysForDm);
-  for (const [notifyUser, records] of groupedNotifyUsers.entries()) {
-    if (records.length === 0) continue;
-    const text = buildDirectMessage(day, records);
-    try {
-      const dmChannelId = await slackApi.openDirectMessage(config, notifyUser);
-      const existingTs = await readPostedDirectMessageTs(config, day, notifyUser);
-      if (existingTs) {
-        try {
-          const updated = await slackApi.updateChannelMessage(config, dmChannelId, existingTs, text);
-          await writePostedDirectMessageTs(config, day, notifyUser, updated.ts ?? existingTs);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (!message.includes("message_not_found")) throw error;
-          const posted = await slackApi.postChannelMessage(config, dmChannelId, text);
-          if (!posted.ts) throw new Error("chat.postMessage response missing ts");
-          await writePostedDirectMessageTs(config, day, notifyUser, posted.ts);
-        }
-      } else {
-        const posted = await slackApi.postChannelMessage(config, dmChannelId, text);
-        if (!posted.ts) throw new Error("chat.postMessage response missing ts");
-        await writePostedDirectMessageTs(config, day, notifyUser, posted.ts);
-      }
-      console.log(
-        JSON.stringify({
-          level: "info",
-          event: "notify_user_dm_sent",
-          run_id: context.runId,
-          trigger: context.trigger,
-          listId: resolvedListId,
-          notifyUser
-        })
-      );
-    } catch (error) {
-      result.errors += 1;
-      console.error(
-        JSON.stringify({
-          level: "error",
-          event: "notify_user_dm_failed",
-          run_id: context.runId,
-          trigger: context.trigger,
-          listId: resolvedListId,
-          notifyUser,
-          message: error instanceof Error ? error.message : String(error)
-        })
-      );
-    }
-  }
+  await sendDirectMessageNotifications(config, context, result, resolvedListId, day, groupedNotifyUsers);
 
   console.log(
     JSON.stringify({
