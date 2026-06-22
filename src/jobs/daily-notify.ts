@@ -4,8 +4,10 @@ import { ensureMemberMasterList, runSetup } from "./setup";
 import { slackApi, type SlackListItem } from "../slack/api";
 import {
   writeLastRunSummary,
+  readPostedDirectMessageTs,
   readPersistedListId,
   readPostedMessageTs,
+  writePostedDirectMessageTs,
   writePersistedListId,
   writePostedMessageTs
 } from "../state/kv";
@@ -439,7 +441,23 @@ export const runDailyNotify = async (
     const text = buildDirectMessage(day, records);
     try {
       const dmChannelId = await slackApi.openDirectMessage(config, notifyUser);
-      await slackApi.postChannelMessage(config, dmChannelId, text);
+      const existingTs = await readPostedDirectMessageTs(config, day, notifyUser);
+      if (existingTs) {
+        try {
+          const updated = await slackApi.updateChannelMessage(config, dmChannelId, existingTs, text);
+          await writePostedDirectMessageTs(config, day, notifyUser, updated.ts ?? existingTs);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (!message.includes("message_not_found")) throw error;
+          const posted = await slackApi.postChannelMessage(config, dmChannelId, text);
+          if (!posted.ts) throw new Error("chat.postMessage response missing ts");
+          await writePostedDirectMessageTs(config, day, notifyUser, posted.ts);
+        }
+      } else {
+        const posted = await slackApi.postChannelMessage(config, dmChannelId, text);
+        if (!posted.ts) throw new Error("chat.postMessage response missing ts");
+        await writePostedDirectMessageTs(config, day, notifyUser, posted.ts);
+      }
       console.log(
         JSON.stringify({
           level: "info",
