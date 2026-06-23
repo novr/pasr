@@ -1,5 +1,6 @@
 import type { AppConfig } from "../config";
 import { filterToday, groupByChannel, parseAbsence, type AbsenceRecord, type SkipReason } from "../domain/absence";
+import { formatAttendanceNoticeLine } from "../domain/absence-registration";
 import { pickListField, toBooleanValue, toStringValue } from "../domain/slack-list-value";
 import { ensureMemberMasterList, runSetup } from "./setup";
 import { slackApi, type SlackListItem } from "../slack/api";
@@ -155,14 +156,8 @@ const toJstDate = (): { day: string; weekday: number } => {
   return { day, weekday: weekdayMap[weekDayName] ?? 0 };
 };
 
-const buildMessageLine = (record: AbsenceRecord): string => {
-  const details: string[] = [];
-  if (record.absenceType) details.push(record.absenceType);
-  const noteText = parseNoteText(record.note);
-  if (noteText) details.push(noteText);
-  const suffix = details.length > 0 ? ` ${details.join(" ")}` : "";
-  return `• <@${record.targetUser}>${suffix}`;
-};
+const buildMessageLine = (record: AbsenceRecord): string =>
+  formatAttendanceNoticeLine(record.targetUser, parseNoteText(record.note));
 
 const buildMessage = (today: string, records: AbsenceRecord[]): string => {
   if (records.length === 0) {

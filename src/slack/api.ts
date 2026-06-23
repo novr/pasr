@@ -1,5 +1,5 @@
 import type { AppConfig } from "../config";
-import { ABSENCE_LIST_NAME, absenceSchema, type AbsenceRecord } from "../domain/absence";
+import { ABSENCE_LIST_NAME, absenceSchema, DEFAULT_ABSENCE_TYPE, type AbsenceRecord } from "../domain/absence";
 import { parseRegistrationNotifyMode, type RegistrationNotifyMode } from "../domain/absence-registration";
 import {
   MEMBER_MASTER_LIST_NAME,
@@ -164,8 +164,8 @@ const buildAbsenceInitialFields = (
     { column_id: columnIds.startDate, date: [record.startDate] },
     { column_id: columnIds.endDate, date: [record.endDate] }
   ];
-  if (columnIds.type && record.absenceType) {
-    initialFields.push({ column_id: columnIds.type, select: [record.absenceType] });
+  if (columnIds.type) {
+    initialFields.push({ column_id: columnIds.type, select: [record.absenceType ?? DEFAULT_ABSENCE_TYPE] });
   }
   if (columnIds.notifyChannels && record.notifyChannels.length > 0) {
     initialFields.push({ column_id: columnIds.notifyChannels, channel: record.notifyChannels });

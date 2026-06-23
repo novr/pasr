@@ -1,12 +1,9 @@
-import type { SlackListMetadataSchemaColumn } from "../slack/list-columns";
 import { getJstDateParts } from "./jst-date";
 
 export const REGISTRATION_NOTIFY_MODES = ["none", "ch", "dm", "both"] as const;
 export type RegistrationNotifyMode = (typeof REGISTRATION_NOTIFY_MODES)[number];
 
 export const DAILY_NOTIFY_HOUR_JST = 9;
-
-export type AbsenceTypeChoice = { value: string; label: string };
 
 export type AbsenceRegisterValidationError = {
   reason: "past_date" | "invalid_range" | "missing_notify_target" | "inactive_user";
@@ -36,22 +33,12 @@ export const formatRegistrationNotifyModeLabel = (mode: RegistrationNotifyMode):
 export const resolveAbsenceEndDate = (startDate: string, endDate: string): string =>
   endDate.length > 0 ? endDate : startDate;
 
-export const parseAbsenceTypeChoices = (schema: SlackListMetadataSchemaColumn[]): AbsenceTypeChoice[] => {
-  const typeColumn = schema.find((column) => column.key === "type");
-  const rawChoices = typeColumn?.options?.choices;
-  if (!Array.isArray(rawChoices)) {
-    return [{ value: "absence", label: "absence" }];
-  }
-  const choices: AbsenceTypeChoice[] = [];
-  for (const entry of rawChoices) {
-    if (!entry || typeof entry !== "object") continue;
-    const record = entry as Record<string, unknown>;
-    const value = typeof record.value === "string" ? record.value : "";
-    if (!value) continue;
-    const label = typeof record.label === "string" && record.label.length > 0 ? record.label : value;
-    choices.push({ value, label });
-  }
-  return choices.length > 0 ? choices : [{ value: "absence", label: "absence" }];
+export const formatAttendancePeriod = (startDate: string, endDate: string): string =>
+  startDate === endDate ? startDate : `${startDate} 〜 ${endDate}`;
+
+export const formatAttendanceNoticeLine = (targetUser: string, noteText?: string): string => {
+  const suffix = noteText && noteText.length > 0 ? ` ${noteText}` : "";
+  return `• <@${targetUser}>${suffix}`;
 };
 
 export const validateAbsenceRegistration = (input: {
@@ -125,18 +112,12 @@ export const buildRegistrationNotifyMessage = (params: {
   targetUser: string;
   startDate: string;
   endDate: string;
-  absenceType?: string;
   note?: string;
 }): string => {
-  const details: string[] = [];
-  if (params.absenceType) details.push(params.absenceType);
-  if (params.note?.trim()) details.push(params.note.trim());
-  const suffix = details.length > 0 ? ` ${details.join(" ")}` : "";
-  const period =
-    params.startDate === params.endDate
-      ? params.startDate
-      : `${params.startDate} 〜 ${params.endDate}`;
-  return [`• <@${params.targetUser}>${suffix}`, `期間: ${period}`].join("\n");
+  const period = formatAttendancePeriod(params.startDate, params.endDate);
+  const noteText = params.note?.trim();
+  const detail = noteText ? `${period} — ${noteText}` : period;
+  return formatAttendanceNoticeLine(params.targetUser, detail);
 };
 
 export const buildRegistrationSuccessEphemeral = (params: {

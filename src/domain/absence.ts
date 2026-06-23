@@ -3,6 +3,7 @@ import { pickListField, toStringArray, toStringValue } from "./slack-list-value"
 
 export const ABSENCE_LIST_NAME = "absence_list";
 export const ABSENCE_SCHEMA_VERSION = 1;
+export const DEFAULT_ABSENCE_TYPE = "absence";
 
 export const absenceSchema = [
   { key: "absence_title", name: "Absence", type: "text", is_primary_column: true },
@@ -20,7 +21,7 @@ export const absenceSchema = [
     type: "select",
     options: {
       format: "single_select",
-      choices: [{ value: "absence", label: "absence", color: "blue" }]
+      choices: [{ value: DEFAULT_ABSENCE_TYPE, label: "不在", color: "blue" }]
     }
   },
   { key: "notify_channels", name: "Notify Channels", type: "channel", options: { format: "multi_entity" } },
