@@ -15,7 +15,7 @@ Worker は3ハンドラで構成する。
 |----------|------|------|
 | `fetch` | HTTP（`/health`, `/run`, `/slack/*`） | Slack 起点は署名検証必須。`event_callback` と重処理は ACK 後に `waitUntil` |
 | `scheduled` | cron `0 0 * * *` UTC（JST 9:00） | JST 平日のみ `runDailyNotify`。週末は `skip_weekend_scheduled` で終了 |
-| `queue` | `ADMIN_TASK_QUEUE` consumer | `/pasr-admin run` / `migrate` / `prune` の実処理。一時障害のみ retry |
+| `queue` | `ADMIN_TASK_QUEUE` consumer | `/pasr-admin run` / `migrate` / `prune` と `/pasr list` / `update` 一覧の実処理。一時障害のみ retry |
 
 ## ドメイン不変条件
 
@@ -33,7 +33,7 @@ Worker は3ハンドラで構成する。
 
 ## Slash Command 権限
 
-**`/pasr`** — 全ユーザー可。即時応答（help/view）または Modal 起動（register/update）。
+**`/pasr`** — 全ユーザー可。`list` / `update`（一覧）は Queue 非同期。`update YYYY-MM-DD` の Modal は同期（`trigger_id`）。
 
 **`/pasr-admin`** — `SLACK_ADMIN_USER_IDS` allowlist 必須。非該当は即時 ACK のみ（`Received. Processing...`）、実処理なし。
 - `help` / `status`: 即時応答
@@ -41,7 +41,10 @@ Worker は3ハンドラで構成する。
 
 ## Interactions 不変条件
 
-- `view_submission` は List 書き込みまで同期 ACK。登録通知・成功 ephemeral は `waitUntil`
+- `view_submission` は List 書き込みまで同期 ACK。登録通知・一覧削除再描画は `waitUntil`
+- register / list-edit は `action_id`・`callback_id` で分岐
+- 不在の編集・削除は本人レコードのみ。編集時の登録通知再送なし
+- 終了済み（`end_date < today` JST）と parse 失敗行は daily run 後 `items.delete`（証票用途なし）
 - `app_mention` はチャンネル直下のみ（`thread_ts` ありは除外）
 
 ## データ境界（KV 正本）
