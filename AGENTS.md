@@ -1,81 +1,102 @@
 # AGENTS.md
 
-## Purpose
-- Slack List を入力台帳とし、Cloudflare Workers 上の Slack App で不在通知を実行する。
+エージェント向け不変条件。手順・エンドポイント詳細・ローカル確認は `README.md` を参照する。
 
-## Core Rules
-- 判定基準時刻は常に JST（`Asia/Tokyo`）。
-- 失敗はレコード単位で隔離し、全体処理は継続する。
+## 責務分離
 
-## Phase 2 Deploy-First Rules
-- 優先事項は deploy-first（先に安全なデプロイ運用を固定する）。
-- `README.md` を運用Runbookの正本として扱い、手順変更時は実装と同時更新する。
-- `/run` は手動再実行専用入口とし、Bearer token 認証なしの実行を許可しない。
-- 実行ログは `run_id`, `listId`, `processed`, `sent`, `skipped`, `errors` を必須キーとして扱う。
-- 可観測性の高度化（ダッシュボード/集計ストア）は Phase 2.x へ分離し、Phase 2 では実施しない。
+- **AGENTS.md**: コード変更時に壊してはいけない制約・不変条件
+- **README.md**: 設定・デプロイ手順、エンドポイント仕様、ローカル確認コマンド
 
-## Production Operation Guardrails
-- Secret 値やトークンをレスポンス本文やログへ出力しない。
-- 認証失敗時は `401` と最小エラーボディで返す。
-- `scheduled` の週末スキップを回避するための強制フラグを導入しない。
-- 本番障害時は「原因修正 -> `/run` 再実行 -> run summary確認」の順序を維持する。
+## 実行境界
 
-## Phase 2.1 Slack Events Rules
-- Slack 起点 endpoint は `POST /slack/events` を入口とし、署名検証必須で受け付ける。
-- 署名検証は `request.text()` の生ボディを使用し、JSON 再構成文字列で検証しない。
-- `event_callback` は 200 ACK を先に返し、重い処理は必ず非同期へ委譲する。
-- `event_id` の短期 TTL 重複抑止を必須とし、重複イベントは捨てる。
-- 重複抑止時は `duplicate_event_dropped` を構造化ログで記録する。
+Worker は3ハンドラで構成する。
 
-## Phase 2.2 Slash Command Rules
-- Slash Command 入口は `POST /slack/command` とし、署名検証必須で受け付ける。
-- 実行権限は `SLACK_ADMIN_USER_IDS` で判定し、allowlist 非該当は no-op とする。
-- コマンド処理は ACK 後に非同期実行し、同期処理で重い処理を行わない。
-- `trigger_id` の TTL=300秒重複抑止を必須とし、重複コマンドは捨てる。
+| ハンドラ | 入口 | 制約 |
+|----------|------|------|
+| `fetch` | HTTP（`/health`, `/run`, `/slack/*`） | Slack 起点は署名検証必須。`event_callback` と重処理は ACK 後に `waitUntil` |
+| `scheduled` | cron `0 0 * * *` UTC（JST 9:00） | JST 平日のみ `runDailyNotify`。週末は `skip_weekend_scheduled` で終了 |
+| `queue` | `ADMIN_TASK_QUEUE` consumer | `/pasr-admin run` / `migrate` / `prune` の実処理。一時障害のみ retry |
 
-## Phase 2.3 Absence Registration Rules
-- 不在登録入口は `/pasr register` と `app_mention`（チャンネル直下のみ。`thread_ts` ありは除外）。
-- `app_mention` は ephemeral + ボタン経由で Modal を開く（`trigger_id` は `block_actions` で取得）。
-- Interactions は `POST /slack/interactions`。`view_submission` は List 書き込みまで同期、通知は `waitUntil`。
-- 登録通知は absence レコードではなく Modal 選択値 + 当日ルール（9:00 JST 前後）で判定する。
-- `member_master` schema v3 の `default_registration_notify` は登録 Modal 初期値のみ（日次通知とは独立）。
+## ドメイン不変条件
 
-## Phase #4 User Master Rules
-- user master list 名は `member_master` とし、主キー相当は `Target User`（Slack user entity）を使う。
-- list 作成時は user 通知を無効化する（`notify_users=false`）。
-- `active` は checkbox フィールドで運用し、checked=true を通知対象とする。
-- master 未登録ユーザーは daily 実行時に最小レコードで自動 insert する。
-- `active` が unchecked（false）の場合は `inactive_user_master` として明示スキップし、skip 集計へ加算する。
-- `default_registration_notify`（select: none/ch/dm/both）は登録 Modal の初期値。schema version 3。
+- 判定基準時刻は常に JST（`Asia/Tokyo`）
+- 失敗はレコード単位で隔離し、全体処理は継続する
+- `Notify Users` は absence レコードの値のみ使用（`member_master` で補完しない）
+- `absence.notify_channels` / `absence.notify_users` は daily 実行時に master default で補完しない
+- `scheduled` の週末スキップを回避する強制フラグは導入しない
 
-## Configuration
-- 組織ごとに Slack App / Cloudflare 環境を分離する。
-- Secrets は Cloudflare 側で管理し、リポジトリへ保存しない。
-  - 例: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`
-- vars:
-  - `TZ=Asia/Tokyo`
-  - `SLACK_ADMIN_USER_IDS`
+## Slack 署名・重複抑止
 
-## Testing Rules
-- domain / queue / dedupe / transient / list-discovery を変更したら `npm test` を実行する。
-- テスト・npm scripts 変更時は README「開発・テスト」を同時更新する。
-- 単体テストは I/O モック前提。本番確認は deploy 後の `/run` / slash command で行う。
-- Queue は一時障害のみ retry する。subrequest 上限エラーは retry しない（`src/errors/transient.test.ts` で固定）。
-- dedupe / 署名検証の仕様変更時は対応する `*.test.ts` を更新する。
-- リファクタ・テスト PR では自明コメントと dead code を残さない。
-- Workers 統合テスト（`@cloudflare/vitest-pool-workers`）は Phase 2 では導入しない。
+- 署名検証は `request.text()` の生ボディを使用（JSON 再構成文字列は使わない）
+- `event_id` は KV 短期 TTL（300秒）で重複抑止。重複は破棄し `duplicate_event_dropped` をログ
+- `trigger_id` は KV 短期 TTL（300秒）で重複抑止（enqueue 前）。重複は破棄し `duplicate_command_dropped` をログ
 
-## Architecture Boundary
-- Slack は入力/UI境界、Cloudflare Workers は実行/通知境界として扱う。
-- Cloudflare 実装は Agents SDK（`agents`）前提で設計する。
-- Workers ルーティングは `routeAgentRequest` を優先し、通常 HTTP と境界分離する。
-- Durable Object binding と migration の追加運用を守り、既存 migration は変更しない。
-- TypeScript は `experimentalDecorators` を有効化しない。
+## Slash Command 権限
 
-## Cloudflare / Workers Policy
-- Cloudflare 仕様は事前知識で断定せず、公式ドキュメントを都度確認する。
-- Worker 設定は `wrangler.jsonc` を正本として扱う。
-- binding 変更時は `wrangler types` で型同期し、`Env` を手書きしない。
-- `compatibility_date` は定期更新し、`nodejs_compat` を基本方針とする。
-- Secret は Cloudflare 側でのみ管理し、コードや設定に埋め込まない。
-- request スコープのグローバル保持と未管理 Promise を禁止する。
+**`/pasr`** — 全ユーザー可。即時応答（help/view）または Modal 起動（register/update）。
+
+**`/pasr-admin`** — `SLACK_ADMIN_USER_IDS` allowlist 必須。非該当は即時 ACK のみ（`Received. Processing...`）、実処理なし。
+- `help` / `status`: 即時応答
+- `run` / `migrate` / `prune`: 即時 ACK 後 Queue 経由で非同期実行
+
+## Interactions 不変条件
+
+- `view_submission` は List 書き込みまで同期 ACK。登録通知・成功 ephemeral は `waitUntil`
+- `app_mention` はチャンネル直下のみ（`thread_ts` ありは除外）
+
+## データ境界（KV 正本）
+
+Store: `PASR_STATE` KV
+
+**List 名と schema version**
+- `absence_list` — version **1**（`ABSENCE_SCHEMA_VERSION`）
+- `member_master` — version **3**（`MEMBER_MASTER_SCHEMA_VERSION`）
+
+**正本キー**
+- `absence:config:list_id` — active `absence_list` の List ID
+- `absence:config:schema_version`
+- `member_master:config:list_id`
+- `member_master:config:schema_version`
+- `absence:run:last_summary`
+- `absence:post:{jstDate}:{channelId}` — 日次 CH 通知の `chat.update` 用 ts
+- `absence:dm:{jstDate}:{userId}` — 日次 DM の ts
+- `slack:event:dedupe:{eventId}` / `slack:command:dedupe:{triggerId}`
+- `prune:pending` / `migration:in_progress`（TTL 600秒）
+
+**migrate 前提**
+- KV の schema version と実 List スキーマの両方を検証。不一致時は register/update が失敗し migrate を促す
+- schema v3 初デプロイ後は `/pasr-admin migrate` 必須
+- list 作成時は `notify_users=false`
+- `member_master` 主キー相当は `Target User`（Slack user entity）
+- `active` checkbox: checked=true が通知対象。false は `inactive_user_master` でスキップ集計
+- master 未登録ユーザーは daily 実行時に最小レコードで自動 insert
+
+## 設定・セキュリティ
+
+- 組織ごとに Slack App / Cloudflare 環境を分離
+- Secret（`SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `RUN_ENDPOINT_TOKEN`）は Cloudflare のみ。レスポンス・ログへ出力しない
+- `/run` は Bearer token 必須。認証失敗は `401` と最小エラーボディ
+- vars: `TZ=Asia/Tokyo`, `SLACK_ADMIN_USER_IDS`, `SLACK_LIST_ACCESS_CHANNEL_IDS`（任意）
+- 実行ログ必須キー: `run_id`, `listId`, `processed`, `sent`, `skipped`, `errors`
+- request スコープのグローバル保持と未管理 Promise を禁止
+
+## 技術スタック
+
+- Cloudflare Workers（`nodejs_compat`）、KV、Queues
+- TypeScript（`experimentalDecorators` 無効）
+- `wrangler.jsonc` が設定正本。binding 変更時は `wrangler types` で `Env` 同期（手書きしない）
+
+## テスト不変条件
+
+- deploy 前: `npm run check && npm test`
+- domain / queue / dedupe / transient / list-discovery 変更時は `npm test`
+- テスト・npm scripts 変更時は README「開発・テスト」を同時更新
+- 単体テストは I/O モック前提。`@cloudflare/vitest-pool-workers` 統合テストは導入しない
+- Queue: 一時障害のみ retry。subrequest 上限は retry しない（`src/errors/transient.test.ts`）
+- dedupe / 署名検証仕様変更時は対応 `*.test.ts` を更新
+- 自明コメントと dead code を残さない
+
+## Cloudflare
+
+- 仕様は公式ドキュメントを都度確認
+- `compatibility_date` は定期更新、`nodejs_compat` を基本方針

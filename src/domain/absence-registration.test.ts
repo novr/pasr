@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildRegistrationNotifyMessage,
   DAILY_NOTIFY_HOUR_JST,
-  parseAbsenceTypeChoices,
+  formatAttendanceNoticeLine,
+  formatAttendancePeriod,
   resolveAbsenceEndDate,
   resolveNotifyTargets,
   resolveRegistrationNotifyMode,
@@ -9,26 +11,32 @@ import {
 } from "./absence-registration";
 
 describe("absence-registration", () => {
-  it("parseAbsenceTypeChoices reads schema choices", () => {
-    const choices = parseAbsenceTypeChoices([
-      {
-        key: "type",
-        options: {
-          choices: [
-            { value: "absence", label: "Absence" },
-            { value: "am", label: "午前休" }
-          ]
-        }
-      }
-    ]);
-    expect(choices).toEqual([
-      { value: "absence", label: "Absence" },
-      { value: "am", label: "午前休" }
-    ]);
+  it("formatAttendanceNoticeLine omits default type and shows note only", () => {
+    expect(formatAttendanceNoticeLine("U1")).toBe("• <@U1>");
+    expect(formatAttendanceNoticeLine("U1", "通院のため午後から")).toBe("• <@U1> 通院のため午後から");
   });
 
-  it("parseAbsenceTypeChoices falls back when empty", () => {
-    expect(parseAbsenceTypeChoices([])).toEqual([{ value: "absence", label: "absence" }]);
+  it("buildRegistrationNotifyMessage includes period and optional note", () => {
+    expect(
+      buildRegistrationNotifyMessage({
+        targetUser: "U1",
+        startDate: "2026-06-20",
+        endDate: "2026-06-20",
+        note: "通院のため午後から"
+      })
+    ).toBe("• <@U1> 2026-06-20 — 通院のため午後から");
+    expect(
+      buildRegistrationNotifyMessage({
+        targetUser: "U1",
+        startDate: "2026-06-20",
+        endDate: "2026-06-25"
+      })
+    ).toBe("• <@U1> 2026-06-20 〜 2026-06-25");
+  });
+
+  it("formatAttendancePeriod formats single day and range", () => {
+    expect(formatAttendancePeriod("2026-06-20", "2026-06-20")).toBe("2026-06-20");
+    expect(formatAttendancePeriod("2026-06-20", "2026-06-25")).toBe("2026-06-20 〜 2026-06-25");
   });
 
   it("resolveAbsenceEndDate falls back to start date when end is empty", () => {

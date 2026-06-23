@@ -1,14 +1,12 @@
 import type { AppConfig } from "../config";
-import type { AbsenceRecord } from "../domain/absence";
+import { DEFAULT_ABSENCE_TYPE, type AbsenceRecord } from "../domain/absence";
 import {
   formatRegistrationNotifyModeLabel,
-  parseAbsenceTypeChoices,
   parseRegistrationNotifyMode,
   REGISTRATION_NOTIFY_SELECT_OPTIONS,
   resolveAbsenceEndDate,
   resolveRegistrationNotifyMode,
   validateAbsenceRegistration,
-  type AbsenceTypeChoice,
   type RegistrationNotifyMode
 } from "../domain/absence-registration";
 import { getJstDateParts } from "../domain/jst-date";
@@ -89,27 +87,6 @@ const parsePlainTextValue = (value: unknown): string => {
   return typeof text === "string" ? text.trim() : "";
 };
 
-const buildTypeSelectElement = (
-  typeChoices: AbsenceTypeChoice[],
-  initialValue?: string
-): Record<string, unknown> => {
-  const options = typeChoices.map((choice) => ({
-    text: { type: "plain_text", text: choice.label },
-    value: choice.value
-  }));
-  const initial = initialValue ?? typeChoices[0]?.value;
-  const element: Record<string, unknown> = {
-    type: "static_select",
-    action_id: "type_select",
-    options
-  };
-  const initialOption = options.find((option) => option.value === initial);
-  if (initialOption) {
-    element.initial_option = initialOption;
-  }
-  return element;
-};
-
 const buildRegistrationNotifySelectElement = (
   initialMode: RegistrationNotifyMode
 ): Record<string, unknown> => {
@@ -130,7 +107,6 @@ export const buildAbsenceRegisterModalView = (params: {
   userId: string;
   absenceListId: string;
   channelId: string;
-  typeChoices: AbsenceTypeChoice[];
   defaultNotifyChannels: string[];
   defaultNotifyUsers: string[];
   defaultRegistrationNotify: RegistrationNotifyMode;
@@ -182,19 +158,14 @@ export const buildAbsenceRegisterModalView = (params: {
     },
     {
       type: "input",
-      block_id: "type_block",
-      label: { type: "plain_text", text: "不在種類" },
-      element: buildTypeSelectElement(params.typeChoices)
-    },
-    {
-      type: "input",
       block_id: "note_block",
       optional: true,
-      label: { type: "plain_text", text: "備考" },
+      label: { type: "plain_text", text: "詳細（任意）" },
       element: {
         type: "plain_text_input",
         action_id: "note_input",
-        multiline: true
+        multiline: true,
+        placeholder: { type: "plain_text", text: "例: 通院のため午後から、午前中のみ など" }
       }
     },
     {
@@ -257,8 +228,6 @@ export const openAbsenceRegisterModal = async (
 ): Promise<void> => {
   const master = await resolveMasterContext(config, params.userId);
   const absenceListId = await resolveAbsenceListId(config);
-  const schema = await slackApi.readAbsenceSchemaColumns(config, absenceListId);
-  const typeChoices = parseAbsenceTypeChoices(schema);
   await slackApi.openModal(
     config,
     params.triggerId,
@@ -266,7 +235,6 @@ export const openAbsenceRegisterModal = async (
       userId: params.userId,
       absenceListId,
       channelId: params.channelId,
-      typeChoices,
       defaultNotifyChannels: master.defaultNotifyChannels,
       defaultNotifyUsers: master.defaultNotifyUsers,
       defaultRegistrationNotify: master.defaultRegistrationNotify
@@ -317,7 +285,6 @@ const handleAbsenceRegisterSubmission = async (
   const values = payload.view?.state?.values ?? {};
   const startDate = parseDateValue(values.start_block?.start_date);
   const endDate = resolveAbsenceEndDate(startDate, parseDateValue(values.end_block?.end_date));
-  const absenceType = parseStaticSelectValue(values.type_block?.type_select);
   const note = parsePlainTextValue(values.note_block?.note_input);
   const notifyChannels = parseSelectedChannels(values.channels_block?.notify_channels_select);
   const notifyUsers = parseSelectedUsers(values.users_block?.notify_users_select);
@@ -359,7 +326,7 @@ const handleAbsenceRegisterSubmission = async (
   const record: AbsenceRecord = {
     itemId: "",
     targetUser: metadata.userId,
-    absenceType: absenceType || undefined,
+    absenceType: DEFAULT_ABSENCE_TYPE,
     startDate,
     endDate,
     notifyChannels: [...new Set(notifyChannels)],
@@ -407,7 +374,7 @@ const handleAbsenceRegisterSubmission = async (
       item_id: itemId,
       start_date: startDate,
       end_date: endDate,
-      absence_type: absenceType,
+      absence_type: DEFAULT_ABSENCE_TYPE,
       registration_notify_mode: selectedMode,
       resolved_notify_mode: resolvedMode
     })

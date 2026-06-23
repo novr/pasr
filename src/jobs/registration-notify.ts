@@ -60,7 +60,6 @@ export const runRegistrationNotifyAndAck = async (
       targetUser: params.record.targetUser,
       startDate: params.record.startDate,
       endDate: params.record.endDate,
-      absenceType: params.record.absenceType,
       note: params.record.note
     });
 
