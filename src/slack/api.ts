@@ -1,17 +1,21 @@
 import type { AppConfig } from "../config";
-import { ABSENCE_LIST_NAME, absenceSchema } from "../domain/absence";
+import { ABSENCE_LIST_NAME, absenceSchema, type AbsenceRecord } from "../domain/absence";
 import {
   MEMBER_MASTER_LIST_NAME,
   memberMasterSchema,
-  type MemberMasterColumnIds,
   type MemberMasterRow,
   type ResolveMemberMasterRecordResult
 } from "../domain/member-master";
 import { pickListField, toBooleanValue, toStringArray, toStringValue } from "../domain/slack-list-value";
-
-type SlackOkResponse<T> = T & { ok: true };
-type SlackErrorResponse = { ok: false; error: string };
-type SlackResponse<T> = SlackOkResponse<T> | SlackErrorResponse;
+import { isSkippableSlackLookupError, slackApiGet, slackApiPost } from "./client";
+import {
+  cacheListSchema,
+  readListSchemaColumns,
+  readSchemaFromCreateResponse,
+  resolveAbsenceColumnIds,
+  resolveMemberMasterColumnIds,
+  richTextField
+} from "./list-columns";
 
 type SlackListItem = {
   id: string;
@@ -32,37 +36,25 @@ type SlackList = {
   name?: string;
 };
 
-type SlackListsListResponse = {
-  lists?: SlackList[];
-  response_metadata?: {
-    next_cursor?: string;
-  };
-};
-
-type SlackListMetadataSchemaColumn = {
-  key?: string;
+type SlackFile = {
   id?: string;
   name?: string;
-  type?: string;
-  is_primary_column?: boolean;
+  filetype?: string;
 };
 
-type SlackListMetadataResponse = {
+type FilesListResponse = {
+  files?: SlackFile[];
+  paging?: {
+    page?: number;
+    pages?: number;
+  };
+};
+
+type SlackListCreateResponse = {
+  list_id?: string;
+  list?: { id?: string };
   list_metadata?: {
-    schema?: SlackListMetadataSchemaColumn[];
-  };
-  list?: {
-    list_metadata?: {
-      schema?: SlackListMetadataSchemaColumn[];
-    };
-  };
-};
-
-type SlackListItemInfoResponse = {
-  list?: {
-    list_metadata?: {
-      schema?: SlackListMetadataSchemaColumn[];
-    };
+    schema?: Array<{ key?: string; id?: string; name?: string; type?: string }>;
   };
 };
 
@@ -81,10 +73,10 @@ type SlackConversationOpenResponse = {
   };
 };
 
-const memberMasterColumnIdsCache = new Map<string, MemberMasterColumnIds>();
+const SLACK_LIST_FILETYPE = "list";
 
-const getSchemaColumns = (metadata: SlackListMetadataResponse): SlackListMetadataSchemaColumn[] =>
-  metadata.list?.list_metadata?.schema ?? metadata.list_metadata?.schema ?? [];
+const isSlackListFile = (file: SlackFile): file is { id: string; name: string } =>
+  !!file.id && file.filetype === SLACK_LIST_FILETYPE && typeof file.name === "string";
 
 const parseMemberMasterRow = (item: SlackListItem): MemberMasterRow | undefined => {
   const targetUser = toStringValue(pickListField(item, "target_user")) || toStringValue(pickListField(item, "member_key"));
@@ -103,11 +95,11 @@ const parseMemberMasterRow = (item: SlackListItem): MemberMasterRow | undefined 
   };
 };
 
-const listItems = async (config: AppConfig, listId: string): Promise<{ items: SlackListItem[] }> => {
+const fetchListItems = async (config: AppConfig, listId: string): Promise<{ items: SlackListItem[] }> => {
   const items: SlackListItem[] = [];
   let cursor: string | undefined;
   do {
-    const page = await apiCall<SlackListItemsListResponse>(config, "slackLists.items.list", {
+    const page = await slackApiPost<SlackListItemsListResponse>(config, "slackLists.items.list", {
       list_id: listId,
       limit: 200,
       cursor
@@ -118,149 +110,123 @@ const listItems = async (config: AppConfig, listId: string): Promise<{ items: Sl
   return { items };
 };
 
-const findListIdByName = async (config: AppConfig, listName: string): Promise<string | undefined> => {
-  let cursor: string | undefined;
-  do {
-    const page = await apiCall<SlackListsListResponse>(config, "slackLists.list", {
-      limit: 200,
-      cursor
-    });
-    const found = (page.lists ?? []).find((list) => list.name === listName)?.id;
-    if (found) return found;
-    cursor = page.response_metadata?.next_cursor || undefined;
-  } while (cursor);
-  return undefined;
-};
-
-const resolveMemberMasterColumnIds = async (config: AppConfig, listId: string): Promise<MemberMasterColumnIds | undefined> => {
-  const cached = memberMasterColumnIdsCache.get(listId);
-  if (cached) return cached;
-
-  let schema = getSchemaColumns(
-    await apiCall<SlackListMetadataResponse>(config, "slackLists.update", {
-      id: listId,
-      name: MEMBER_MASTER_LIST_NAME,
-      schema: memberMasterSchema
-    })
-  );
-
-  if (schema.length === 0) {
-    const listed = await listItems(config, listId);
-    const firstItemId = listed.items?.[0]?.id;
-    if (firstItemId) {
-      const info = await apiCall<SlackListItemInfoResponse>(config, "slackLists.items.info", {
-        list_id: listId,
-        id: firstItemId
-      });
-      schema = info.list?.list_metadata?.schema ?? [];
-    }
-  }
-
-  const byKey = new Map(
-    schema
-      .filter((column): column is { key: string; id: string } => !!column.key && !!column.id)
-      .map((column) => [column.key, column.id] as const)
-  );
-  const findByName = (name: string): string | undefined => schema.find((column) => column.id && column.name === name)?.id;
-  const primaryText = schema.find((column) => column.is_primary_column && column.id)?.id;
-  const targetUserColumn = byKey.get("target_user") ?? findByName("Target User");
-  const defaultNotifyChannels = byKey.get("default_notify_channels") ?? findByName("Default Notify Channels");
-  const defaultNotifyUsers = byKey.get("default_notify_users") ?? findByName("Default Notify Users");
-  const active = byKey.get("active") ?? findByName("Active");
-
-  if (!primaryText || !targetUserColumn || !active) {
-    console.warn(
-      JSON.stringify({
-        level: "warn",
-        event: "member_master_column_resolve_fallback",
-        listId,
-        hasPrimaryText: Boolean(primaryText),
-        hasTargetUser: Boolean(targetUserColumn),
-        hasActive: Boolean(active),
-        schemaKeys: schema.map((column) => column.key ?? "").filter((key) => key.length > 0)
-      })
-    );
-    return undefined;
-  }
-
-  const resolved = { primaryText, targetUser: targetUserColumn, defaultNotifyChannels, defaultNotifyUsers, active };
-  // Optional columns may be added later by schema reconciliation.
-  // Avoid caching incomplete optional-column resolution to let later calls re-resolve.
-  if (defaultNotifyChannels && defaultNotifyUsers) {
-    memberMasterColumnIdsCache.set(listId, resolved);
-  } else {
-    memberMasterColumnIdsCache.delete(listId);
-    console.warn(
-      JSON.stringify({
-        level: "warn",
-        event: "member_master_optional_columns_missing",
-        listId,
-        hasDefaultNotifyChannels: Boolean(defaultNotifyChannels),
-        hasDefaultNotifyUsers: Boolean(defaultNotifyUsers)
-      })
-    );
-  }
-  return resolved;
-};
-
-const apiCall = async <T>(
+const listListFiles = async (
   config: AppConfig,
-  method: string,
-  payload: Record<string, unknown>
-): Promise<T> => {
-  const res = await fetch(`https://slack.com/api/${method}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.slackBotToken}`,
-      "Content-Type": "application/json; charset=utf-8"
-    },
-    body: JSON.stringify(payload)
+  matches: (file: { id: string; name: string }) => boolean
+): Promise<SlackList[]> => {
+  const lists: SlackList[] = [];
+  let page = 1;
+  let pages = 1;
+  do {
+    const response = await slackApiGet<FilesListResponse>(config, "files.list", {
+      count: 200,
+      page,
+      types: "all"
+    });
+    for (const file of response.files ?? []) {
+      if (!isSlackListFile(file) || !matches(file)) continue;
+      lists.push({ id: file.id, name: file.name });
+    }
+    pages = response.paging?.pages ?? page;
+    page += 1;
+  } while (page <= pages);
+  return lists;
+};
+
+const findListIdsByName = async (config: AppConfig, listName: string): Promise<string[]> => {
+  try {
+    const lists = await listListFiles(config, (file) => file.name === listName);
+    return lists.map((list) => list.id).filter((id): id is string => !!id);
+  } catch (error) {
+    if (!isSkippableSlackLookupError(error)) throw error;
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "files_list_lookup_skipped",
+        listName,
+        message: error instanceof Error ? error.message : String(error)
+      })
+    );
+    return [];
+  }
+};
+
+const createList = async (
+  config: AppConfig,
+  name: string,
+  schema: typeof absenceSchema | typeof memberMasterSchema
+): Promise<SlackListCreateResponse> => {
+  const created = await slackApiPost<SlackListCreateResponse>(config, "slackLists.create", {
+    name,
+    schema
   });
-  const json = (await res.json()) as SlackResponse<T>;
-  if (!res.ok) {
-    throw new Error(`Slack API HTTP error (${method}): ${res.status}`);
+  const listId = created.list_id ?? created.list?.id;
+  if (listId) {
+    cacheListSchema(listId, readSchemaFromCreateResponse(created));
   }
-  if (!json.ok) {
-    throw new Error(`Slack API error (${method}): ${json.error}`);
+  return created;
+};
+
+const buildMemberMasterInitialFields = (
+  columnIds: NonNullable<Awaited<ReturnType<typeof resolveMemberMasterColumnIds>>>,
+  targetUser: string,
+  defaultChannels: string[],
+  defaultUsers: string[],
+  active = true
+): Array<Record<string, unknown>> => {
+  const initialFields: Array<Record<string, unknown>> = [
+    richTextField(columnIds.primaryText, targetUser),
+    { column_id: columnIds.targetUser, user: [targetUser] },
+    { column_id: columnIds.active, checkbox: active }
+  ];
+  if (columnIds.defaultNotifyChannels && defaultChannels.length > 0) {
+    initialFields.push({ column_id: columnIds.defaultNotifyChannels, channel: defaultChannels });
   }
-  return json;
+  if (columnIds.defaultNotifyUsers && defaultUsers.length > 0) {
+    initialFields.push({ column_id: columnIds.defaultNotifyUsers, user: defaultUsers });
+  }
+  return initialFields;
+};
+
+const buildAbsenceInitialFields = (
+  columnIds: NonNullable<Awaited<ReturnType<typeof resolveAbsenceColumnIds>>>,
+  record: AbsenceRecord
+): Array<Record<string, unknown>> => {
+  const title = record.note?.trim() || record.targetUser;
+  const initialFields: Array<Record<string, unknown>> = [
+    richTextField(columnIds.absenceTitle, title),
+    { column_id: columnIds.targetUser, user: [record.targetUser] },
+    { column_id: columnIds.startDate, date: [record.startDate] },
+    { column_id: columnIds.endDate, date: [record.endDate] }
+  ];
+  if (columnIds.type && record.absenceType) {
+    initialFields.push({ column_id: columnIds.type, select: [record.absenceType] });
+  }
+  if (columnIds.notifyChannels && record.notifyChannels.length > 0) {
+    initialFields.push({ column_id: columnIds.notifyChannels, channel: record.notifyChannels });
+  }
+  if (columnIds.notifyUsers && record.notifyUsers.length > 0) {
+    initialFields.push({ column_id: columnIds.notifyUsers, user: record.notifyUsers });
+  }
+  if (columnIds.note && record.note) {
+    initialFields.push(richTextField(columnIds.note, record.note));
+  }
+  return initialFields;
 };
 
 export const slackApi = {
-  createAbsenceList: async (config: AppConfig) =>
-    apiCall<{ list_id?: string; list?: { id?: string } }>(config, "slackLists.create", {
-      name: ABSENCE_LIST_NAME,
-      schema: absenceSchema
-    }),
+  createAbsenceList: async (config: AppConfig) => createList(config, ABSENCE_LIST_NAME, absenceSchema),
 
-  reconcileAbsenceListFields: async (config: AppConfig, listId: string) =>
-    apiCall<Record<string, unknown>>(config, "slackLists.update", {
-      id: listId,
-      name: ABSENCE_LIST_NAME
-    }),
+  readAbsenceSchemaColumns: async (config: AppConfig, listId: string) => readListSchemaColumns(config, listId),
 
-  findAbsenceListIdByName: async (config: AppConfig): Promise<string | undefined> => {
-    return findListIdByName(config, ABSENCE_LIST_NAME);
-  },
+  createMemberMasterList: async (config: AppConfig) => createList(config, MEMBER_MASTER_LIST_NAME, memberMasterSchema),
 
-  createMemberMasterList: async (config: AppConfig) =>
-    apiCall<{ list_id?: string; list?: { id?: string } }>(config, "slackLists.create", {
-      name: MEMBER_MASTER_LIST_NAME,
-      schema: memberMasterSchema
-    }),
+  readMemberMasterSchemaColumns: async (config: AppConfig, listId: string) => readListSchemaColumns(config, listId),
 
-  reconcileMemberMasterListFields: async (config: AppConfig, listId: string) =>
-    apiCall<SlackListMetadataResponse>(config, "slackLists.update", {
-      id: listId,
-      name: MEMBER_MASTER_LIST_NAME,
-      schema: memberMasterSchema
-    }),
+  findListIdsByName: async (config: AppConfig, listName: string): Promise<string[]> =>
+    findListIdsByName(config, listName),
 
-  findMemberMasterListIdByName: async (config: AppConfig): Promise<string | undefined> => {
-    return findListIdByName(config, MEMBER_MASTER_LIST_NAME);
-  },
-
-  listMemberMasterItems: async (config: AppConfig, listId: string) => listItems(config, listId),
+  listItems: async (config: AppConfig, listId: string) => fetchListItems(config, listId),
 
   createMemberMasterItem: async (
     config: AppConfig,
@@ -268,80 +234,25 @@ export const slackApi = {
     targetUser: string,
     defaultChannels: string[],
     defaultUsers: string[] = []
-  ) =>
-    (async () => {
-      const columnIds = await resolveMemberMasterColumnIds(config, listId);
-
-      if (columnIds) {
-        const initialFields: Array<Record<string, unknown>> = [
-          {
-            column_id: columnIds.primaryText,
-            rich_text: [
-              {
-                type: "rich_text",
-                elements: [{ type: "rich_text_section", elements: [{ type: "text", text: targetUser }] }]
-              }
-            ]
-          },
-          { column_id: columnIds.targetUser, user: [targetUser] },
-          { column_id: columnIds.active, checkbox: true }
-        ];
-        if (columnIds.defaultNotifyChannels && defaultChannels.length > 0) {
-          initialFields.push({ column_id: columnIds.defaultNotifyChannels, channel: defaultChannels });
-        }
-        if (columnIds.defaultNotifyUsers && defaultUsers.length > 0) {
-          initialFields.push({ column_id: columnIds.defaultNotifyUsers, user: defaultUsers });
-        }
-        return apiCall<Record<string, unknown>>(config, "slackLists.items.create", {
-          list_id: listId,
-          initial_fields: initialFields
-        });
-      }
-
-      const valuePayloadCandidates: Array<Record<string, unknown>> = [
-        {
-          member_key: targetUser,
-          target_user: { user: [targetUser] },
-          default_notify_channels: { channel: defaultChannels },
-          default_notify_users: { user: defaultUsers },
-          active: true
-        },
-        {
-          member_key: targetUser,
-          target_user: [targetUser],
-          default_notify_channels: defaultChannels,
-          default_notify_users: defaultUsers,
-          active: true
-        },
-        {
-          member_key: targetUser,
-          target_user: targetUser,
-          active: true
-        }
-      ];
-
-      let lastError: unknown;
-      for (const values of valuePayloadCandidates) {
-        try {
-          return await apiCall<Record<string, unknown>>(config, "slackLists.items.create", {
-            list_id: listId,
-            values
-          });
-        } catch (error) {
-          lastError = error;
-        }
-      }
-      throw lastError instanceof Error ? lastError : new Error(String(lastError));
-    })(),
+  ) => {
+    const columnIds = await resolveMemberMasterColumnIds(config, listId);
+    if (!columnIds) {
+      throw new Error("member_master column resolution failed");
+    }
+    return slackApiPost<Record<string, unknown>>(config, "slackLists.items.create", {
+      list_id: listId,
+      initial_fields: buildMemberMasterInitialFields(columnIds, targetUser, defaultChannels, defaultUsers)
+    });
+  },
 
   openModal: async (config: AppConfig, triggerId: string, view: Record<string, unknown>) =>
-    apiCall<SlackViewOpenResponse>(config, "views.open", {
+    slackApiPost<SlackViewOpenResponse>(config, "views.open", {
       trigger_id: triggerId,
       view
     }),
 
   openDirectMessage: async (config: AppConfig, userId: string): Promise<string> => {
-    const opened = await apiCall<SlackConversationOpenResponse>(config, "conversations.open", {
+    const opened = await slackApiPost<SlackConversationOpenResponse>(config, "conversations.open", {
       users: userId
     });
     const channelId = opened.channel?.id;
@@ -352,7 +263,7 @@ export const slackApi = {
   },
 
   deleteMemberMasterItem: async (config: AppConfig, listId: string, itemId: string) =>
-    apiCall<Record<string, unknown>>(config, "slackLists.items.delete", {
+    slackApiPost<Record<string, unknown>>(config, "slackLists.items.delete", {
       list_id: listId,
       id: itemId
     }),
@@ -362,7 +273,7 @@ export const slackApi = {
     listId: string,
     targetUser: string
   ): Promise<ResolveMemberMasterRecordResult> => {
-    const listed = await listItems(config, listId);
+    const listed = await fetchListItems(config, listId);
     const rows = (listed.items ?? []).map(parseMemberMasterRow).filter((row): row is MemberMasterRow => !!row);
     const matches = rows.filter((row) => row.targetUser === targetUser);
     if (matches.length === 0) {
@@ -379,7 +290,7 @@ export const slackApi = {
           defaultNotifyUsers: []
         };
       }
-      const relisted = await listItems(config, listId);
+      const relisted = await fetchListItems(config, listId);
       const refreshed = (relisted.items ?? [])
         .map(parseMemberMasterRow)
         .filter((row): row is MemberMasterRow => !!row && row.targetUser === targetUser);
@@ -431,54 +342,75 @@ export const slackApi = {
       throw new Error("member_master column resolution failed");
     }
     const cells: Array<Record<string, unknown>> = [
-      {
-        row_id: rowId,
-        column_id: columnIds.targetUser,
-        user: [targetUser]
-      },
-      {
-        row_id: rowId,
-        column_id: columnIds.active,
-        checkbox: active
-      }
+      { row_id: rowId, column_id: columnIds.targetUser, user: [targetUser] },
+      { row_id: rowId, column_id: columnIds.active, checkbox: active }
     ];
     if (columnIds.defaultNotifyChannels) {
-      cells.push({
-        row_id: rowId,
-        column_id: columnIds.defaultNotifyChannels,
-        channel: defaultChannels
-      });
+      cells.push({ row_id: rowId, column_id: columnIds.defaultNotifyChannels, channel: defaultChannels });
     }
     if (columnIds.defaultNotifyUsers) {
-      cells.push({
-        row_id: rowId,
-        column_id: columnIds.defaultNotifyUsers,
-        user: defaultUsers
-      });
+      cells.push({ row_id: rowId, column_id: columnIds.defaultNotifyUsers, user: defaultUsers });
     }
-    return apiCall<Record<string, unknown>>(config, "slackLists.items.update", {
+    return slackApiPost<Record<string, unknown>>(config, "slackLists.items.update", {
       list_id: listId,
       cells
     });
   },
 
-  listAbsences: async (config: AppConfig, listId: string) => listItems(config, listId),
+  createAbsenceItem: async (config: AppConfig, listId: string, record: AbsenceRecord) => {
+    const columnIds = await resolveAbsenceColumnIds(config, listId);
+    if (!columnIds) {
+      throw new Error("absence column resolution failed");
+    }
+    return slackApiPost<Record<string, unknown>>(config, "slackLists.items.create", {
+      list_id: listId,
+      initial_fields: buildAbsenceInitialFields(columnIds, record)
+    });
+  },
+
+  renameList: async (config: AppConfig, listId: string, name: string) =>
+    slackApiPost<Record<string, unknown>>(config, "slackLists.update", {
+      id: listId,
+      name
+    }),
+
+  deleteList: async (config: AppConfig, listId: string) =>
+    slackApiPost<Record<string, unknown>>(config, "files.delete", {
+      file: listId
+    }),
+
+  findListsByNamePrefix: async (config: AppConfig, namePrefix: string): Promise<SlackList[]> => {
+    try {
+      return await listListFiles(config, (file) => file.name.startsWith(namePrefix));
+    } catch (error) {
+      if (!isSkippableSlackLookupError(error)) throw error;
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "files_list_lookup_skipped",
+          namePrefix,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      );
+      return [];
+    }
+  },
 
   postChannelMessage: async (config: AppConfig, channel: string, text: string) =>
-    apiCall<{ ts?: string }>(config, "chat.postMessage", {
+    slackApiPost<{ ts?: string }>(config, "chat.postMessage", {
       channel,
       text
     }),
 
   updateChannelMessage: async (config: AppConfig, channel: string, ts: string, text: string) =>
-    apiCall<{ ts?: string }>(config, "chat.update", {
+    slackApiPost<{ ts?: string }>(config, "chat.update", {
       channel,
       ts,
       text
     }),
 
   setListAccessForUsers: async (config: AppConfig, listId: string, userIds: string[]) =>
-    apiCall<Record<string, unknown>>(config, "slackLists.access.set", {
+    slackApiPost<Record<string, unknown>>(config, "slackLists.access.set", {
       list_id: listId,
       access_level: "write",
       user_ids: userIds
