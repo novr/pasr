@@ -1,6 +1,6 @@
 import type { AppConfig } from "../config";
 import { runDailyNotify } from "../jobs/daily-notify";
-import { ensureMemberMasterList, runMemberMasterMigration } from "../jobs/setup";
+import { ensureMemberMasterList, runListMigration, runListPrune } from "../jobs/setup";
 import { slackApi } from "./api";
 import { readLastRunSummary, readPersistedMemberMasterListId } from "../state/kv";
 import { SLACK_EVENT_DEDUPE_TTL_SEC, isDuplicateSlackCommandTrigger } from "../state/event-dedupe";
@@ -99,16 +99,43 @@ const buildAdminHelpText = (): string =>
     "/pasr-admin help - 管理者向けコマンドの使い方表示",
     "/pasr-admin run - 通知処理を手動実行",
     "/pasr-admin status - 直近実行の要約表示",
-    "/pasr-admin migrate - member_master を新スキーマへ移行"
+    "/pasr-admin migrate - absence/member_master を新スキーマへ移行",
+    "/pasr-admin prune - migrate 後に旧 absence/member_master List を削除"
   ].join("\n");
 
 const buildSlackListLink = (teamId: string, listId: string): string =>
   `https://app.slack.com/lists/${teamId}/${listId}`;
 
+const formatListLinks = (teamId: string, listIds: string[]): string =>
+  listIds.length > 0 ? listIds.map((listId) => buildSlackListLink(teamId, listId)).join(", ") : "none";
+
+const formatMigrationKind = (
+  teamId: string,
+  target: {
+    listName: string;
+    fromListIds: string[];
+    toListId: string;
+    sourceRows: number;
+    migratedRows: number;
+    skippedRows: number;
+    errors: number;
+    skipped: boolean;
+  }
+): string => {
+  if (target.skipped) {
+    return `${target.listName}: skip (up to date) list=${buildSlackListLink(teamId, target.toListId)}`;
+  }
+  return [
+    `${target.listName}: source=${target.sourceRows} migrated=${target.migratedRows} skipped=${target.skippedRows} errors=${target.errors}`,
+    `from: ${formatListLinks(teamId, target.fromListIds)}`,
+    `to: ${buildSlackListLink(teamId, target.toListId)}`
+  ].join("\n");
+};
+
 type CommandKind = "self" | "admin" | "unsupported";
 
 const SELF_ACTIONS = ["help", "view", "update"] as const;
-const ADMIN_ACTIONS = ["help", "run", "status", "migrate"] as const;
+const ADMIN_ACTIONS = ["help", "run", "status", "migrate", "prune"] as const;
 
 const getCommandKind = (command: string): CommandKind => {
   if (command === "/pasr") return "self";
@@ -349,6 +376,9 @@ const getAdminImmediateText = async (
   if (action === "migrate") {
     return undefined;
   }
+  if (action === "prune") {
+    return undefined;
+  }
   return undefined;
 };
 
@@ -373,7 +403,7 @@ export const runSlackCommandAsync = async (config: AppConfig, payload: SlackComm
     return;
   }
 
-  if (!isAdminAction(action) || (action !== "run" && action !== "migrate")) {
+  if (!isAdminAction(action) || (action !== "run" && action !== "migrate" && action !== "prune")) {
     console.warn(
       JSON.stringify({
         level: "warn",
@@ -418,8 +448,18 @@ export const runSlackCommandAsync = async (config: AppConfig, payload: SlackComm
   }
 
   if (action === "migrate") {
-    const result = await runMemberMasterMigration(config);
-    const status = result.errors > 0 ? "一部エラーあり" : "完了";
+    const result = await runListMigration(config);
+    if (result.skippedMigration) {
+      const resultText = [
+        "migrate skip: absence/member_master は最新スキーマです。",
+        formatMigrationKind(payload.teamId, result.absence),
+        formatMigrationKind(payload.teamId, result.memberMaster)
+      ].join("\n");
+      await postEphemeralResponse(payload, resultText);
+      return;
+    }
+    const totalErrors = result.absence.errors + result.memberMaster.errors;
+    const status = totalErrors > 0 ? "一部エラーあり" : "完了";
     console.log(
       JSON.stringify({
         level: "info",
@@ -429,18 +469,36 @@ export const runSlackCommandAsync = async (config: AppConfig, payload: SlackComm
         trigger_id: payload.triggerId,
         user_id: payload.userId,
         team_id: payload.teamId,
-        fromListId: result.fromListId,
-        toListId: result.toListId,
-        sourceRows: result.sourceRows,
-        migratedRows: result.migratedRows,
-        skippedRows: result.skippedRows,
-        errors: result.errors
+        absence: result.absence,
+        memberMaster: result.memberMaster
       })
     );
     const resultText = [
-      `migrate ${status}: source=${result.sourceRows} migrated=${result.migratedRows} skipped=${result.skippedRows} errors=${result.errors}`,
-      `from: ${buildSlackListLink(payload.teamId, result.fromListId)}`,
-      `to: ${buildSlackListLink(payload.teamId, result.toListId)}`
+      `migrate ${status}`,
+      formatMigrationKind(payload.teamId, result.absence),
+      formatMigrationKind(payload.teamId, result.memberMaster),
+      ...result.hints
+    ].join("\n");
+    await postEphemeralResponse(payload, resultText);
+    return;
+  }
+
+  if (action === "prune") {
+    const result = await runListPrune(config);
+    if (result.skippedPrune) {
+      const resultText = ["prune skip: 先に /pasr-admin migrate を実行してください。", ...result.hints].join("\n");
+      await postEphemeralResponse(payload, resultText);
+      return;
+    }
+    const totalErrors = result.absence.errors + result.memberMaster.errors;
+    const status = totalErrors > 0 ? "一部エラーあり" : "完了";
+    const resultText = [
+      `prune ${status}`,
+      `absence: found=${result.absence.found} deleted=${result.absence.deleted} errors=${result.absence.errors}`,
+      `member_master: found=${result.memberMaster.found} deleted=${result.memberMaster.deleted} errors=${result.memberMaster.errors}`,
+      `active absence: ${buildSlackListLink(payload.teamId, result.absence.activeListId)}`,
+      `active member_master: ${buildSlackListLink(payload.teamId, result.memberMaster.activeListId)}`,
+      ...result.hints
     ].join("\n");
     await postEphemeralResponse(payload, resultText);
   }
