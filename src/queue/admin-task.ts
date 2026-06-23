@@ -1,5 +1,6 @@
 import type { AppConfig } from "../config";
-import { runSlackCommandAsync, slashCommandLogFields, type SlackCommandPayload } from "../slack/command";
+import { isTransientError } from "../errors/transient";
+import { runSlackCommandAsync, slashCommandLogFields, notifySlashCommandEphemeral, type SlackCommandPayload } from "../slack/command";
 
 export type AdminTaskMessage = {
   payload: SlackCommandPayload;
@@ -25,14 +26,44 @@ export const processAdminTaskBatch = async (
         ...fields
       })
     );
-    await runSlackCommandAsync(config, message.body.payload);
-    message.ack();
-    console.log(
-      JSON.stringify({
-        level: "info",
-        event: "slash_command_queue_consumer_done",
-        ...fields
-      })
-    );
+    try {
+      await runSlackCommandAsync(config, message.body.payload);
+      message.ack();
+      console.log(
+        JSON.stringify({
+          level: "info",
+          event: "slash_command_queue_consumer_done",
+          ...fields
+        })
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (isTransientError(error)) {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "slash_command_queue_retry",
+            ...fields,
+            message: errorMessage
+          })
+        );
+        message.retry();
+        continue;
+      }
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "slash_command_queue_failed",
+          ...fields,
+          message: errorMessage
+        })
+      );
+      await notifySlashCommandEphemeral(
+        config,
+        message.body.payload,
+        `処理に失敗しました: ${errorMessage}`
+      );
+      message.ack();
+    }
   }
 };

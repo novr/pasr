@@ -1,4 +1,5 @@
 import type { AppConfig } from "../config";
+import { isTransientError } from "../errors/transient";
 import { runDailyNotify } from "../jobs/daily-notify";
 import { ensureMemberMasterList, runListMigration, runListPrune } from "../jobs/setup";
 import { slackApi } from "./api";
@@ -542,6 +543,7 @@ export const runSlackCommandAsync = async (config: AppConfig, payload: SlackComm
       await postEphemeralResponse(config, payload, resultText);
     }
   } catch (error) {
+    if (isTransientError(error)) throw error;
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(
       JSON.stringify({

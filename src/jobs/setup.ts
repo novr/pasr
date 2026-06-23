@@ -1,3 +1,4 @@
+import { TransientAdminTaskError } from "../errors/transient";
 import type { AppConfig } from "../config";
 import { ABSENCE_LIST_NAME, ABSENCE_SCHEMA_VERSION, parseAbsence, type AbsenceRecord } from "../domain/absence";
 import { MEMBER_MASTER_LIST_NAME, MEMBER_MASTER_SCHEMA_VERSION } from "../domain/member-master";
@@ -9,6 +10,7 @@ import {
   MIGRATE_HINT,
   MIGRATION_ERRORS_HINT,
   pasrManagedListBaseName,
+  isArchivedListName,
   isPasrManagedListName,
   PRUNE_AFTER_MIGRATE_HINT,
   PRUNE_EMPTY_HINT,
@@ -17,7 +19,7 @@ import {
 } from "../domain/list-schema";
 import { pickListField, toBooleanValue, toStringArray, toStringValue } from "../domain/slack-list-value";
 import { slackApi, type SlackListItem } from "../slack/api";
-import { createListDiscovery, type ListDiscovery } from "../slack/list-discovery";
+import { createListDiscovery, LIST_DISCOVERY_MAX_PAGES, type ListDiscovery } from "../slack/list-discovery";
 import {
   readPersistedAbsenceSchemaVersion,
   readPersistedListId,
@@ -25,7 +27,9 @@ import {
   readPersistedMemberMasterSchemaVersion,
   addPrunePending,
   readPrunePending,
+  releaseMigrationLock,
   removePrunePending,
+  tryAcquireMigrationLock,
   type PruneCandidate,
   writePersistedAbsenceSchemaVersion,
   writePersistedListId,
@@ -209,7 +213,7 @@ const archiveSourceLists = async (
     const archivedName = buildArchivedListName(baseName, listId);
     try {
       await slackApi.renameList(config, listId, archivedName);
-      await addPrunePending(config, [{ listId, listName: archivedName }]);
+      await addPrunePending(config, [{ listId, listName: archivedName, archived: true }]);
     } catch (error) {
       console.error(
         JSON.stringify({
@@ -445,21 +449,10 @@ const dedupeAbsenceRecords = (records: AbsenceRecord[]): AbsenceRecord[] => {
 
 const PRUNE_MAX_DELETES_PER_RUN = 40;
 
-const registerPrunePendingListIds = async (
-  config: AppConfig,
-  listIds: string[],
-  discovery?: ListDiscovery
-): Promise<void> => {
-  if (listIds.length === 0) return;
-  const nameById = new Map((discovery?.listAll() ?? []).map((file) => [file.id, file.name]));
-  await addPrunePending(
-    config,
-    listIds.map((listId) => ({
-      listId,
-      listName: nameById.get(listId) ?? listId
-    }))
-  );
-};
+const isArchivedPruneCandidate = (candidate: PruneCandidate): boolean =>
+  candidate.archived === true ||
+  isArchivedListName(ABSENCE_LIST_NAME, candidate.listName) ||
+  isArchivedListName(MEMBER_MASTER_LIST_NAME, candidate.listName);
 
 const skippedKindResult = (
   listName: string,
@@ -521,7 +514,6 @@ const migrateMemberMasterKind = async (
     persistedListId,
     sourceListId
   );
-  await registerPrunePendingListIds(config, allListIds, listDiscovery);
 
   const allRows: MemberMasterMigrationRow[] = [];
   let sourceRows = 0;
@@ -641,7 +633,6 @@ const migrateAbsenceKind = async (
 
   const listDiscovery = loadDiscovery ? await loadDiscovery() : await createListDiscovery(config);
   const allListIds = mergeListIds(...listDiscovery.findByExactName(ABSENCE_LIST_NAME), persistedListId, sourceListId);
-  await registerPrunePendingListIds(config, allListIds, listDiscovery);
 
   const allRecords: AbsenceRecord[] = [];
   let sourceRows = 0;
@@ -718,30 +709,41 @@ const migrateAbsenceKind = async (
 };
 
 export const runListMigration = async (config: AppConfig): Promise<ListMigrationResult> => {
-  const cache = { discovery: undefined as ListDiscovery | undefined };
-  const loadDiscovery = async (): Promise<ListDiscovery> => {
-    cache.discovery ??= await createListDiscovery(config);
-    return cache.discovery;
-  };
-  const memberMaster = await migrateMemberMasterKind(config, loadDiscovery);
-  const absence = await migrateAbsenceKind(config, loadDiscovery);
-  const skippedMigration = memberMaster.skipped && absence.skipped;
-  const hints: string[] = [];
-  if (!skippedMigration) {
-    const totalErrors = memberMaster.errors + absence.errors;
-    if (totalErrors === 0) {
-      hints.push(PRUNE_AFTER_MIGRATE_HINT);
-    } else {
-      hints.push(MIGRATION_ERRORS_HINT);
-    }
+  const acquired = await tryAcquireMigrationLock(config);
+  if (!acquired) {
+    throw new TransientAdminTaskError("migration already in progress");
   }
-  return {
-    skippedMigration,
-    skipReason: skippedMigration ? "up_to_date" : undefined,
-    hints,
-    absence,
-    memberMaster
-  };
+  try {
+    const cache = { discovery: undefined as ListDiscovery | undefined };
+    const loadDiscovery = async (): Promise<ListDiscovery> => {
+      cache.discovery ??= await createListDiscovery(config, {
+        userId: await slackApi.getAuthedUserId(config),
+        maxPages: LIST_DISCOVERY_MAX_PAGES
+      });
+      return cache.discovery;
+    };
+    const memberMaster = await migrateMemberMasterKind(config, loadDiscovery);
+    const absence = await migrateAbsenceKind(config, loadDiscovery);
+    const skippedMigration = memberMaster.skipped && absence.skipped;
+    const hints: string[] = [];
+    if (!skippedMigration) {
+      const totalErrors = memberMaster.errors + absence.errors;
+      if (totalErrors === 0) {
+        hints.push(PRUNE_AFTER_MIGRATE_HINT);
+      } else {
+        hints.push(MIGRATION_ERRORS_HINT);
+      }
+    }
+    return {
+      skippedMigration,
+      skipReason: skippedMigration ? "up_to_date" : undefined,
+      hints,
+      absence,
+      memberMaster
+    };
+  } finally {
+    await releaseMigrationLock(config);
+  }
 };
 
 export const runListPrune = async (config: AppConfig): Promise<ListPruneResult> => {
@@ -771,32 +773,32 @@ export const runListPrune = async (config: AppConfig): Promise<ListPruneResult> 
   const targetsById = new Map<string, PruneCandidate>();
 
   for (const pending of await readPrunePending(config)) {
-    if (!activeListIds.has(pending.listId)) {
+    if (!activeListIds.has(pending.listId) && isArchivedPruneCandidate(pending)) {
       targetsById.set(pending.listId, pending);
     }
   }
 
-  if (targetsById.size === 0) {
-    try {
-      const botUserId = await slackApi.getAuthedUserId(config);
-      const discovery = await createListDiscovery(config, { userId: botUserId, maxPages: 10 });
-      for (const list of discovery.listAll()) {
-        if (isPasrManagedListName(list.name) && !activeListIds.has(list.id)) {
-          targetsById.set(list.id, { listId: list.id, listName: list.name });
-        }
+  try {
+    const botUserId = await slackApi.getAuthedUserId(config);
+    const discovery = await createListDiscovery(config, {
+      userId: botUserId,
+      maxPages: LIST_DISCOVERY_MAX_PAGES
+    });
+    for (const list of discovery.listAll()) {
+      if (isPasrManagedListName(list.name) && !activeListIds.has(list.id)) {
+        targetsById.set(list.id, { listId: list.id, listName: list.name });
       }
-    } catch (error) {
-      console.warn(
-        JSON.stringify({
-          level: "warn",
-          event: "prune_discovery_skipped",
-          message: error instanceof Error ? error.message : String(error)
-        })
-      );
     }
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "prune_discovery_skipped",
+        message: error instanceof Error ? error.message : String(error)
+      })
+    );
   }
 
-  await addPrunePending(config, [...targetsById.values()]);
   const targets = [...targetsById.values()];
   const toDelete = targets.slice(0, PRUNE_MAX_DELETES_PER_RUN);
   const deletedIds = new Set<string>();

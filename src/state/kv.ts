@@ -125,7 +125,11 @@ const PRUNE_PENDING_KEY = "prune:pending";
 export type PruneCandidate = {
   listId: string;
   listName: string;
+  archived?: boolean;
 };
+
+const MIGRATION_IN_PROGRESS_KEY = "migration:in_progress";
+const MIGRATION_IN_PROGRESS_TTL_SEC = 600;
 
 const readPrunePendingRecords = async (config: AppConfig): Promise<PruneCandidate[]> => {
   const value = await config.stateKv.get(PRUNE_PENDING_KEY);
@@ -171,4 +175,17 @@ export const removePrunePending = async (config: AppConfig, listId: string): Pro
     return;
   }
   await config.stateKv.put(PRUNE_PENDING_KEY, JSON.stringify(next));
+};
+
+export const tryAcquireMigrationLock = async (config: AppConfig): Promise<boolean> => {
+  const existing = await config.stateKv.get(MIGRATION_IN_PROGRESS_KEY);
+  if (existing) return false;
+  await config.stateKv.put(MIGRATION_IN_PROGRESS_KEY, new Date().toISOString(), {
+    expirationTtl: MIGRATION_IN_PROGRESS_TTL_SEC
+  });
+  return true;
+};
+
+export const releaseMigrationLock = async (config: AppConfig): Promise<void> => {
+  await config.stateKv.delete(MIGRATION_IN_PROGRESS_KEY);
 };

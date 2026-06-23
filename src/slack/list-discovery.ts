@@ -1,6 +1,8 @@
 import type { AppConfig } from "../config";
 import { isSkippableSlackLookupError, slackApiGet, slackApiPost } from "./client";
 
+export const LIST_DISCOVERY_MAX_PAGES = 10;
+
 export type SlackListFile = {
   id: string;
   name: string;
@@ -23,14 +25,22 @@ const isSlackListFile = (file: {
 }): file is SlackListFile =>
   !!file.id && file.filetype === SLACK_LIST_FILETYPE && typeof file.name === "string";
 
+type ScanListFilesResult = {
+  lists: SlackListFile[];
+  truncated: boolean;
+  scannedPages: number;
+  reportedPages: number;
+};
+
 const scanListFiles = async (
   config: AppConfig,
   options?: Pick<ListDiscoveryOptions, "userId" | "maxPages">
-): Promise<SlackListFile[]> => {
+): Promise<ScanListFilesResult> => {
   const lists: SlackListFile[] = [];
   let page = 1;
   let pages = 1;
-  const maxPages = options?.maxPages;
+  const maxPages = options?.maxPages ?? LIST_DISCOVERY_MAX_PAGES;
+  let scannedPages = 0;
   do {
     const params: Record<string, string | number> = {
       count: 200,
@@ -44,10 +54,29 @@ const scanListFiles = async (
       if (isSlackListFile(file)) lists.push(file);
     }
     pages = response.paging?.pages ?? page;
+    scannedPages = page;
     page += 1;
-    if (maxPages !== undefined && page > maxPages) break;
+    if (page > maxPages) break;
   } while (page <= pages);
-  return lists;
+  return {
+    lists,
+    truncated: pages > scannedPages,
+    scannedPages,
+    reportedPages: pages
+  };
+};
+
+const logFilesListTruncated = (scan: ScanListFilesResult, maxPages: number): void => {
+  if (!scan.truncated) return;
+  console.warn(
+    JSON.stringify({
+      level: "warn",
+      event: "files_list_truncated",
+      max_pages: maxPages,
+      scanned_pages: scan.scannedPages,
+      reported_pages: scan.reportedPages
+    })
+  );
 };
 
 export type ListDiscovery = {
@@ -65,8 +94,11 @@ export const createListDiscovery = async (
   config: AppConfig,
   options?: ListDiscoveryOptions
 ): Promise<ListDiscovery> => {
+  const maxPages = options?.maxPages ?? LIST_DISCOVERY_MAX_PAGES;
   try {
-    const lists = await scanListFiles(config, options);
+    const scan = await scanListFiles(config, { userId: options?.userId, maxPages });
+    logFilesListTruncated(scan, maxPages);
+    const lists = scan.lists;
     return {
       findByExactName: (listName) => lists.filter((file) => file.name === listName).map((file) => file.id),
       findByNamePrefix: (namePrefix) => lists.filter((file) => file.name.startsWith(namePrefix)),
