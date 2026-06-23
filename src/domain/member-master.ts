@@ -1,5 +1,14 @@
+import type { RegistrationNotifyMode } from "./absence-registration";
+
 export const MEMBER_MASTER_LIST_NAME = "member_master";
-export const MEMBER_MASTER_SCHEMA_VERSION = 2;
+export const MEMBER_MASTER_SCHEMA_VERSION = 3;
+
+const registrationNotifyChoices = [
+  { value: "none", label: "none", color: "gray" },
+  { value: "ch", label: "ch", color: "blue" },
+  { value: "dm", label: "dm", color: "green" },
+  { value: "both", label: "both", color: "purple" }
+] as const;
 
 export const memberMasterSchema = [
   {
@@ -27,6 +36,15 @@ export const memberMasterSchema = [
     options: { format: "multi_entity", notify_users: false }
   },
   {
+    key: "default_registration_notify",
+    name: "Default Registration Notify",
+    type: "select",
+    options: {
+      format: "single_select",
+      choices: [...registrationNotifyChoices]
+    }
+  },
+  {
     key: "active",
     name: "Active",
     type: "checkbox"
@@ -38,6 +56,7 @@ export type MemberMasterColumnIds = {
   targetUser: string;
   defaultNotifyChannels?: string;
   defaultNotifyUsers?: string;
+  defaultRegistrationNotify?: string;
   active: string;
 };
 
@@ -47,6 +66,7 @@ export type MemberMasterRow = {
   active: boolean;
   defaultNotifyChannels: string[];
   defaultNotifyUsers: string[];
+  defaultRegistrationNotify: RegistrationNotifyMode;
   updatedTimestamp: number;
 };
 
@@ -58,4 +78,5 @@ export type ResolveMemberMasterRecordResult = {
   active: boolean;
   defaultNotifyChannels: string[];
   defaultNotifyUsers: string[];
+  defaultRegistrationNotify: RegistrationNotifyMode;
 };

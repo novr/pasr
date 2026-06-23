@@ -1,5 +1,6 @@
 import type { AppConfig } from "../config";
 import { ABSENCE_LIST_NAME, absenceSchema, type AbsenceRecord } from "../domain/absence";
+import { parseRegistrationNotifyMode, type RegistrationNotifyMode } from "../domain/absence-registration";
 import {
   MEMBER_MASTER_LIST_NAME,
   memberMasterSchema,
@@ -61,6 +62,9 @@ const parseMemberMasterRow = (item: SlackListItem): MemberMasterRow | undefined 
   const active = toBooleanValue(pickListField(item, "active")) ?? true;
   const defaultNotifyChannels = [...new Set(toStringArray(pickListField(item, "default_notify_channels")))];
   const defaultNotifyUsers = [...new Set(toStringArray(pickListField(item, "default_notify_users")))];
+  const defaultRegistrationNotify = parseRegistrationNotifyMode(
+    toStringValue(pickListField(item, "default_registration_notify"))
+  );
   const updatedTimestamp = Number(item.updated_timestamp ?? "") || 0;
   return {
     itemId: item.id,
@@ -68,6 +72,7 @@ const parseMemberMasterRow = (item: SlackListItem): MemberMasterRow | undefined 
     active,
     defaultNotifyChannels,
     defaultNotifyUsers,
+    defaultRegistrationNotify,
     updatedTimestamp
   };
 };
@@ -125,7 +130,8 @@ const buildMemberMasterInitialFields = (
   targetUser: string,
   defaultChannels: string[],
   defaultUsers: string[],
-  active = true
+  active = true,
+  defaultRegistrationNotify: RegistrationNotifyMode = "none"
 ): Array<Record<string, unknown>> => {
   const initialFields: Array<Record<string, unknown>> = [
     richTextField(columnIds.primaryText, targetUser),
@@ -137,6 +143,12 @@ const buildMemberMasterInitialFields = (
   }
   if (columnIds.defaultNotifyUsers && defaultUsers.length > 0) {
     initialFields.push({ column_id: columnIds.defaultNotifyUsers, user: defaultUsers });
+  }
+  if (columnIds.defaultRegistrationNotify) {
+    initialFields.push({
+      column_id: columnIds.defaultRegistrationNotify,
+      select: [defaultRegistrationNotify]
+    });
   }
   return initialFields;
 };
@@ -189,7 +201,8 @@ export const slackApi = {
     targetUser: string,
     defaultChannels: string[],
     defaultUsers: string[] = [],
-    active = true
+    active = true,
+    defaultRegistrationNotify: RegistrationNotifyMode = "none"
   ) => {
     const columnIds = await resolveMemberMasterColumnIds(config, listId);
     if (!columnIds) {
@@ -197,7 +210,14 @@ export const slackApi = {
     }
     return slackApiPost<Record<string, unknown>>(config, "slackLists.items.create", {
       list_id: listId,
-      initial_fields: buildMemberMasterInitialFields(columnIds, targetUser, defaultChannels, defaultUsers, active)
+      initial_fields: buildMemberMasterInitialFields(
+        columnIds,
+        targetUser,
+        defaultChannels,
+        defaultUsers,
+        active,
+        defaultRegistrationNotify
+      )
     });
   },
 
@@ -243,7 +263,8 @@ export const slackApi = {
           targetUser,
           active: true,
           defaultNotifyChannels: [],
-          defaultNotifyUsers: []
+          defaultNotifyUsers: [],
+          defaultRegistrationNotify: "none"
         };
       }
       const relisted = await fetchListItems(config, listId);
@@ -261,7 +282,8 @@ export const slackApi = {
         targetUser: keptAfterCreate.targetUser,
         active: keptAfterCreate.active,
         defaultNotifyChannels: keptAfterCreate.defaultNotifyChannels,
-        defaultNotifyUsers: keptAfterCreate.defaultNotifyUsers
+        defaultNotifyUsers: keptAfterCreate.defaultNotifyUsers,
+        defaultRegistrationNotify: keptAfterCreate.defaultRegistrationNotify
       };
     }
 
@@ -280,7 +302,8 @@ export const slackApi = {
       targetUser: kept.targetUser,
       active: kept.active,
       defaultNotifyChannels: kept.defaultNotifyChannels,
-      defaultNotifyUsers: kept.defaultNotifyUsers
+      defaultNotifyUsers: kept.defaultNotifyUsers,
+      defaultRegistrationNotify: kept.defaultRegistrationNotify
     };
   },
 
@@ -291,7 +314,8 @@ export const slackApi = {
     targetUser: string,
     defaultChannels: string[],
     defaultUsers: string[],
-    active: boolean
+    active: boolean,
+    defaultRegistrationNotify: RegistrationNotifyMode = "none"
   ) => {
     const columnIds = await resolveMemberMasterColumnIds(config, listId);
     if (!columnIds) {
@@ -307,6 +331,13 @@ export const slackApi = {
     if (columnIds.defaultNotifyUsers) {
       cells.push({ row_id: rowId, column_id: columnIds.defaultNotifyUsers, user: defaultUsers });
     }
+    if (columnIds.defaultRegistrationNotify) {
+      cells.push({
+        row_id: rowId,
+        column_id: columnIds.defaultRegistrationNotify,
+        select: [defaultRegistrationNotify]
+      });
+    }
     return slackApiPost<Record<string, unknown>>(config, "slackLists.items.update", {
       list_id: listId,
       cells
@@ -318,10 +349,11 @@ export const slackApi = {
     if (!columnIds) {
       throw new Error("absence column resolution failed");
     }
-    return slackApiPost<Record<string, unknown>>(config, "slackLists.items.create", {
+    const created = await slackApiPost<SlackListItemCreateResponse>(config, "slackLists.items.create", {
       list_id: listId,
       initial_fields: buildAbsenceInitialFields(columnIds, record)
     });
+    return created;
   },
 
   renameList: async (config: AppConfig, listId: string, name: string) =>
@@ -341,11 +373,18 @@ export const slackApi = {
       text
     }),
 
-  postEphemeral: async (config: AppConfig, channel: string, user: string, text: string) =>
+  postEphemeral: async (
+    config: AppConfig,
+    channel: string,
+    user: string,
+    text: string,
+    blocks?: Array<Record<string, unknown>>
+  ) =>
     slackApiPost<Record<string, unknown>>(config, "chat.postEphemeral", {
       channel,
       user,
-      text
+      text,
+      ...(blocks ? { blocks } : {})
     }),
 
   updateChannelMessage: async (config: AppConfig, channel: string, ts: string, text: string) =>
@@ -360,6 +399,13 @@ export const slackApi = {
       list_id: listId,
       access_level: "write",
       user_ids: userIds
+    }),
+
+  setListAccessForChannels: async (config: AppConfig, listId: string, channelIds: string[]) =>
+    slackApiPost<Record<string, unknown>>(config, "slackLists.access.set", {
+      list_id: listId,
+      access_level: "write",
+      channel_ids: channelIds
     })
 };
 

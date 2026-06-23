@@ -13,7 +13,8 @@ const config: AppConfig = {
   slackBotToken: "xoxb-test",
   slackSigningSecret: "secret",
   timezone: "Asia/Tokyo",
-  adminUserIds: ["U_ADMIN"]
+  adminUserIds: ["U_ADMIN"],
+  listAccessChannelIds: []
 };
 
 describe("slash command parsers", () => {
