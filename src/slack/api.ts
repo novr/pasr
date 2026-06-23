@@ -8,7 +8,7 @@ import {
 } from "../domain/member-master";
 import { pickListField, toBooleanValue, toStringArray, toStringValue } from "../domain/slack-list-value";
 import { slackApiPost } from "./client";
-import { createListDiscovery, type ListDiscovery } from "./list-discovery";
+import { createListDiscovery } from "./list-discovery";
 import {
   cacheListSchema,
   readListSchemaColumns,
@@ -92,14 +92,15 @@ const findListIdsByName = async (config: AppConfig, listName: string): Promise<s
   return discovery.findByExactName(listName);
 };
 
-let authedUserIdCache: string | undefined;
+let authedUserIdByToken = new Map<string, string>();
 
 const getAuthedUserId = async (config: AppConfig): Promise<string> => {
-  if (authedUserIdCache) return authedUserIdCache;
+  const cached = authedUserIdByToken.get(config.slackBotToken);
+  if (cached) return cached;
   const result = await slackApiPost<{ user_id?: string }>(config, "auth.test", {});
   const userId = result.user_id;
   if (!userId) throw new Error("auth.test response missing user_id");
-  authedUserIdCache = userId;
+  authedUserIdByToken.set(config.slackBotToken, userId);
   return userId;
 };
 
@@ -333,15 +334,6 @@ export const slackApi = {
     slackApiPost<Record<string, unknown>>(config, "files.delete", {
       file: listId
     }),
-
-  findListsByNamePrefix: async (config: AppConfig, namePrefix: string, discovery?: ListDiscovery) => {
-    const lists = discovery
-      ? discovery.findByNamePrefix(namePrefix)
-      : (await createListDiscovery(config, { userId: await getAuthedUserId(config) })).findByNamePrefix(
-          namePrefix
-        );
-    return lists.map((file) => ({ id: file.id, name: file.name }));
-  },
 
   postChannelMessage: async (config: AppConfig, channel: string, text: string) =>
     slackApiPost<{ ts?: string }>(config, "chat.postMessage", {
