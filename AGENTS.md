@@ -48,6 +48,15 @@
   - `TZ=Asia/Tokyo`
   - `SLACK_ADMIN_USER_IDS`
 
+## Testing Rules
+- domain / queue / dedupe / transient / list-discovery を変更したら `npm test` を実行する。
+- テスト・npm scripts 変更時は README「開発・テスト」を同時更新する。
+- 単体テストは I/O モック前提。本番確認は deploy 後の `/run` / slash command で行う。
+- Queue は一時障害のみ retry する。subrequest 上限エラーは retry しない（`src/errors/transient.test.ts` で固定）。
+- dedupe / 署名検証の仕様変更時は対応する `*.test.ts` を更新する。
+- リファクタ・テスト PR では自明コメントと dead code を残さない。
+- Workers 統合テスト（`@cloudflare/vitest-pool-workers`）は Phase 2 では導入しない。
+
 ## Architecture Boundary
 - Slack は入力/UI境界、Cloudflare Workers は実行/通知境界として扱う。
 - Cloudflare 実装は Agents SDK（`agents`）前提で設計する。
