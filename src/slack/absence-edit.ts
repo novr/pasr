@@ -179,6 +179,43 @@ export const openAbsenceEditModal = async (
   );
 };
 
+export type ResolveOwnAbsenceForEditFailure = "not_found" | "forbidden" | "ended";
+
+export const resolveOwnAbsenceForEdit = async (
+  config: AppConfig,
+  userId: string,
+  itemId: string,
+  fetchContext: string
+): Promise<
+  | { ok: true; record: AbsenceRecord; absenceListId: string }
+  | { ok: false; reason: ResolveOwnAbsenceForEditFailure }
+> => {
+  const { absenceListId } = await resolveActiveListIds(config);
+  const listResponse = await slackApi.listItems(config, absenceListId, { fetchContext });
+  const item = (listResponse.items ?? []).find((entry) => entry.id === itemId);
+  if (!item) return { ok: false, reason: "not_found" };
+  const parsed = parseAbsence(item);
+  if (!parsed.ok || parsed.record.targetUser !== userId) return { ok: false, reason: "forbidden" };
+  const { day: todayJst } = getJstDateParts();
+  if (parsed.record.endDate < todayJst) return { ok: false, reason: "ended" };
+  return { ok: true, record: parsed.record, absenceListId };
+};
+
+export const formatResolveOwnAbsenceForEditError = (reason: ResolveOwnAbsenceForEditFailure): string => {
+  switch (reason) {
+    case "not_found":
+      return "対象の不在が見つかりませんでした。";
+    case "forbidden":
+      return "本人の不在のみ編集できます。";
+    case "ended":
+      return "終了済みの不在は編集できません。";
+    default: {
+      const _never: never = reason;
+      return _never;
+    }
+  }
+};
+
 const parseEditMetadata = (raw: string): AbsenceEditMetadata | undefined => {
   try {
     const parsed = JSON.parse(raw) as AbsenceEditMetadata;
@@ -235,8 +272,22 @@ const handleEditSubmission = async (
     };
   }
 
+  const resolved = await resolveOwnAbsenceForEdit(
+    config,
+    metadata.userId,
+    metadata.itemId,
+    "absence_edit_submit"
+  );
+  if (!resolved.ok) {
+    return {
+      ok: false,
+      error: formatResolveOwnAbsenceForEditError(resolved.reason),
+      errorBlockId: "start_block"
+    };
+  }
+
   const record: AbsenceRecord = {
-    itemId: metadata.itemId,
+    itemId: resolved.record.itemId,
     targetUser: metadata.userId,
     absenceType: DEFAULT_ABSENCE_TYPE,
     startDate,
@@ -247,14 +298,14 @@ const handleEditSubmission = async (
   };
 
   try {
-    await slackApi.updateAbsenceItem(config, metadata.absenceListId, metadata.itemId, record);
+    await slackApi.updateAbsenceItem(config, resolved.absenceListId, resolved.record.itemId, record);
     console.log(
       JSON.stringify({
         level: "info",
         event: "absence_updated",
         user_id: metadata.userId,
-        list_id: metadata.absenceListId,
-        item_id: metadata.itemId
+        list_id: resolved.absenceListId,
+        item_id: resolved.record.itemId
       })
     );
     return { ok: true };
@@ -280,19 +331,13 @@ export const handleAbsenceEditInteraction = async (
     const userId = payload.user?.id ?? "";
     if (!itemId || !triggerId || !userId) return { ok: true };
     try {
-      const { absenceListId } = await resolveActiveListIds(config);
-      const listResponse = await slackApi.listItems(config, absenceListId, { fetchContext: "absence_edit_open" });
-      const item = (listResponse.items ?? []).find((entry) => entry.id === itemId);
-      if (!item) return { ok: true };
-      const parsed = parseAbsence(item);
-      if (!parsed.ok || parsed.record.targetUser !== userId) return { ok: true };
-      const { day: todayJst } = getJstDateParts();
-      if (parsed.record.endDate < todayJst) return { ok: true };
+      const resolved = await resolveOwnAbsenceForEdit(config, userId, itemId, "absence_edit_open");
+      if (!resolved.ok) return { ok: true };
       await openAbsenceEditModal(config, {
         triggerId,
         userId,
-        record: parsed.record,
-        absenceListId
+        record: resolved.record,
+        absenceListId: resolved.absenceListId
       });
     } catch (error) {
       console.warn(

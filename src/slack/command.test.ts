@@ -66,12 +66,14 @@ describe("slash command parsers", () => {
     expect(buildQueuedSelfAck()).toContain("一覧");
   });
 
-  it("parseSelfCommandText parses list settings and update date", () => {
+  it("parseSelfCommandText parses list settings update date and item id", () => {
     expect(parseSelfCommandText("list")).toEqual({ kind: "list" });
     expect(parseSelfCommandText("settings")).toEqual({ kind: "settings" });
     expect(parseSelfCommandText("update")).toEqual({ kind: "update_list" });
     expect(parseSelfCommandText("update 2026-06-10")).toEqual({ kind: "update_date", startDate: "2026-06-10" });
-    expect(parseSelfCommandText("update bad-date")).toEqual({ kind: "update_invalid_date" });
+    expect(parseSelfCommandText("update Rec0123ABC")).toEqual({ kind: "update_item", itemId: "Rec0123ABC" });
+    expect(parseSelfCommandText("update bad-date")).toEqual({ kind: "update_item", itemId: "bad-date" });
+    expect(parseSelfCommandText("update 2026-13-40")).toEqual({ kind: "update_invalid_date" });
   });
 
   it("isSlackAdminUser checks allowlist", () => {

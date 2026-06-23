@@ -55,7 +55,10 @@ export const buildOwnAbsenceListBlocks = (
   for (const record of visible) {
     blocks.push({
       type: "section",
-      text: { type: "mrkdwn", text: formatAbsenceListLine(record) }
+      text: {
+        type: "mrkdwn",
+        text: `${formatAbsenceListLine(record)}\n\`${record.itemId}\``
+      }
     });
     const elements: Array<Record<string, unknown>> = [];
     if (includeEdit) {

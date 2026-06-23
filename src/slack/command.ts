@@ -9,7 +9,7 @@ import { runDailyNotify } from "../jobs/daily-notify";
 import { isValidJstDateString, getJstDateParts } from "../domain/jst-date";
 import { findOwnAbsenceByStartDate, parseAbsence, type AbsenceRecord } from "../domain/absence";
 import { ensureMemberMasterList, resolveActiveListIds, runListMigration, runListPrune } from "../jobs/setup";
-import { ABSENCE_EDIT_MODAL_CALLBACK_ID, handleAbsenceEditInteraction, openAbsenceEditModal } from "./absence-edit";
+import { ABSENCE_EDIT_MODAL_CALLBACK_ID, handleAbsenceEditInteraction, openAbsenceEditModal, formatResolveOwnAbsenceForEditError, resolveOwnAbsenceForEdit } from "./absence-edit";
 import { showOwnAbsenceList, handleAbsenceListInteraction } from "./absence-list";
 import { openAbsenceRegisterModal, handleAbsenceRegisterInteraction } from "./absence-register";
 import { slackApi } from "./api";
@@ -73,6 +73,7 @@ export type SelfCommandParse =
   | { kind: "list" }
   | { kind: "update_list" }
   | { kind: "update_date"; startDate: string }
+  | { kind: "update_item"; itemId: string }
   | { kind: "update_invalid_date" }
   | { kind: "register" }
   | { kind: "unknown"; action: string };
@@ -86,9 +87,10 @@ export const parseSelfCommandText = (text: string): SelfCommandParse => {
   if (action === "register") return { kind: "register" };
   if (action === "update") {
     if (parts.length === 1) return { kind: "update_list" };
-    const dateToken = parts[1];
-    if (isValidJstDateString(dateToken)) return { kind: "update_date", startDate: dateToken };
-    return { kind: "update_invalid_date" };
+    const token = parts[1];
+    if (isValidJstDateString(token)) return { kind: "update_date", startDate: token };
+    if (/^\d{4}-\d{2}-\d{2}$/.test(token)) return { kind: "update_invalid_date" };
+    if (token.length > 0) return { kind: "update_item", itemId: token };
   }
   return { kind: "unknown", action };
 };
@@ -203,6 +205,7 @@ const buildHelpText = (): string =>
     "/pasr list - 自分の不在一覧（編集・削除）",
     "/pasr update - /pasr list と同じ",
     "/pasr update YYYY-MM-DD - 開始日指定で不在を編集",
+    "/pasr update <itemId> - 行 ID 指定で不在を編集（/pasr list に ID 表示）",
     "/pasr register - 自分の不在を登録"
   ].join("\n");
 
@@ -478,6 +481,24 @@ const handleSelfImmediateText = async (
           ? "指定された開始日の不在が見つかりませんでした。"
           : "同じ開始日の不在が複数あります。一覧から編集してください。";
       return { mode: "queue", listPrefix };
+    }
+    case "update_item": {
+      const resolved = await resolveOwnAbsenceForEdit(
+        config,
+        payload.userId,
+        parse.itemId,
+        "absence_update_item"
+      );
+      if (!resolved.ok) {
+        return { mode: "text", text: formatResolveOwnAbsenceForEditError(resolved.reason) };
+      }
+      await openAbsenceEditModal(config, {
+        triggerId: payload.triggerId,
+        userId: payload.userId,
+        record: resolved.record,
+        absenceListId: resolved.absenceListId
+      });
+      return { mode: "text", text: "編集フォームを開きました。" };
     }
     default: {
       const _never: never = parse;

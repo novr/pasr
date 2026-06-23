@@ -51,7 +51,7 @@ describe("absence-registration", () => {
       endDate: "",
       todayJst: "2026-06-15",
       notifyMode: "none",
-      channels: [],
+      channels: ["C1"],
       users: [],
       active: true
     });
@@ -82,6 +82,44 @@ describe("absence-registration", () => {
       active: true
     });
     expect(error).toEqual({ reason: "missing_notify_target", blockId: "channels_block" });
+  });
+
+  it("validateAbsenceRegistration requires notify target for none mode", () => {
+    const error = validateAbsenceRegistration({
+      startDate: "2026-06-20",
+      endDate: "2026-06-21",
+      todayJst: "2026-06-15",
+      notifyMode: "none",
+      channels: [],
+      users: [],
+      active: true
+    });
+    expect(error).toEqual({ reason: "missing_notify_target", blockId: "channels_block" });
+  });
+
+  it("validateAbsenceRegistration allows none mode with channel or user", () => {
+    expect(
+      validateAbsenceRegistration({
+        startDate: "2026-06-20",
+        endDate: "2026-06-21",
+        todayJst: "2026-06-15",
+        notifyMode: "none",
+        channels: ["C1"],
+        users: [],
+        active: true
+      })
+    ).toBeUndefined();
+    expect(
+      validateAbsenceRegistration({
+        startDate: "2026-06-20",
+        endDate: "2026-06-21",
+        todayJst: "2026-06-15",
+        notifyMode: "none",
+        channels: [],
+        users: ["U1"],
+        active: true
+      })
+    ).toBeUndefined();
   });
 
   it("validateAbsenceRegistration allows both with one side", () => {

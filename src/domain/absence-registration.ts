@@ -72,6 +72,9 @@ export const validateAbsenceRegistration = (input: {
   if (input.notifyMode === "both" && input.channels.length === 0 && input.users.length === 0) {
     return { reason: "missing_notify_target", blockId: "channels_block" };
   }
+  if (input.notifyMode === "none" && input.channels.length === 0 && input.users.length === 0) {
+    return { reason: "missing_notify_target", blockId: "channels_block" };
+  }
   return undefined;
 };
 
