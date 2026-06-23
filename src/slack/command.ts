@@ -205,7 +205,6 @@ const buildHelpText = (): string =>
     "/pasr list - 自分の不在一覧（編集・削除）",
     "/pasr update - /pasr list と同じ",
     "/pasr update YYYY-MM-DD - 開始日指定で不在を編集",
-    "/pasr update <itemId> - 行 ID 指定で不在を編集（/pasr list に ID 表示）",
     "/pasr register - 自分の不在を登録"
   ].join("\n");
 
