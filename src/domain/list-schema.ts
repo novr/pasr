@@ -1,5 +1,5 @@
-import { absenceSchema } from "./absence";
-import { memberMasterSchema } from "./member-master";
+import { ABSENCE_LIST_NAME, absenceSchema } from "./absence";
+import { MEMBER_MASTER_LIST_NAME, memberMasterSchema } from "./member-master";
 
 export type ListSchemaColumn = {
   key?: string;
@@ -30,6 +30,22 @@ export const buildArchivedListName = (baseName: string, listId: string): string 
 
 export const isArchivedListName = (baseName: string, listName: string): boolean =>
   listName.startsWith(`${baseName}${ARCHIVED_LIST_INFIX}`);
+
+export const isPasrManagedListName = (listName: string): boolean =>
+  listName === ABSENCE_LIST_NAME ||
+  listName === MEMBER_MASTER_LIST_NAME ||
+  isArchivedListName(ABSENCE_LIST_NAME, listName) ||
+  isArchivedListName(MEMBER_MASTER_LIST_NAME, listName);
+
+export const pasrManagedListBaseName = (listName: string): string | undefined => {
+  if (listName === ABSENCE_LIST_NAME || isArchivedListName(ABSENCE_LIST_NAME, listName)) {
+    return ABSENCE_LIST_NAME;
+  }
+  if (listName === MEMBER_MASTER_LIST_NAME || isArchivedListName(MEMBER_MASTER_LIST_NAME, listName)) {
+    return MEMBER_MASTER_LIST_NAME;
+  }
+  return undefined;
+};
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -90,5 +106,7 @@ export const evaluateSchemaStatus = (
 
 export const MIGRATE_HINT = "スキーマ不一致時は /pasr-admin migrate を実行してください。";
 export const PRUNE_AFTER_MIGRATE_HINT = "移行後は /pasr-admin prune で archived 旧 List を削除できます。";
+export const PRUNE_EMPTY_HINT = "削除対象の PASR List はありません。";
+export const PRUNE_REMAINING_HINT = "削除残があります。もう一度 /pasr-admin prune を実行してください。";
 export const MIGRATION_ERRORS_HINT =
   "移行エラーがあるため KV は切り替えていません。原因を修正して /pasr-admin migrate を再実行してください。";

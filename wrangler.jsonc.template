@@ -13,6 +13,20 @@
   "triggers": {
     "crons": ["0 0 * * *"]
   },
+  "queues": {
+    "producers": [
+      {
+        "binding": "ADMIN_TASK_QUEUE",
+        "queue": "pasr-admin-tasks"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "pasr-admin-tasks",
+        "max_batch_size": 1
+      }
+    ]
+  },
   "vars": {
     "TZ": "Asia/Tokyo",
     "SLACK_ADMIN_USER_IDS": ""

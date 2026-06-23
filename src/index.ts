@@ -1,16 +1,20 @@
 import { getConfig, type Env } from "./config";
 import { runDailyNotify } from "./jobs/daily-notify";
+import { enqueueAdminTask, processAdminTaskBatch, type AdminTaskMessage } from "./queue/admin-task";
 import {
-  COMMAND_ACK_ACCEPTED,
+  buildQueuedAdminAck,
+  COMMAND_ACK_DUPLICATE,
+  COMMAND_ACK_ENQUEUE_FAILED,
   COMMAND_ACK_UNAUTHORIZED,
   getSlashCommandImmediateText,
   handleSlackInteraction,
   isSlackAdminUser,
+  parseSlackCommandAction,
   parseSlackCommandPayload,
-  runSlackCommandAsync
+  slashCommandLogFields
 } from "./slack/command";
 import { verifySlackSignature } from "./slack/signature";
-import { SLACK_EVENT_DEDUPE_TTL_SEC, isDuplicateSlackEvent } from "./state/event-dedupe";
+import { SLACK_EVENT_DEDUPE_TTL_SEC, isDuplicateSlackCommandTrigger, isDuplicateSlackEvent } from "./state/event-dedupe";
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {
@@ -174,13 +178,57 @@ export default {
         );
         return text(COMMAND_ACK_UNAUTHORIZED);
       }
+      const commandLog = slashCommandLogFields(payload);
       const immediateText = await getSlashCommandImmediateText(config, payload);
       if (immediateText) {
+        console.log(
+          JSON.stringify({
+            level: "info",
+            event: "slash_command_received",
+            ...commandLog,
+            dispatch: "immediate"
+          })
+        );
         return text(immediateText);
       }
 
-      ctx.waitUntil(runSlackCommandAsync(config, payload));
-      return text(COMMAND_ACK_ACCEPTED);
+      console.log(
+        JSON.stringify({
+          level: "info",
+          event: "slash_command_received",
+          ...commandLog,
+          dispatch: "queue"
+        })
+      );
+      const duplicate = await isDuplicateSlackCommandTrigger(config, payload.triggerId);
+      if (duplicate) {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "duplicate_command_dropped",
+            trigger_id: payload.triggerId,
+            user_id: payload.userId,
+            team_id: payload.teamId,
+            dedupe_ttl_sec: SLACK_EVENT_DEDUPE_TTL_SEC
+          })
+        );
+        return text(COMMAND_ACK_DUPLICATE);
+      }
+      const action = parseSlackCommandAction(payload.text);
+      try {
+        await enqueueAdminTask(env.ADMIN_TASK_QUEUE, payload);
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            level: "error",
+            event: "slash_command_enqueue_failed",
+            ...commandLog,
+            message: error instanceof Error ? error.message : String(error)
+          })
+        );
+        return text(COMMAND_ACK_ENQUEUE_FAILED);
+      }
+      return text(buildQueuedAdminAck(action));
     }
 
     if (pathname === "/slack/interactions" && request.method === "POST") {
@@ -239,5 +287,9 @@ export default {
       return;
     }
     ctx.waitUntil(runDailyNotify(config, { runId, trigger: "scheduled" }));
+  },
+
+  async queue(batch: MessageBatch<AdminTaskMessage>, env: Env): Promise<void> {
+    await processAdminTaskBatch(getConfig(env), batch);
   }
 };

@@ -3,16 +3,32 @@ import { runDailyNotify } from "../jobs/daily-notify";
 import { ensureMemberMasterList, runListMigration, runListPrune } from "../jobs/setup";
 import { slackApi } from "./api";
 import { readLastRunSummary, readPersistedMemberMasterListId } from "../state/kv";
-import { SLACK_EVENT_DEDUPE_TTL_SEC, isDuplicateSlackCommandTrigger } from "../state/event-dedupe";
 
-export const COMMAND_ACK_ACCEPTED = "Accepted";
 export const COMMAND_ACK_UNAUTHORIZED = "Received. Processing...";
+export const COMMAND_ACK_DUPLICATE =
+  "同じコマンドは処理中です。完了後に結果を表示してください。";
+export const COMMAND_ACK_ENQUEUE_FAILED =
+  "キューへの投入に失敗しました。しばらく待って再実行してください。";
+
+export const buildQueuedAdminAck = (action: string): string => {
+  switch (action) {
+    case "run":
+      return "通知処理を実行中です。完了後に結果を表示します。";
+    case "migrate":
+      return "migrate を実行中です。完了後に結果を表示します。";
+    case "prune":
+      return "prune を実行中です。完了後に結果を表示します。";
+    default:
+      return "処理を実行中です。完了後に結果を表示します。";
+  }
+};
 
 export type SlackCommandPayload = {
   command: string;
   text: string;
   userId: string;
   teamId: string;
+  channelId: string;
   triggerId: string;
   responseUrl: string;
 };
@@ -44,24 +60,29 @@ export const parseSlackCommandPayload = (rawBody: string): SlackCommandPayload |
   const text = parseValue(params, "text");
   const userId = parseValue(params, "user_id");
   const teamId = parseValue(params, "team_id");
+  const channelId = parseValue(params, "channel_id");
   const triggerId = parseValue(params, "trigger_id");
   const responseUrl = parseValue(params, "response_url");
   if (!command || !userId || !teamId || !triggerId) return undefined;
-  return { command, text, userId, teamId, triggerId, responseUrl };
+  return { command, text, userId, teamId, channelId, triggerId, responseUrl };
 };
 
 export const isSlackAdminUser = (config: AppConfig, userId: string): boolean =>
   config.adminUserIds.includes(userId);
 
-const postEphemeralResponse = async (payload: SlackCommandPayload, text: string): Promise<void> => {
-  if (!payload.responseUrl) return;
-  try {
-    const response = await fetch(payload.responseUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json; charset=utf-8" },
-      body: JSON.stringify({ response_type: "ephemeral", text })
-    });
-    if (!response.ok) {
+const postEphemeralResponse = async (
+  config: AppConfig,
+  payload: SlackCommandPayload,
+  text: string
+): Promise<void> => {
+  if (payload.responseUrl) {
+    try {
+      const response = await fetch(payload.responseUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify({ response_type: "ephemeral", text })
+      });
+      if (response.ok) return;
       console.warn(
         JSON.stringify({
           level: "warn",
@@ -72,19 +93,44 @@ const postEphemeralResponse = async (payload: SlackCommandPayload, text: string)
           status: response.status
         })
       );
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "slash_command_response_failed",
+          trigger_id: payload.triggerId,
+          user_id: payload.userId,
+          team_id: payload.teamId,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      );
     }
+  }
+
+  if (!payload.channelId) return;
+  try {
+    await slackApi.postEphemeral(config, payload.channelId, payload.userId, text);
   } catch (error) {
     console.warn(
       JSON.stringify({
         level: "warn",
-        event: "slash_command_response_failed",
+        event: "slash_command_ephemeral_failed",
         trigger_id: payload.triggerId,
         user_id: payload.userId,
         team_id: payload.teamId,
+        channel_id: payload.channelId,
         message: error instanceof Error ? error.message : String(error)
       })
     );
   }
+};
+
+export const notifySlashCommandEphemeral = async (
+  config: AppConfig,
+  payload: SlackCommandPayload,
+  text: string
+): Promise<void> => {
+  await postEphemeralResponse(config, payload, text);
 };
 
 const buildHelpText = (): string =>
@@ -151,6 +197,16 @@ const isAdminAction = (action: string): action is (typeof ADMIN_ACTIONS)[number]
 
 export const parseSlackCommandAction = (text: string): string =>
   text.split(/\s+/).filter((part) => part.length > 0)[0] ?? "help";
+
+export const slashCommandLogFields = (payload: SlackCommandPayload): Record<string, string | boolean> => ({
+  command: payload.command,
+  action: parseSlackCommandAction(payload.text),
+  text: payload.text,
+  user_id: payload.userId,
+  team_id: payload.teamId,
+  trigger_id: payload.triggerId,
+  has_response_url: payload.responseUrl.length > 0
+});
 
 const resolveSelfMasterRecord = async (
   config: AppConfig,
@@ -380,21 +436,6 @@ const getAdminImmediateText = async (
 };
 
 export const runSlackCommandAsync = async (config: AppConfig, payload: SlackCommandPayload): Promise<void> => {
-  const duplicate = await isDuplicateSlackCommandTrigger(config, payload.triggerId);
-  if (duplicate) {
-    console.warn(
-      JSON.stringify({
-        level: "warn",
-        event: "duplicate_command_dropped",
-        trigger_id: payload.triggerId,
-        user_id: payload.userId,
-        team_id: payload.teamId,
-        dedupe_ttl_sec: SLACK_EVENT_DEDUPE_TTL_SEC
-      })
-    );
-    return;
-  }
-
   const action = parseSlackCommandAction(payload.text);
   if (getCommandKind(payload.command) !== "admin") {
     return;
@@ -415,89 +456,106 @@ export const runSlackCommandAsync = async (config: AppConfig, payload: SlackComm
     return;
   }
 
-  if (action === "run") {
-    const runId = `cmd_${crypto.randomUUID()}`;
-    const result = await runDailyNotify(config, { runId, trigger: "manual" });
-    console.log(
-      JSON.stringify({
-        level: "info",
-        event: "slash_command_run_done",
-        command: payload.command,
-        action,
-        trigger_id: payload.triggerId,
-        user_id: payload.userId,
-        team_id: payload.teamId,
-        run_id: runId,
-        processed: result.processed,
-        sent: result.sent,
-        skipped: result.skipped,
-        errors: result.errors
-      })
-    );
+  try {
+    if (action === "run") {
+      const runId = `cmd_${crypto.randomUUID()}`;
+      const result = await runDailyNotify(config, { runId, trigger: "manual" });
+      console.log(
+        JSON.stringify({
+          level: "info",
+          event: "slash_command_run_done",
+          command: payload.command,
+          action,
+          trigger_id: payload.triggerId,
+          user_id: payload.userId,
+          team_id: payload.teamId,
+          run_id: runId,
+          processed: result.processed,
+          sent: result.sent,
+          skipped: result.skipped,
+          errors: result.errors
+        })
+      );
 
-    const status = result.errors > 0 ? "一部エラーあり" : "完了";
-    const resultText = [
-      `run ${status}: processed=${result.processed} sent=${result.sent} skipped=${result.skipped} errors=${result.errors}`,
-      `run_id: ${runId}`
-    ].join("\n");
-    await postEphemeralResponse(payload, resultText);
-    return;
-  }
-
-  if (action === "migrate") {
-    const result = await runListMigration(config);
-    if (result.skippedMigration) {
+      const status = result.errors > 0 ? "一部エラーあり" : "完了";
       const resultText = [
-        "migrate skip: absence/member_master は最新スキーマです。",
-        formatMigrationKind(payload.teamId, result.absence),
-        formatMigrationKind(payload.teamId, result.memberMaster)
+        `run ${status}: processed=${result.processed} sent=${result.sent} skipped=${result.skipped} errors=${result.errors}`,
+        `run_id: ${runId}`
       ].join("\n");
-      await postEphemeralResponse(payload, resultText);
+      await postEphemeralResponse(config, payload, resultText);
       return;
     }
-    const totalErrors = result.absence.errors + result.memberMaster.errors;
-    const status = totalErrors > 0 ? "一部エラーあり" : "完了";
-    console.log(
+
+    if (action === "migrate") {
+      const result = await runListMigration(config);
+      if (result.skippedMigration) {
+        const resultText = [
+          "migrate skip: absence/member_master は最新スキーマです。",
+          formatMigrationKind(payload.teamId, result.absence),
+          formatMigrationKind(payload.teamId, result.memberMaster)
+        ].join("\n");
+        await postEphemeralResponse(config, payload, resultText);
+        return;
+      }
+      const totalErrors = result.absence.errors + result.memberMaster.errors;
+      const status = totalErrors > 0 ? "一部エラーあり" : "完了";
+      console.log(
+        JSON.stringify({
+          level: "info",
+          event: "slash_command_migrate_done",
+          command: payload.command,
+          action,
+          trigger_id: payload.triggerId,
+          user_id: payload.userId,
+          team_id: payload.teamId,
+          absence: result.absence,
+          memberMaster: result.memberMaster
+        })
+      );
+      const resultText = [
+        `migrate ${status}`,
+        formatMigrationKind(payload.teamId, result.absence),
+        formatMigrationKind(payload.teamId, result.memberMaster),
+        ...result.hints
+      ].join("\n");
+      await postEphemeralResponse(config, payload, resultText);
+      return;
+    }
+
+    if (action === "prune") {
+      const result = await runListPrune(config);
+      if (result.skippedPrune) {
+        const resultText = ["prune skip: 先に /pasr-admin migrate を実行してください。", ...result.hints].join("\n");
+        await postEphemeralResponse(config, payload, resultText);
+        return;
+      }
+      const totalErrors = result.absence.errors + result.memberMaster.errors;
+      const status = totalErrors > 0 ? "一部エラーあり" : "完了";
+      const resultText = [
+        `prune ${status}`,
+        `absence: found=${result.absence.found} deleted=${result.absence.deleted} errors=${result.absence.errors}`,
+        `member_master: found=${result.memberMaster.found} deleted=${result.memberMaster.deleted} errors=${result.memberMaster.errors}`,
+        `active absence: ${buildSlackListLink(payload.teamId, result.absence.activeListId)}`,
+        `active member_master: ${buildSlackListLink(payload.teamId, result.memberMaster.activeListId)}`,
+        ...result.hints
+      ].join("\n");
+      await postEphemeralResponse(config, payload, resultText);
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(
       JSON.stringify({
-        level: "info",
-        event: "slash_command_migrate_done",
+        level: "error",
+        event: "slash_command_async_failed",
         command: payload.command,
         action,
         trigger_id: payload.triggerId,
         user_id: payload.userId,
         team_id: payload.teamId,
-        absence: result.absence,
-        memberMaster: result.memberMaster
+        message: errorMessage
       })
     );
-    const resultText = [
-      `migrate ${status}`,
-      formatMigrationKind(payload.teamId, result.absence),
-      formatMigrationKind(payload.teamId, result.memberMaster),
-      ...result.hints
-    ].join("\n");
-    await postEphemeralResponse(payload, resultText);
-    return;
-  }
-
-  if (action === "prune") {
-    const result = await runListPrune(config);
-    if (result.skippedPrune) {
-      const resultText = ["prune skip: 先に /pasr-admin migrate を実行してください。", ...result.hints].join("\n");
-      await postEphemeralResponse(payload, resultText);
-      return;
-    }
-    const totalErrors = result.absence.errors + result.memberMaster.errors;
-    const status = totalErrors > 0 ? "一部エラーあり" : "完了";
-    const resultText = [
-      `prune ${status}`,
-      `absence: found=${result.absence.found} deleted=${result.absence.deleted} errors=${result.absence.errors}`,
-      `member_master: found=${result.memberMaster.found} deleted=${result.memberMaster.deleted} errors=${result.memberMaster.errors}`,
-      `active absence: ${buildSlackListLink(payload.teamId, result.absence.activeListId)}`,
-      `active member_master: ${buildSlackListLink(payload.teamId, result.memberMaster.activeListId)}`,
-      ...result.hints
-    ].join("\n");
-    await postEphemeralResponse(payload, resultText);
+    await notifySlashCommandEphemeral(config, payload, `処理に失敗しました: ${errorMessage}`);
   }
 };
 

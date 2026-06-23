@@ -119,3 +119,56 @@ export const readLastRunSummary = async (config: AppConfig): Promise<LastRunSumm
 export const writeLastRunSummary = async (config: AppConfig, summary: LastRunSummary): Promise<void> => {
   await config.stateKv.put(LAST_RUN_SUMMARY_KEY, JSON.stringify(summary));
 };
+
+const PRUNE_PENDING_KEY = "prune:pending";
+
+export type PruneCandidate = {
+  listId: string;
+  listName: string;
+};
+
+const readPrunePendingRecords = async (config: AppConfig): Promise<PruneCandidate[]> => {
+  const value = await config.stateKv.get(PRUNE_PENDING_KEY);
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as PruneCandidate[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (entry): entry is PruneCandidate =>
+        !!entry &&
+        typeof entry.listId === "string" &&
+        entry.listId.length > 0 &&
+        typeof entry.listName === "string" &&
+        entry.listName.length > 0
+    );
+  } catch {
+    return [];
+  }
+};
+
+export const readPrunePending = async (config: AppConfig): Promise<PruneCandidate[]> =>
+  readPrunePendingRecords(config);
+
+export const addPrunePending = async (
+  config: AppConfig,
+  candidates: PruneCandidate[]
+): Promise<void> => {
+  if (candidates.length === 0) return;
+  const records = await readPrunePendingRecords(config);
+  const byId = new Map(records.map((entry) => [entry.listId, entry]));
+  for (const candidate of candidates) {
+    byId.set(candidate.listId, candidate);
+  }
+  await config.stateKv.put(PRUNE_PENDING_KEY, JSON.stringify([...byId.values()]));
+};
+
+export const removePrunePending = async (config: AppConfig, listId: string): Promise<void> => {
+  const records = await readPrunePendingRecords(config);
+  const next = records.filter((entry) => entry.listId !== listId);
+  if (next.length === records.length) return;
+  if (next.length === 0) {
+    await config.stateKv.delete(PRUNE_PENDING_KEY);
+    return;
+  }
+  await config.stateKv.put(PRUNE_PENDING_KEY, JSON.stringify(next));
+};

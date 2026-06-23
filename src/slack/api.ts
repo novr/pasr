@@ -7,7 +7,8 @@ import {
   type ResolveMemberMasterRecordResult
 } from "../domain/member-master";
 import { pickListField, toBooleanValue, toStringArray, toStringValue } from "../domain/slack-list-value";
-import { isSkippableSlackLookupError, slackApiGet, slackApiPost } from "./client";
+import { slackApiPost } from "./client";
+import { createListDiscovery, type ListDiscovery } from "./list-discovery";
 import {
   cacheListSchema,
   readListSchemaColumns,
@@ -28,25 +29,6 @@ type SlackListItemsListResponse = {
   items?: SlackListItem[];
   response_metadata?: {
     next_cursor?: string;
-  };
-};
-
-type SlackList = {
-  id?: string;
-  name?: string;
-};
-
-type SlackFile = {
-  id?: string;
-  name?: string;
-  filetype?: string;
-};
-
-type FilesListResponse = {
-  files?: SlackFile[];
-  paging?: {
-    page?: number;
-    pages?: number;
   };
 };
 
@@ -72,11 +54,6 @@ type SlackConversationOpenResponse = {
     id?: string;
   };
 };
-
-const SLACK_LIST_FILETYPE = "list";
-
-const isSlackListFile = (file: SlackFile): file is { id: string; name: string } =>
-  !!file.id && file.filetype === SLACK_LIST_FILETYPE && typeof file.name === "string";
 
 const parseMemberMasterRow = (item: SlackListItem): MemberMasterRow | undefined => {
   const targetUser = toStringValue(pickListField(item, "target_user")) || toStringValue(pickListField(item, "member_key"));
@@ -110,45 +87,20 @@ const fetchListItems = async (config: AppConfig, listId: string): Promise<{ item
   return { items };
 };
 
-const listListFiles = async (
-  config: AppConfig,
-  matches: (file: { id: string; name: string }) => boolean
-): Promise<SlackList[]> => {
-  const lists: SlackList[] = [];
-  let page = 1;
-  let pages = 1;
-  do {
-    const response = await slackApiGet<FilesListResponse>(config, "files.list", {
-      count: 200,
-      page,
-      types: "all"
-    });
-    for (const file of response.files ?? []) {
-      if (!isSlackListFile(file) || !matches(file)) continue;
-      lists.push({ id: file.id, name: file.name });
-    }
-    pages = response.paging?.pages ?? page;
-    page += 1;
-  } while (page <= pages);
-  return lists;
+const findListIdsByName = async (config: AppConfig, listName: string): Promise<string[]> => {
+  const discovery = await createListDiscovery(config, { userId: await getAuthedUserId(config) });
+  return discovery.findByExactName(listName);
 };
 
-const findListIdsByName = async (config: AppConfig, listName: string): Promise<string[]> => {
-  try {
-    const lists = await listListFiles(config, (file) => file.name === listName);
-    return lists.map((list) => list.id).filter((id): id is string => !!id);
-  } catch (error) {
-    if (!isSkippableSlackLookupError(error)) throw error;
-    console.warn(
-      JSON.stringify({
-        level: "warn",
-        event: "files_list_lookup_skipped",
-        listName,
-        message: error instanceof Error ? error.message : String(error)
-      })
-    );
-    return [];
-  }
+let authedUserIdCache: string | undefined;
+
+const getAuthedUserId = async (config: AppConfig): Promise<string> => {
+  if (authedUserIdCache) return authedUserIdCache;
+  const result = await slackApiPost<{ user_id?: string }>(config, "auth.test", {});
+  const userId = result.user_id;
+  if (!userId) throw new Error("auth.test response missing user_id");
+  authedUserIdCache = userId;
+  return userId;
 };
 
 const createList = async (
@@ -226,6 +178,8 @@ export const slackApi = {
   findListIdsByName: async (config: AppConfig, listName: string): Promise<string[]> =>
     findListIdsByName(config, listName),
 
+  getAuthedUserId: async (config: AppConfig): Promise<string> => getAuthedUserId(config),
+
   listItems: async (config: AppConfig, listId: string) => fetchListItems(config, listId),
 
   createMemberMasterItem: async (
@@ -233,7 +187,8 @@ export const slackApi = {
     listId: string,
     targetUser: string,
     defaultChannels: string[],
-    defaultUsers: string[] = []
+    defaultUsers: string[] = [],
+    active = true
   ) => {
     const columnIds = await resolveMemberMasterColumnIds(config, listId);
     if (!columnIds) {
@@ -241,7 +196,7 @@ export const slackApi = {
     }
     return slackApiPost<Record<string, unknown>>(config, "slackLists.items.create", {
       list_id: listId,
-      initial_fields: buildMemberMasterInitialFields(columnIds, targetUser, defaultChannels, defaultUsers)
+      initial_fields: buildMemberMasterInitialFields(columnIds, targetUser, defaultChannels, defaultUsers, active)
     });
   },
 
@@ -379,26 +334,25 @@ export const slackApi = {
       file: listId
     }),
 
-  findListsByNamePrefix: async (config: AppConfig, namePrefix: string): Promise<SlackList[]> => {
-    try {
-      return await listListFiles(config, (file) => file.name.startsWith(namePrefix));
-    } catch (error) {
-      if (!isSkippableSlackLookupError(error)) throw error;
-      console.warn(
-        JSON.stringify({
-          level: "warn",
-          event: "files_list_lookup_skipped",
-          namePrefix,
-          message: error instanceof Error ? error.message : String(error)
-        })
-      );
-      return [];
-    }
+  findListsByNamePrefix: async (config: AppConfig, namePrefix: string, discovery?: ListDiscovery) => {
+    const lists = discovery
+      ? discovery.findByNamePrefix(namePrefix)
+      : (await createListDiscovery(config, { userId: await getAuthedUserId(config) })).findByNamePrefix(
+          namePrefix
+        );
+    return lists.map((file) => ({ id: file.id, name: file.name }));
   },
 
   postChannelMessage: async (config: AppConfig, channel: string, text: string) =>
     slackApiPost<{ ts?: string }>(config, "chat.postMessage", {
       channel,
+      text
+    }),
+
+  postEphemeral: async (config: AppConfig, channel: string, user: string, text: string) =>
+    slackApiPost<Record<string, unknown>>(config, "chat.postEphemeral", {
+      channel,
+      user,
       text
     }),
 

@@ -1,5 +1,8 @@
+import type { AdminTaskMessage } from "./queue/admin-task";
+
 export type Env = {
   PASR_STATE: KVNamespace;
+  ADMIN_TASK_QUEUE: Queue<AdminTaskMessage>;
   SLACK_BOT_TOKEN: string;
   SLACK_SIGNING_SECRET: string;
   RUN_ENDPOINT_TOKEN?: string;
@@ -25,6 +28,9 @@ export const getConfig = (env: Env): AppConfig => {
   }
   if (!env.PASR_STATE) {
     throw new Error("Missing PASR_STATE binding");
+  }
+  if (!env.ADMIN_TASK_QUEUE) {
+    throw new Error("Missing ADMIN_TASK_QUEUE binding");
   }
 
   return {

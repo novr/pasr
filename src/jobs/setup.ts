@@ -2,24 +2,31 @@ import type { AppConfig } from "../config";
 import { ABSENCE_LIST_NAME, ABSENCE_SCHEMA_VERSION, parseAbsence, type AbsenceRecord } from "../domain/absence";
 import { MEMBER_MASTER_LIST_NAME, MEMBER_MASTER_SCHEMA_VERSION } from "../domain/member-master";
 import {
-  ARCHIVED_LIST_INFIX,
   buildArchivedListName,
   evaluateSchemaStatus,
   hasExpectedAbsenceSchema,
   hasExpectedMemberMasterSchema,
-  isArchivedListName,
   MIGRATE_HINT,
   MIGRATION_ERRORS_HINT,
+  pasrManagedListBaseName,
+  isPasrManagedListName,
   PRUNE_AFTER_MIGRATE_HINT,
+  PRUNE_EMPTY_HINT,
+  PRUNE_REMAINING_HINT,
   type ListSchemaStatus
 } from "../domain/list-schema";
 import { pickListField, toBooleanValue, toStringArray, toStringValue } from "../domain/slack-list-value";
 import { slackApi, type SlackListItem } from "../slack/api";
+import { createListDiscovery, type ListDiscovery } from "../slack/list-discovery";
 import {
   readPersistedAbsenceSchemaVersion,
   readPersistedListId,
   readPersistedMemberMasterListId,
   readPersistedMemberMasterSchemaVersion,
+  addPrunePending,
+  readPrunePending,
+  removePrunePending,
+  type PruneCandidate,
   writePersistedAbsenceSchemaVersion,
   writePersistedListId,
   writePersistedMemberMasterListId,
@@ -152,25 +159,23 @@ const resolvePreferredListId = async (
   config: AppConfig,
   listName: string,
   persistedListId: string | undefined,
-  inspectShape: (listId: string) => Promise<boolean>
+  inspectShape: (listId: string) => Promise<boolean>,
+  loadDiscovery?: () => Promise<ListDiscovery>
 ): Promise<string | undefined> => {
-  const discovered = await slackApi.findListIdsByName(config, listName);
+  if (persistedListId && (await inspectShape(persistedListId))) {
+    return persistedListId;
+  }
+
+  const discovered = loadDiscovery
+    ? (await loadDiscovery()).findByExactName(listName)
+    : await slackApi.findListIdsByName(config, listName);
   const listIds = mergeListIds(...discovered, persistedListId);
   if (listIds.length === 0) return undefined;
 
-  const shapeById = new Map<string, boolean>();
-  let firstShapeValid: string | undefined;
   for (const listId of listIds) {
-    const valid = await inspectShape(listId);
-    shapeById.set(listId, valid);
-    if (valid && !firstShapeValid) firstShapeValid = listId;
+    if (await inspectShape(listId)) return listId;
   }
-
-  if (persistedListId && listIds.includes(persistedListId)) {
-    if (shapeById.get(persistedListId)) return persistedListId;
-    return firstShapeValid;
-  }
-  return firstShapeValid;
+  return undefined;
 };
 
 const persistListKvIfShapeValid = async (
@@ -204,6 +209,7 @@ const archiveSourceLists = async (
     const archivedName = buildArchivedListName(baseName, listId);
     try {
       await slackApi.renameList(config, listId, archivedName);
+      await addPrunePending(config, [{ listId, listName: archivedName }]);
     } catch (error) {
       console.error(
         JSON.stringify({
@@ -437,6 +443,24 @@ const dedupeAbsenceRecords = (records: AbsenceRecord[]): AbsenceRecord[] => {
   return [...deduped.values()];
 };
 
+const PRUNE_MAX_DELETES_PER_RUN = 40;
+
+const registerPrunePendingListIds = async (
+  config: AppConfig,
+  listIds: string[],
+  discovery?: ListDiscovery
+): Promise<void> => {
+  if (listIds.length === 0) return;
+  const nameById = new Map((discovery?.listAll() ?? []).map((file) => [file.id, file.name]));
+  await addPrunePending(
+    config,
+    listIds.map((listId) => ({
+      listId,
+      listName: nameById.get(listId) ?? listId
+    }))
+  );
+};
+
 const skippedKindResult = (
   listName: string,
   listId: string,
@@ -452,16 +476,19 @@ const skippedKindResult = (
   skipped: true
 });
 
-const migrateMemberMasterKind = async (config: AppConfig): Promise<ListKindMigrationResult> => {
+const migrateMemberMasterKind = async (
+  config: AppConfig,
+  loadDiscovery?: () => Promise<ListDiscovery>
+): Promise<ListKindMigrationResult> => {
   const persistedListId = await readPersistedMemberMasterListId(config);
   const persistedVersion = await readPersistedMemberMasterSchemaVersion(config);
   const sourceListId = await resolvePreferredListId(
     config,
     MEMBER_MASTER_LIST_NAME,
     persistedListId,
-    (listId) => readMemberMasterShapeValid(config, listId)
+    (listId) => readMemberMasterShapeValid(config, listId),
+    loadDiscovery
   );
-  const allListIds = mergeListIds(...(await slackApi.findListIdsByName(config, MEMBER_MASTER_LIST_NAME)), persistedListId, sourceListId);
   if (!sourceListId) {
     const created = await slackApi.createMemberMasterList(config);
     const createdListId = created.list_id ?? created.list?.id;
@@ -470,7 +497,7 @@ const migrateMemberMasterKind = async (config: AppConfig): Promise<ListKindMigra
     await writePersistedMemberMasterSchemaVersion(config, MEMBER_MASTER_SCHEMA_VERSION);
     return {
       listName: MEMBER_MASTER_LIST_NAME,
-      fromListIds: allListIds,
+      fromListIds: mergeListIds(persistedListId),
       toListId: createdListId,
       sourceRows: 0,
       migratedRows: 0,
@@ -485,8 +512,16 @@ const migrateMemberMasterKind = async (config: AppConfig): Promise<ListKindMigra
     if (status.shapeUpToDate && !status.versionUpToDate) {
       await writePersistedMemberMasterSchemaVersion(config, MEMBER_MASTER_SCHEMA_VERSION);
     }
-    return skippedKindResult(MEMBER_MASTER_LIST_NAME, sourceListId, allListIds);
+    return skippedKindResult(MEMBER_MASTER_LIST_NAME, sourceListId, [sourceListId]);
   }
+
+  const listDiscovery = loadDiscovery ? await loadDiscovery() : await createListDiscovery(config);
+  const allListIds = mergeListIds(
+    ...listDiscovery.findByExactName(MEMBER_MASTER_LIST_NAME),
+    persistedListId,
+    sourceListId
+  );
+  await registerPrunePendingListIds(config, allListIds, listDiscovery);
 
   const allRows: MemberMasterMigrationRow[] = [];
   let sourceRows = 0;
@@ -519,20 +554,9 @@ const migrateMemberMasterKind = async (config: AppConfig): Promise<ListKindMigra
         destinationListId,
         row.targetUser,
         row.defaultNotifyChannels,
-        row.defaultNotifyUsers
+        row.defaultNotifyUsers,
+        row.active
       );
-      if (!row.active) {
-        const resolved = await slackApi.resolveMemberMasterRecord(config, destinationListId, row.targetUser);
-        await slackApi.updateMemberMasterItem(
-          config,
-          destinationListId,
-          resolved.kept,
-          row.targetUser,
-          row.defaultNotifyChannels,
-          row.defaultNotifyUsers,
-          false
-        );
-      }
       migratedRows += 1;
     } catch (error) {
       errors += 1;
@@ -576,16 +600,19 @@ const migrateMemberMasterKind = async (config: AppConfig): Promise<ListKindMigra
   };
 };
 
-const migrateAbsenceKind = async (config: AppConfig): Promise<ListKindMigrationResult> => {
+const migrateAbsenceKind = async (
+  config: AppConfig,
+  loadDiscovery?: () => Promise<ListDiscovery>
+): Promise<ListKindMigrationResult> => {
   const persistedListId = await readPersistedListId(config);
   const persistedVersion = await readPersistedAbsenceSchemaVersion(config);
   const sourceListId = await resolvePreferredListId(
     config,
     ABSENCE_LIST_NAME,
     persistedListId,
-    (listId) => readAbsenceShapeValid(config, listId)
+    (listId) => readAbsenceShapeValid(config, listId),
+    loadDiscovery
   );
-  const allListIds = mergeListIds(...(await slackApi.findListIdsByName(config, ABSENCE_LIST_NAME)), persistedListId, sourceListId);
   if (!sourceListId) {
     const created = await slackApi.createAbsenceList(config);
     const createdListId = created.list_id ?? created.list?.id;
@@ -594,7 +621,7 @@ const migrateAbsenceKind = async (config: AppConfig): Promise<ListKindMigrationR
     await writePersistedAbsenceSchemaVersion(config, ABSENCE_SCHEMA_VERSION);
     return {
       listName: ABSENCE_LIST_NAME,
-      fromListIds: allListIds,
+      fromListIds: mergeListIds(persistedListId),
       toListId: createdListId,
       sourceRows: 0,
       migratedRows: 0,
@@ -609,8 +636,12 @@ const migrateAbsenceKind = async (config: AppConfig): Promise<ListKindMigrationR
     if (status.shapeUpToDate && !status.versionUpToDate) {
       await writePersistedAbsenceSchemaVersion(config, ABSENCE_SCHEMA_VERSION);
     }
-    return skippedKindResult(ABSENCE_LIST_NAME, sourceListId, allListIds);
+    return skippedKindResult(ABSENCE_LIST_NAME, sourceListId, [sourceListId]);
   }
+
+  const listDiscovery = loadDiscovery ? await loadDiscovery() : await createListDiscovery(config);
+  const allListIds = mergeListIds(...listDiscovery.findByExactName(ABSENCE_LIST_NAME), persistedListId, sourceListId);
+  await registerPrunePendingListIds(config, allListIds, listDiscovery);
 
   const allRecords: AbsenceRecord[] = [];
   let sourceRows = 0;
@@ -687,8 +718,13 @@ const migrateAbsenceKind = async (config: AppConfig): Promise<ListKindMigrationR
 };
 
 export const runListMigration = async (config: AppConfig): Promise<ListMigrationResult> => {
-  const memberMaster = await migrateMemberMasterKind(config);
-  const absence = await migrateAbsenceKind(config);
+  const cache = { discovery: undefined as ListDiscovery | undefined };
+  const loadDiscovery = async (): Promise<ListDiscovery> => {
+    cache.discovery ??= await createListDiscovery(config);
+    return cache.discovery;
+  };
+  const memberMaster = await migrateMemberMasterKind(config, loadDiscovery);
+  const absence = await migrateAbsenceKind(config, loadDiscovery);
   const skippedMigration = memberMaster.skipped && absence.skipped;
   const hints: string[] = [];
   if (!skippedMigration) {
@@ -731,48 +767,82 @@ export const runListPrune = async (config: AppConfig): Promise<ListPruneResult> 
     };
   }
 
-  const pruneArchived = async (
-    baseName: string,
-    activeListId: string
-  ): Promise<ListPruneKindResult> => {
-    const archivedPrefix = `${baseName}${ARCHIVED_LIST_INFIX}`;
-    const archivedLists = await slackApi.findListsByNamePrefix(config, archivedPrefix);
-    let deleted = 0;
-    let errors = 0;
-    for (const list of archivedLists) {
-      if (!list.id || list.id === activeListId) continue;
-      if (!list.name || !isArchivedListName(baseName, list.name)) continue;
-      try {
-        await slackApi.deleteList(config, list.id);
-        deleted += 1;
-      } catch (error) {
-        errors += 1;
-        console.error(
-          JSON.stringify({
-            level: "error",
-            event: "list_prune_delete_failed",
-            listName: list.name,
-            listId: list.id,
-            activeListId,
-            message: error instanceof Error ? error.message : String(error)
-          })
-        );
-      }
+  const activeListIds = new Set([activeAbsenceListId, activeMemberMasterListId]);
+  const targetsById = new Map<string, PruneCandidate>();
+
+  for (const pending of await readPrunePending(config)) {
+    if (!activeListIds.has(pending.listId)) {
+      targetsById.set(pending.listId, pending);
     }
+  }
+
+  if (targetsById.size === 0) {
+    try {
+      const botUserId = await slackApi.getAuthedUserId(config);
+      const discovery = await createListDiscovery(config, { userId: botUserId, maxPages: 10 });
+      for (const list of discovery.listAll()) {
+        if (isPasrManagedListName(list.name) && !activeListIds.has(list.id)) {
+          targetsById.set(list.id, { listId: list.id, listName: list.name });
+        }
+      }
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "prune_discovery_skipped",
+          message: error instanceof Error ? error.message : String(error)
+        })
+      );
+    }
+  }
+
+  await addPrunePending(config, [...targetsById.values()]);
+  const targets = [...targetsById.values()];
+  const toDelete = targets.slice(0, PRUNE_MAX_DELETES_PER_RUN);
+  const deletedIds = new Set<string>();
+  const errorIds = new Set<string>();
+
+  for (const target of toDelete) {
+    try {
+      await slackApi.deleteList(config, target.listId);
+      await removePrunePending(config, target.listId);
+      deletedIds.add(target.listId);
+    } catch (error) {
+      errorIds.add(target.listId);
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "list_prune_delete_failed",
+          listName: target.listName,
+          listId: target.listId,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      );
+    }
+  }
+
+  const kindResult = (baseName: string, activeListId: string): ListPruneKindResult => {
+    const kindTargets = targets.filter((target) => pasrManagedListBaseName(target.listName) === baseName);
     return {
       activeListId,
-      found: archivedLists.length,
-      deleted,
-      errors
+      found: kindTargets.length,
+      deleted: kindTargets.filter((target) => deletedIds.has(target.listId)).length,
+      errors: kindTargets.filter((target) => errorIds.has(target.listId)).length
     };
   };
 
-  const absence = await pruneArchived(ABSENCE_LIST_NAME, activeAbsenceListId);
-  const memberMaster = await pruneArchived(MEMBER_MASTER_LIST_NAME, activeMemberMasterListId);
+  const absence = kindResult(ABSENCE_LIST_NAME, activeAbsenceListId);
+  const memberMaster = kindResult(MEMBER_MASTER_LIST_NAME, activeMemberMasterListId);
+  const hints: string[] = [];
+  if (targets.length === 0) {
+    hints.push(PRUNE_EMPTY_HINT);
+  } else if (targets.length > toDelete.length) {
+    hints.push(PRUNE_REMAINING_HINT);
+  }
 
   return {
     skippedPrune: false,
-    hints: [],
+    hints,
     absence,
     memberMaster
   };
