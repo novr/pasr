@@ -57,6 +57,50 @@ describe("parseAbsence", () => {
     expect(result.record.endDate).toBe("2026-06-05");
   });
 
+  it("extracts plain text from rich_text note field", () => {
+    const result = parseAbsence({
+      id: "x",
+      fields: {
+        target_user: "U001",
+        start_date: "2026-06-23",
+        end_date: "2026-06-24",
+        note: {
+          rich_text: [
+            {
+              type: "rich_text",
+              elements: [{ type: "rich_text_section", elements: [{ type: "text", text: "test" }] }]
+            }
+          ]
+        }
+      }
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.record.note).toBe("test");
+  });
+
+  it("extracts plain text from list field entry note value", () => {
+    const richText = [
+      {
+        type: "rich_text",
+        block_id: "gB9fq",
+        elements: [{ type: "rich_text_section", elements: [{ type: "text", text: "test" }] }]
+      }
+    ];
+    const result = parseAbsence({
+      id: "x",
+      fields: [
+        { key: "target_user", user: ["U001"] },
+        { key: "start_date", date: "2026-06-23" },
+        { key: "end_date", date: "2026-06-24" },
+        { key: "note", value: JSON.stringify(richText) }
+      ]
+    } as unknown as Parameters<typeof parseAbsence>[0]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.record.note).toBe("test");
+  });
+
   it("allows empty notify_channels", () => {
     const result = parseAbsence({
       id: "x",

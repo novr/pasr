@@ -6,6 +6,7 @@ import {
   type AbsenceEditValidationError
 } from "../domain/absence-registration";
 import { getJstDateParts } from "../domain/jst-date";
+import { toNoteText } from "../domain/rich-text-plain";
 import { ensureMemberMasterList, resolveActiveListIds } from "../jobs/setup";
 import { slackApi } from "./api";
 import { ABSENCE_EDIT_OPEN_ACTION_ID } from "./absence-list";
@@ -135,7 +136,7 @@ export const buildAbsenceEditModalView = (params: {
         type: "plain_text_input",
         action_id: "note_input",
         multiline: true,
-        initial_value: params.record.note ?? ""
+        initial_value: toNoteText(params.record.note ?? "")
       }
     },
     {
