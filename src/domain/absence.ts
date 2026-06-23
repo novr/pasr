@@ -88,6 +88,29 @@ export const parseAbsence = (item: SlackListItem): ParseResult => {
 export const filterToday = (records: AbsenceRecord[], todayJst: string): AbsenceRecord[] =>
   records.filter((record) => record.startDate <= todayJst && todayJst <= record.endDate);
 
+export const filterEndedBefore = (records: AbsenceRecord[], todayJst: string): AbsenceRecord[] =>
+  records.filter((record) => record.endDate < todayJst);
+
+export const filterOwnFutureAbsences = (
+  records: AbsenceRecord[],
+  userId: string,
+  todayJst: string
+): AbsenceRecord[] =>
+  records
+    .filter((record) => record.targetUser === userId && record.endDate >= todayJst)
+    .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.itemId.localeCompare(b.itemId));
+
+export const findOwnAbsenceByStartDate = (
+  records: AbsenceRecord[],
+  userId: string,
+  startDate: string,
+  todayJst: string
+): AbsenceRecord[] =>
+  records.filter(
+    (record) =>
+      record.targetUser === userId && record.startDate === startDate && record.endDate >= todayJst
+  );
+
 export const groupByChannel = (records: AbsenceRecord[]): Map<string, AbsenceRecord[]> => {
   const grouped = new Map<string, AbsenceRecord[]>();
   for (const record of records) {

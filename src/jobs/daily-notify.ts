@@ -1,5 +1,5 @@
 import type { AppConfig } from "../config";
-import { filterToday, groupByChannel, parseAbsence, type AbsenceRecord, type SkipReason } from "../domain/absence";
+import { filterToday, filterEndedBefore, groupByChannel, parseAbsence, type AbsenceRecord, type SkipReason } from "../domain/absence";
 import { formatAttendanceNoticeLine } from "../domain/absence-registration";
 import { pickListField, toBooleanValue, toStringValue } from "../domain/slack-list-value";
 import { ensureMemberMasterList, runSetup } from "./setup";
@@ -21,6 +21,7 @@ type DailyResult = {
   sent: number;
   skipped: number;
   errors: number;
+  deleted: number;
   skipReasons: Record<SkipReason, number>;
 };
 
@@ -457,6 +458,82 @@ const parseNoteText = (note?: string): string | undefined => {
   }
 };
 
+const deleteEndedAbsences = async (
+  config: AppConfig,
+  context: RunContext,
+  result: DailyResult,
+  listId: string,
+  day: string,
+  parsed: ReturnType<typeof parseAbsence>[]
+): Promise<void> => {
+  const endedRecords: AbsenceRecord[] = [];
+  for (const item of parsed) {
+    if (!item.ok) {
+      try {
+        await slackApi.deleteAbsenceItem(config, listId, item.itemId);
+        result.deleted += 1;
+        console.log(
+          JSON.stringify({
+            level: "info",
+            event: "parse_failed_absence_deleted",
+            run_id: context.runId,
+            trigger: context.trigger,
+            listId,
+            itemId: item.itemId,
+            reason: item.reason
+          })
+        );
+      } catch (error) {
+        result.errors += 1;
+        console.error(
+          JSON.stringify({
+            level: "error",
+            event: "absence_delete_failed",
+            run_id: context.runId,
+            trigger: context.trigger,
+            listId,
+            itemId: item.itemId,
+            message: error instanceof Error ? error.message : String(error)
+          })
+        );
+      }
+      continue;
+    }
+    endedRecords.push(item.record);
+  }
+
+  for (const record of filterEndedBefore(endedRecords, day)) {
+    try {
+      await slackApi.deleteAbsenceItem(config, listId, record.itemId);
+      result.deleted += 1;
+      console.log(
+        JSON.stringify({
+          level: "info",
+          event: "ended_absence_deleted",
+          run_id: context.runId,
+          trigger: context.trigger,
+          listId,
+          itemId: record.itemId,
+          end_date: record.endDate
+        })
+      );
+    } catch (error) {
+      result.errors += 1;
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "absence_delete_failed",
+          run_id: context.runId,
+          trigger: context.trigger,
+          listId,
+          itemId: record.itemId,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      );
+    }
+  }
+};
+
 export const runDailyNotify = async (
   config: AppConfig,
   context: RunContext
@@ -470,6 +547,7 @@ export const runDailyNotify = async (
     sent: 0,
     skipped: 0,
     errors: 0,
+    deleted: 0,
     skipReasons: zeroedReasons()
   };
   const { day } = toJstDate();
@@ -524,6 +602,8 @@ export const runDailyNotify = async (
   const groupedNotifyUsers = groupByNotifyUser(todaysForDm);
   await sendDirectMessageNotifications(config, context, result, resolvedListId, day, groupedNotifyUsers);
 
+  await deleteEndedAbsences(config, context, result, resolvedListId, day, parsed);
+
   console.log(
     JSON.stringify({
       level: "info",
@@ -535,6 +615,7 @@ export const runDailyNotify = async (
       sent: result.sent,
       skipped: result.skipped,
       errors: result.errors,
+      deleted: result.deleted,
       skipReasons: result.skipReasons
     })
   );
@@ -547,6 +628,7 @@ export const runDailyNotify = async (
       sent: result.sent,
       skipped: result.skipped,
       errors: result.errors,
+      deleted: result.deleted,
       executedAt: new Date().toISOString()
     });
   } catch (error) {
