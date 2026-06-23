@@ -1,7 +1,14 @@
 import type { AppConfig } from "../config";
+import {
+  formatRegistrationNotifyModeLabel,
+  parseRegistrationNotifyMode,
+  REGISTRATION_NOTIFY_SELECT_OPTIONS,
+  type RegistrationNotifyMode
+} from "../domain/absence-registration";
 import { isTransientError } from "../errors/transient";
 import { runDailyNotify } from "../jobs/daily-notify";
 import { ensureMemberMasterList, runListMigration, runListPrune } from "../jobs/setup";
+import { openAbsenceRegisterModal, handleAbsenceRegisterInteraction } from "./absence-register";
 import { slackApi } from "./api";
 import { readLastRunSummary, readPersistedMemberMasterListId } from "../state/kv";
 
@@ -38,6 +45,8 @@ type SlackInteractionPayload = {
   type: string;
   trigger_id?: string;
   user?: { id?: string };
+  channel?: { id?: string };
+  actions?: Array<{ action_id?: string }>;
   view?: {
     callback_id?: string;
     private_metadata?: string;
@@ -47,10 +56,11 @@ type SlackInteractionPayload = {
   };
 };
 
-type SlackInteractionResult = {
+export type SlackInteractionResult = {
   ok: boolean;
   error?: string;
-  errorBlockId?: "active_block" | "channels_block";
+  errorBlockId?: string;
+  followUp?: () => Promise<void>;
 };
 
 const parseValue = (params: URLSearchParams, key: string): string => params.get(key)?.trim() ?? "";
@@ -138,7 +148,8 @@ const buildHelpText = (): string =>
   [
     "/pasr help - ユーザ向けコマンドの使い方表示",
     "/pasr view - 自分の通知設定を表示",
-    "/pasr update - 自分の通知設定を編集"
+    "/pasr update - 自分の通知設定を編集",
+    "/pasr register - 自分の不在を登録"
   ].join("\n");
 
 const buildAdminHelpText = (): string =>
@@ -181,7 +192,7 @@ const formatMigrationKind = (
 
 type CommandKind = "self" | "admin" | "unsupported";
 
-const SELF_ACTIONS = ["help", "view", "update"] as const;
+const SELF_ACTIONS = ["help", "view", "update", "register"] as const;
 const ADMIN_ACTIONS = ["help", "run", "status", "migrate", "prune"] as const;
 
 const getCommandKind = (command: string): CommandKind => {
@@ -221,6 +232,7 @@ const resolveSelfMasterRecord = async (
   active: boolean;
   defaultNotifyChannels: string[];
   defaultNotifyUsers: string[];
+  defaultRegistrationNotify: RegistrationNotifyMode;
 }> => {
   const memberMasterListId = await ensureMemberMasterList(config);
   const resolved = await slackApi.resolveMemberMasterRecord(config, memberMasterListId, payload.userId);
@@ -235,17 +247,35 @@ const resolveSelfMasterRecord = async (
     targetUser: resolved.targetUser,
     active: resolved.active,
     defaultNotifyChannels: resolved.defaultNotifyChannels,
-    defaultNotifyUsers: resolved.defaultNotifyUsers
+    defaultNotifyUsers: resolved.defaultNotifyUsers,
+    defaultRegistrationNotify: resolved.defaultRegistrationNotify
   };
 };
 
 const MEMBER_MASTER_MODAL_CALLBACK_ID = "pasr_member_master_update";
+
+const buildRegistrationNotifySelectElement = (
+  initialMode: RegistrationNotifyMode
+): Record<string, unknown> => {
+  const options = REGISTRATION_NOTIFY_SELECT_OPTIONS.map((option) => ({
+    text: { type: "plain_text", text: option.label },
+    value: option.value
+  }));
+  const initialOption = options.find((option) => option.value === initialMode) ?? options[0];
+  return {
+    type: "static_select",
+    action_id: "default_registration_notify_select",
+    options,
+    initial_option: initialOption
+  };
+};
 
 const buildMemberMasterModalView = (params: {
   userId: string;
   active: boolean;
   defaultNotifyChannels: string[];
   defaultNotifyUsers: string[];
+  defaultRegistrationNotify: RegistrationNotifyMode;
 }): Record<string, unknown> => ({
   type: "modal",
   callback_id: MEMBER_MASTER_MODAL_CALLBACK_ID,
@@ -293,6 +323,12 @@ const buildMemberMasterModalView = (params: {
         action_id: "default_users_select",
         initial_users: params.defaultNotifyUsers
       }
+    },
+    {
+      type: "input",
+      block_id: "registration_notify_block",
+      label: { type: "plain_text", text: "既定の登録通知" },
+      element: buildRegistrationNotifySelectElement(params.defaultRegistrationNotify)
     }
   ]
 });
@@ -331,10 +367,19 @@ const formatDefaultUsersForView = (userIds: string[]): string => {
   return userIds.map((userId) => `<@${userId}>`).join(",");
 };
 
+const parseStaticSelectValue = (value: unknown): string => {
+  const record = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+  const option = record?.selected_option;
+  if (!option || typeof option !== "object") return "";
+  const optionRecord = option as Record<string, unknown>;
+  return typeof optionRecord.value === "string" ? optionRecord.value : "";
+};
+
 const buildSelfViewMessage = (resolved: {
   active: boolean;
   defaultNotifyChannels: string[];
   defaultNotifyUsers: string[];
+  defaultRegistrationNotify: RegistrationNotifyMode;
   created: boolean;
   deleted: string[];
 }): string => {
@@ -342,7 +387,8 @@ const buildSelfViewMessage = (resolved: {
     "あなたの通知設定です。",
     `通知対象: ${resolved.active ? "有効" : "無効"}`,
     `既定の通知先チャンネル: ${formatDefaultChannelsForView(resolved.defaultNotifyChannels)}`,
-    `既定の通知先ユーザー: ${formatDefaultUsersForView(resolved.defaultNotifyUsers)}`
+    `既定の通知先ユーザー: ${formatDefaultUsersForView(resolved.defaultNotifyUsers)}`,
+    `既定の登録通知: ${formatRegistrationNotifyModeLabel(resolved.defaultRegistrationNotify)}`
   ];
   if (resolved.created) lines.push("note: レコードが存在しなかったため新規作成しました。");
   if (resolved.deleted.length > 0) lines.push(`note: 重複レコードを掃除しました (${resolved.deleted.length}件)。`);
@@ -370,11 +416,21 @@ const handleSelfImmediateText = async (
             userId: payload.userId,
             active: resolved.active,
             defaultNotifyChannels: resolved.defaultNotifyChannels,
-            defaultNotifyUsers: resolved.defaultNotifyUsers
+            defaultNotifyUsers: resolved.defaultNotifyUsers,
+            defaultRegistrationNotify: resolved.defaultRegistrationNotify
           })
         );
       }
       return "設定フォームを開きました。";
+    case "register":
+      await openAbsenceRegisterModal(config, {
+        triggerId: payload.triggerId,
+        userId: payload.userId,
+        channelId: payload.channelId,
+        teamId: payload.teamId,
+        triggerSource: "slash"
+      });
+      return "不在登録フォームを開きました。";
     case "view": {
       const resolved = await resolveSelfMasterRecord(config, payload);
       return buildSelfViewMessage(resolved);
@@ -565,6 +621,11 @@ export const handleSlackInteraction = async (
   config: AppConfig,
   payload: SlackInteractionPayload
 ): Promise<SlackInteractionResult> => {
+  const absenceResult = await handleAbsenceRegisterInteraction(config, payload);
+  if (payload.type === "block_actions" || payload.view?.callback_id === "pasr_absence_register") {
+    return absenceResult;
+  }
+
   if (payload.type !== "view_submission") {
     return { ok: true };
   }
@@ -598,9 +659,11 @@ export const handleSlackInteraction = async (
   const channelsValue = values.channels_block?.default_channels_select;
   const usersValue = values.users_block?.default_users_select;
   const activeValue = values.active_block?.active_checkbox;
+  const registrationNotifyValue = values.registration_notify_block?.default_registration_notify_select;
   const defaultChannels = parseSelectedChannels(channelsValue);
   const defaultUsers = parseSelectedUsers(usersValue);
   const active = parseActiveValue(activeValue);
+  const defaultRegistrationNotify = parseRegistrationNotifyMode(parseStaticSelectValue(registrationNotifyValue));
   try {
     const memberMasterListId = await ensureMemberMasterList(config);
     const resolved = await slackApi.resolveMemberMasterRecord(config, memberMasterListId, metadata.userId);
@@ -611,7 +674,8 @@ export const handleSlackInteraction = async (
       metadata.userId,
       defaultChannels,
       defaultUsers,
-      active
+      active,
+      defaultRegistrationNotify
     );
     if (resolved.deleted.length > 0) {
       console.warn(

@@ -33,12 +33,20 @@
 - コマンド処理は ACK 後に非同期実行し、同期処理で重い処理を行わない。
 - `trigger_id` の TTL=300秒重複抑止を必須とし、重複コマンドは捨てる。
 
+## Phase 2.3 Absence Registration Rules
+- 不在登録入口は `/pasr register` と `app_mention`（チャンネル直下のみ。`thread_ts` ありは除外）。
+- `app_mention` は ephemeral + ボタン経由で Modal を開く（`trigger_id` は `block_actions` で取得）。
+- Interactions は `POST /slack/interactions`。`view_submission` は List 書き込みまで同期、通知は `waitUntil`。
+- 登録通知は absence レコードではなく Modal 選択値 + 当日ルール（9:00 JST 前後）で判定する。
+- `member_master` schema v3 の `default_registration_notify` は登録 Modal 初期値のみ（日次通知とは独立）。
+
 ## Phase #4 User Master Rules
 - user master list 名は `member_master` とし、主キー相当は `Target User`（Slack user entity）を使う。
 - list 作成時は user 通知を無効化する（`notify_users=false`）。
 - `active` は checkbox フィールドで運用し、checked=true を通知対象とする。
 - master 未登録ユーザーは daily 実行時に最小レコードで自動 insert する。
 - `active` が unchecked（false）の場合は `inactive_user_master` として明示スキップし、skip 集計へ加算する。
+- `default_registration_notify`（select: none/ch/dm/both）は登録 Modal の初期値。schema version 3。
 
 ## Configuration
 - 組織ごとに Slack App / Cloudflare 環境を分離する。

@@ -27,5 +27,6 @@ export const createTestConfig = (stateKv: KVNamespace) => ({
   slackBotToken: "xoxb-test",
   slackSigningSecret: "test-secret",
   timezone: "Asia/Tokyo",
-  adminUserIds: ["U_ADMIN"]
+  adminUserIds: ["U_ADMIN"],
+  listAccessChannelIds: []
 });

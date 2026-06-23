@@ -1,7 +1,14 @@
 import { TransientAdminTaskError } from "../errors/transient";
 import type { AppConfig } from "../config";
 import { ABSENCE_LIST_NAME, ABSENCE_SCHEMA_VERSION, parseAbsence, type AbsenceRecord } from "../domain/absence";
+import { parseRegistrationNotifyMode } from "../domain/absence-registration";
 import { MEMBER_MASTER_LIST_NAME, MEMBER_MASTER_SCHEMA_VERSION } from "../domain/member-master";
+import {
+  mergeListIds,
+  needsMigrationDataRecoveryFromCounts,
+  pickMigrationSourceListId,
+  shouldSkipListKindMigration
+} from "../domain/list-migration";
 import {
   buildArchivedListName,
   evaluateSchemaStatus,
@@ -54,6 +61,7 @@ type MemberMasterMigrationRow = {
   active: boolean;
   defaultNotifyChannels: string[];
   defaultNotifyUsers: string[];
+  defaultRegistrationNotify: ReturnType<typeof parseRegistrationNotifyMode>;
   updatedTimestamp: number;
 };
 
@@ -97,12 +105,16 @@ const parseMemberMasterMigrationRow = (item: SlackListItem): MemberMasterMigrati
   const active = toBooleanValue(pickListField(item, "active")) ?? true;
   const defaultNotifyChannels = [...new Set(toStringArray(pickListField(item, "default_notify_channels")))];
   const defaultNotifyUsers = [...new Set(toStringArray(pickListField(item, "default_notify_users")))];
+  const defaultRegistrationNotify = parseRegistrationNotifyMode(
+    toStringValue(pickListField(item, "default_registration_notify"))
+  );
   const updatedTimestamp = Number(item.updated_timestamp ?? "") || 0;
   return {
     targetUser,
     active,
     defaultNotifyChannels,
     defaultNotifyUsers,
+    defaultRegistrationNotify,
     updatedTimestamp
   };
 };
@@ -157,10 +169,6 @@ const inspectAbsenceSchema = async (
   return evaluateSchemaStatus(persistedVersion, ABSENCE_SCHEMA_VERSION, hasExpectedAbsenceSchema(columns));
 };
 
-const mergeListIds = (...candidates: Array<string | undefined>): string[] => [
-  ...new Set(candidates.filter((id): id is string => !!id))
-];
-
 const resolvePreferredListId = async (
   config: AppConfig,
   listName: string,
@@ -182,6 +190,48 @@ const resolvePreferredListId = async (
     if (await inspectShape(listId)) return listId;
   }
   return undefined;
+};
+
+const listIdsByExactName = async (
+  config: AppConfig,
+  listName: string,
+  persistedListId: string | undefined,
+  loadDiscovery?: () => Promise<ListDiscovery>
+): Promise<string[]> => {
+  const discovered = loadDiscovery
+    ? (await loadDiscovery()).findByExactName(listName)
+    : await slackApi.findListIdsByName(config, listName);
+  return mergeListIds(...discovered, persistedListId);
+};
+
+const resolveMigrationSourceListId = async (
+  config: AppConfig,
+  listName: string,
+  persistedListId: string | undefined,
+  loadDiscovery?: () => Promise<ListDiscovery>
+): Promise<string | undefined> => {
+  const listIds = await listIdsByExactName(config, listName, persistedListId, loadDiscovery);
+  return pickMigrationSourceListId(listIds, persistedListId);
+};
+
+const countListItems = async (config: AppConfig, listId: string): Promise<number> => {
+  const source = await slackApi.listItems(config, listId);
+  return source.items?.length ?? 0;
+};
+
+const needsMigrationDataRecovery = async (
+  config: AppConfig,
+  listName: string,
+  activeListId: string,
+  persistedListId: string | undefined,
+  loadDiscovery?: () => Promise<ListDiscovery>
+): Promise<boolean> => {
+  const listIds = await listIdsByExactName(config, listName, persistedListId, loadDiscovery);
+  const itemCountsByListId: Record<string, number> = {};
+  for (const listId of listIds) {
+    itemCountsByListId[listId] = await countListItems(config, listId);
+  }
+  return needsMigrationDataRecoveryFromCounts(activeListId, itemCountsByListId);
 };
 
 const persistListKvIfShapeValid = async (
@@ -254,6 +304,39 @@ const commitMigrationTarget = async (
   await writeVersion();
 };
 
+const ensureAdminListAccess = async (config: AppConfig, listId: string, listName: string): Promise<void> => {
+  const hasAdmins = config.adminUserIds.length > 0;
+  const hasChannels = config.listAccessChannelIds.length > 0;
+  if (!hasAdmins && !hasChannels) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "list_access_skipped",
+        listName,
+        listId,
+        reason: "no_admin_user_ids_or_channel_ids"
+      })
+    );
+    return;
+  }
+  if (hasAdmins) {
+    await slackApi.setListAccessForUsers(config, listId, config.adminUserIds);
+  }
+  if (hasChannels) {
+    await slackApi.setListAccessForChannels(config, listId, config.listAccessChannelIds);
+  }
+  console.log(
+    JSON.stringify({
+      level: "info",
+      event: "list_access_granted",
+      listName,
+      listId,
+      adminUsers: config.adminUserIds.length,
+      channels: config.listAccessChannelIds.length
+    })
+  );
+};
+
 const syncSchemaVersionIfShapeValid = async (
   config: AppConfig,
   listName: string,
@@ -299,11 +382,6 @@ export const resolveActiveListIds = async (config: AppConfig): Promise<ActiveLis
 };
 
 export const ensureMemberMasterList = async (config: AppConfig): Promise<string> => {
-  const ensureListAccess = async (listId: string): Promise<void> => {
-    if (config.adminUserIds.length === 0) return;
-    await slackApi.setListAccessForUsers(config, listId, config.adminUserIds);
-  };
-
   const persisted = await readPersistedMemberMasterListId(config);
   const persistedSchemaVersion = await readPersistedMemberMasterSchemaVersion(config);
   if (persisted) {
@@ -317,7 +395,7 @@ export const ensureMemberMasterList = async (config: AppConfig): Promise<string>
         writePersistedMemberMasterSchemaVersion,
         MEMBER_MASTER_SCHEMA_VERSION
       );
-      await ensureListAccess(persisted);
+      await ensureAdminListAccess(config, persisted, MEMBER_MASTER_LIST_NAME);
       return persisted;
     }
 
@@ -340,13 +418,13 @@ export const ensureMemberMasterList = async (config: AppConfig): Promise<string>
           MEMBER_MASTER_SCHEMA_VERSION
         )
       ) {
-        await ensureListAccess(alternative);
+        await ensureAdminListAccess(config, alternative, MEMBER_MASTER_LIST_NAME);
         return alternative;
       }
     }
 
     logSchemaOutdated(MEMBER_MASTER_LIST_NAME, persisted, status);
-    await ensureListAccess(persisted);
+    await ensureAdminListAccess(config, persisted, MEMBER_MASTER_LIST_NAME);
     return persisted;
   }
 
@@ -371,7 +449,7 @@ export const ensureMemberMasterList = async (config: AppConfig): Promise<string>
     ) {
       throw new Error(`member_master list schema outdated: ${foundByName}. ${MIGRATE_HINT}`);
     }
-    await ensureListAccess(foundByName);
+    await ensureAdminListAccess(config, foundByName, MEMBER_MASTER_LIST_NAME);
     return foundByName;
   }
 
@@ -382,16 +460,11 @@ export const ensureMemberMasterList = async (config: AppConfig): Promise<string>
   }
   await writePersistedMemberMasterListId(config, createdListId);
   await writePersistedMemberMasterSchemaVersion(config, MEMBER_MASTER_SCHEMA_VERSION);
-  await ensureListAccess(createdListId);
+  await ensureAdminListAccess(config, createdListId, MEMBER_MASTER_LIST_NAME);
   return createdListId;
 };
 
 export const runSetup = async (config: AppConfig): Promise<SetupResult> => {
-  const ensureAbsenceListAccess = async (listId: string): Promise<void> => {
-    if (config.adminUserIds.length === 0) return;
-    await slackApi.setListAccessForUsers(config, listId, config.adminUserIds);
-  };
-
   const persistedAbsenceListId = await readPersistedListId(config);
   const targetListId = persistedAbsenceListId;
   const persistedAbsenceSchemaVersion = await readPersistedAbsenceSchemaVersion(config);
@@ -414,7 +487,7 @@ export const runSetup = async (config: AppConfig): Promise<SetupResult> => {
     ) {
       throw new Error(`absence list schema outdated: ${listId}. ${MIGRATE_HINT}`);
     }
-    await ensureAbsenceListAccess(listId);
+    await ensureAdminListAccess(config, listId, ABSENCE_LIST_NAME);
     return {
       listId,
       memberMasterListId: await ensureMemberMasterList(config)
@@ -470,11 +543,10 @@ const migrateMemberMasterKind = async (
 ): Promise<ListKindMigrationResult> => {
   const persistedListId = await readPersistedMemberMasterListId(config);
   const persistedVersion = await readPersistedMemberMasterSchemaVersion(config);
-  const sourceListId = await resolvePreferredListId(
+  const sourceListId = await resolveMigrationSourceListId(
     config,
     MEMBER_MASTER_LIST_NAME,
     persistedListId,
-    (listId) => readMemberMasterShapeValid(config, listId),
     loadDiscovery
   );
   if (!sourceListId) {
@@ -483,6 +555,7 @@ const migrateMemberMasterKind = async (
     if (!createdListId) throw new Error("slackLists.create response missing member master list id");
     await writePersistedMemberMasterListId(config, createdListId);
     await writePersistedMemberMasterSchemaVersion(config, MEMBER_MASTER_SCHEMA_VERSION);
+    await ensureAdminListAccess(config, createdListId, MEMBER_MASTER_LIST_NAME);
     return {
       listName: MEMBER_MASTER_LIST_NAME,
       fromListIds: mergeListIds(persistedListId),
@@ -496,10 +569,31 @@ const migrateMemberMasterKind = async (
   }
 
   const status = await inspectMemberMasterSchema(config, sourceListId, persistedVersion);
-  if (status.upToDate || (status.shapeUpToDate && !status.versionUpToDate)) {
+  const canSkipForVersion = status.upToDate || (status.shapeUpToDate && !status.versionUpToDate);
+  const needsDataRecovery = canSkipForVersion
+    ? await needsMigrationDataRecovery(
+        config,
+        MEMBER_MASTER_LIST_NAME,
+        sourceListId,
+        persistedListId,
+        loadDiscovery
+      )
+    : false;
+  if (needsDataRecovery) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "member_master_migration_data_recovery",
+        activeListId: sourceListId,
+        hint: "active list is empty but sibling member_master lists contain rows"
+      })
+    );
+  }
+  if (shouldSkipListKindMigration(status, needsDataRecovery)) {
     if (status.shapeUpToDate && !status.versionUpToDate) {
       await writePersistedMemberMasterSchemaVersion(config, MEMBER_MASTER_SCHEMA_VERSION);
     }
+    await ensureAdminListAccess(config, sourceListId, MEMBER_MASTER_LIST_NAME);
     return skippedKindResult(MEMBER_MASTER_LIST_NAME, sourceListId, [sourceListId]);
   }
 
@@ -533,9 +627,6 @@ const migrateMemberMasterKind = async (
   if (!destinationListId) {
     throw new Error("slackLists.create response missing member master list id");
   }
-  if (config.adminUserIds.length > 0) {
-    await slackApi.setListAccessForUsers(config, destinationListId, config.adminUserIds);
-  }
 
   let migratedRows = 0;
   let errors = 0;
@@ -547,7 +638,8 @@ const migrateMemberMasterKind = async (
         row.targetUser,
         row.defaultNotifyChannels,
         row.defaultNotifyUsers,
-        row.active
+        row.active,
+        row.defaultRegistrationNotify
       );
       migratedRows += 1;
     } catch (error) {
@@ -573,6 +665,7 @@ const migrateMemberMasterKind = async (
     () => writePersistedMemberMasterSchemaVersion(config, MEMBER_MASTER_SCHEMA_VERSION)
   );
   if (errors === 0) {
+    await ensureAdminListAccess(config, destinationListId, MEMBER_MASTER_LIST_NAME);
     await archiveSourceLists(
       config,
       MEMBER_MASTER_LIST_NAME,
@@ -598,11 +691,10 @@ const migrateAbsenceKind = async (
 ): Promise<ListKindMigrationResult> => {
   const persistedListId = await readPersistedListId(config);
   const persistedVersion = await readPersistedAbsenceSchemaVersion(config);
-  const sourceListId = await resolvePreferredListId(
+  const sourceListId = await resolveMigrationSourceListId(
     config,
     ABSENCE_LIST_NAME,
     persistedListId,
-    (listId) => readAbsenceShapeValid(config, listId),
     loadDiscovery
   );
   if (!sourceListId) {
@@ -611,6 +703,7 @@ const migrateAbsenceKind = async (
     if (!createdListId) throw new Error("slackLists.create response missing list id");
     await writePersistedListId(config, createdListId);
     await writePersistedAbsenceSchemaVersion(config, ABSENCE_SCHEMA_VERSION);
+    await ensureAdminListAccess(config, createdListId, ABSENCE_LIST_NAME);
     return {
       listName: ABSENCE_LIST_NAME,
       fromListIds: mergeListIds(persistedListId),
@@ -624,10 +717,25 @@ const migrateAbsenceKind = async (
   }
 
   const status = await inspectAbsenceSchema(config, sourceListId, persistedVersion);
-  if (status.upToDate || (status.shapeUpToDate && !status.versionUpToDate)) {
+  const canSkipForVersion = status.upToDate || (status.shapeUpToDate && !status.versionUpToDate);
+  const needsDataRecovery = canSkipForVersion
+    ? await needsMigrationDataRecovery(config, ABSENCE_LIST_NAME, sourceListId, persistedListId, loadDiscovery)
+    : false;
+  if (needsDataRecovery) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "absence_migration_data_recovery",
+        activeListId: sourceListId,
+        hint: "active list is empty but sibling absence_list lists contain rows"
+      })
+    );
+  }
+  if (shouldSkipListKindMigration(status, needsDataRecovery)) {
     if (status.shapeUpToDate && !status.versionUpToDate) {
       await writePersistedAbsenceSchemaVersion(config, ABSENCE_SCHEMA_VERSION);
     }
+    await ensureAdminListAccess(config, sourceListId, ABSENCE_LIST_NAME);
     return skippedKindResult(ABSENCE_LIST_NAME, sourceListId, [sourceListId]);
   }
 
@@ -661,9 +769,6 @@ const migrateAbsenceKind = async (
   if (!destinationListId) {
     throw new Error("slackLists.create response missing list id");
   }
-  if (config.adminUserIds.length > 0) {
-    await slackApi.setListAccessForUsers(config, destinationListId, config.adminUserIds);
-  }
 
   let migratedRows = 0;
   let errors = 0;
@@ -694,6 +799,7 @@ const migrateAbsenceKind = async (
     () => writePersistedAbsenceSchemaVersion(config, ABSENCE_SCHEMA_VERSION)
   );
   if (errors === 0) {
+    await ensureAdminListAccess(config, destinationListId, ABSENCE_LIST_NAME);
     await archiveSourceLists(
       config,
       ABSENCE_LIST_NAME,
@@ -729,6 +835,8 @@ export const runListMigration = async (config: AppConfig): Promise<ListMigration
     };
     const memberMaster = await migrateMemberMasterKind(config, loadDiscovery);
     const absence = await migrateAbsenceKind(config, loadDiscovery);
+    await ensureAdminListAccess(config, memberMaster.toListId, MEMBER_MASTER_LIST_NAME);
+    await ensureAdminListAccess(config, absence.toListId, ABSENCE_LIST_NAME);
     const skippedMigration = memberMaster.skipped && absence.skipped;
     const hints: string[] = [];
     if (!skippedMigration) {

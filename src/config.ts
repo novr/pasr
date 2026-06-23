@@ -8,6 +8,7 @@ export type Env = {
   RUN_ENDPOINT_TOKEN?: string;
   TZ: string;
   SLACK_ADMIN_USER_IDS?: string;
+  SLACK_LIST_ACCESS_CHANNEL_IDS?: string;
 };
 
 export type AppConfig = {
@@ -17,6 +18,7 @@ export type AppConfig = {
   slackSigningSecret: string;
   timezone: string;
   adminUserIds: string[];
+  listAccessChannelIds: string[];
 };
 
 export const getConfig = (env: Env): AppConfig => {
@@ -40,6 +42,10 @@ export const getConfig = (env: Env): AppConfig => {
     slackSigningSecret: env.SLACK_SIGNING_SECRET,
     timezone: env.TZ || "Asia/Tokyo",
     adminUserIds: (env.SLACK_ADMIN_USER_IDS ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0),
+    listAccessChannelIds: (env.SLACK_LIST_ACCESS_CHANNEL_IDS ?? "")
       .split(",")
       .map((value) => value.trim())
       .filter((value) => value.length > 0)

@@ -130,6 +130,11 @@ export const resolveMemberMasterColumnIds = async (
   const targetUser = columnIdByKey(schema, "target_user", "Target User");
   const defaultNotifyChannels = columnIdByKey(schema, "default_notify_channels", "Default Notify Channels");
   const defaultNotifyUsers = columnIdByKey(schema, "default_notify_users", "Default Notify Users");
+  const defaultRegistrationNotify = columnIdByKey(
+    schema,
+    "default_registration_notify",
+    "Default Registration Notify"
+  );
   const active = columnIdByKey(schema, "active", "Active");
 
   if (!primaryText || !targetUser || !active) {
@@ -152,6 +157,7 @@ export const resolveMemberMasterColumnIds = async (
     targetUser,
     defaultNotifyChannels,
     defaultNotifyUsers,
+    defaultRegistrationNotify,
     active
   };
   if (defaultNotifyChannels && defaultNotifyUsers) {

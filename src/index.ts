@@ -13,6 +13,7 @@ import {
   parseSlackCommandPayload,
   slashCommandLogFields
 } from "./slack/command";
+import { handleAppMentionEvent } from "./slack/events";
 import { verifySlackSignature } from "./slack/signature";
 import { SLACK_EVENT_DEDUPE_TTL_SEC, isDuplicateSlackCommandTrigger, isDuplicateSlackEvent } from "./state/event-dedupe";
 
@@ -53,6 +54,9 @@ type SlackEventEnvelope = {
   team_id?: string;
   event?: {
     type?: string;
+    user?: string;
+    channel?: string;
+    thread_ts?: string;
   };
 };
 
@@ -94,6 +98,10 @@ const handleSlackEventCallback = async (
       slack_event_type: envelope.event?.type ?? ""
     })
   );
+
+  if (envelope.event?.type === "app_mention") {
+    await handleAppMentionEvent(config, envelope);
+  }
 };
 
 export default {
@@ -258,9 +266,15 @@ export default {
         return json({
           response_action: "errors",
           errors: {
-            [handled.errorBlockId ?? "active_block"]: handled.error ?? "更新に失敗しました。"
+            [handled.errorBlockId ?? "start_block"]: handled.error ?? "更新に失敗しました。"
           }
         });
+      }
+      if (handled.followUp) {
+        ctx.waitUntil(handled.followUp());
+      }
+      if (payload && typeof payload === "object" && (payload as { type?: string }).type === "block_actions") {
+        return new Response("", { status: 200 });
       }
       return json({ response_action: "clear" });
     }
