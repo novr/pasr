@@ -1,13 +1,16 @@
 import type { AppConfig } from "../config";
 import {
-  formatRegistrationNotifyModeLabel,
   parseRegistrationNotifyMode,
   REGISTRATION_NOTIFY_SELECT_OPTIONS,
   type RegistrationNotifyMode
 } from "../domain/absence-registration";
 import { isTransientError } from "../errors/transient";
 import { runDailyNotify } from "../jobs/daily-notify";
-import { ensureMemberMasterList, runListMigration, runListPrune } from "../jobs/setup";
+import { isValidJstDateString, getJstDateParts } from "../domain/jst-date";
+import { findOwnAbsenceByStartDate, parseAbsence, type AbsenceRecord } from "../domain/absence";
+import { ensureMemberMasterList, resolveActiveListIds, runListMigration, runListPrune } from "../jobs/setup";
+import { ABSENCE_EDIT_MODAL_CALLBACK_ID, handleAbsenceEditInteraction, openAbsenceEditModal } from "./absence-edit";
+import { showOwnAbsenceList, handleAbsenceListInteraction } from "./absence-list";
 import { openAbsenceRegisterModal, handleAbsenceRegisterInteraction } from "./absence-register";
 import { slackApi } from "./api";
 import { readLastRunSummary, readPersistedMemberMasterListId } from "../state/kv";
@@ -17,6 +20,9 @@ export const COMMAND_ACK_DUPLICATE =
   "同じコマンドは処理中です。完了後に結果を表示してください。";
 export const COMMAND_ACK_ENQUEUE_FAILED =
   "キューへの投入に失敗しました。しばらく待って再実行してください。";
+
+export const buildQueuedSelfAck = (): string =>
+  "一覧を表示しています。完了後に結果を表示します。";
 
 export const buildQueuedAdminAck = (action: string): string => {
   switch (action) {
@@ -46,7 +52,8 @@ type SlackInteractionPayload = {
   trigger_id?: string;
   user?: { id?: string };
   channel?: { id?: string };
-  actions?: Array<{ action_id?: string }>;
+  response_url?: string;
+  actions?: Array<{ action_id?: string; value?: string }>;
   view?: {
     callback_id?: string;
     private_metadata?: string;
@@ -56,12 +63,54 @@ type SlackInteractionPayload = {
   };
 };
 
+export type SlashCommandDispatch =
+  | { mode: "text"; text: string }
+  | { mode: "queue"; listPrefix?: string };
+
+export type SelfCommandParse =
+  | { kind: "help" }
+  | { kind: "settings" }
+  | { kind: "list" }
+  | { kind: "update_list" }
+  | { kind: "update_date"; startDate: string }
+  | { kind: "update_invalid_date" }
+  | { kind: "register" }
+  | { kind: "unknown"; action: string };
+
+export const parseSelfCommandText = (text: string): SelfCommandParse => {
+  const parts = text.split(/\s+/).filter((part) => part.length > 0);
+  const action = parts[0] ?? "help";
+  if (action === "help") return { kind: "help" };
+  if (action === "settings") return { kind: "settings" };
+  if (action === "list") return { kind: "list" };
+  if (action === "register") return { kind: "register" };
+  if (action === "update") {
+    if (parts.length === 1) return { kind: "update_list" };
+    const dateToken = parts[1];
+    if (isValidJstDateString(dateToken)) return { kind: "update_date", startDate: dateToken };
+    return { kind: "update_invalid_date" };
+  }
+  return { kind: "unknown", action };
+};
+
+const selfListPrefixForParse = (parse: SelfCommandParse): string | undefined => {
+  switch (parse.kind) {
+    case "update_invalid_date":
+      return "日付の形式が正しくありません（YYYY-MM-DD）。";
+    default:
+      return undefined;
+  }
+};
+
 export type SlackInteractionResult = {
   ok: boolean;
   error?: string;
   errorBlockId?: string;
   followUp?: () => Promise<void>;
 };
+
+const isSelfAction = (action: string): action is (typeof SELF_ACTIONS)[number] =>
+  SELF_ACTIONS.includes(action as (typeof SELF_ACTIONS)[number]);
 
 const parseValue = (params: URLSearchParams, key: string): string => params.get(key)?.trim() ?? "";
 
@@ -84,14 +133,17 @@ export const isSlackAdminUser = (config: AppConfig, userId: string): boolean =>
 const postEphemeralResponse = async (
   config: AppConfig,
   payload: SlackCommandPayload,
-  text: string
+  text: string,
+  blocks?: Array<Record<string, unknown>>
 ): Promise<void> => {
   if (payload.responseUrl) {
     try {
+      const body: Record<string, unknown> = { response_type: "ephemeral", text };
+      if (blocks) body.blocks = blocks;
       const response = await fetch(payload.responseUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json; charset=utf-8" },
-        body: JSON.stringify({ response_type: "ephemeral", text })
+        body: JSON.stringify(body)
       });
       if (response.ok) return;
       console.warn(
@@ -120,7 +172,7 @@ const postEphemeralResponse = async (
 
   if (!payload.channelId) return;
   try {
-    await slackApi.postEphemeral(config, payload.channelId, payload.userId, text);
+    await slackApi.postEphemeral(config, payload.channelId, payload.userId, text, blocks);
   } catch (error) {
     console.warn(
       JSON.stringify({
@@ -147,8 +199,10 @@ export const notifySlashCommandEphemeral = async (
 const buildHelpText = (): string =>
   [
     "/pasr help - ユーザ向けコマンドの使い方表示",
-    "/pasr view - 自分の通知設定を表示",
-    "/pasr update - 自分の通知設定を編集",
+    "/pasr settings - 自分の通知設定を表示・編集",
+    "/pasr list - 自分の不在一覧（編集・削除）",
+    "/pasr update - /pasr list と同じ",
+    "/pasr update YYYY-MM-DD - 開始日指定で不在を編集",
     "/pasr register - 自分の不在を登録"
   ].join("\n");
 
@@ -192,17 +246,14 @@ const formatMigrationKind = (
 
 type CommandKind = "self" | "admin" | "unsupported";
 
-const SELF_ACTIONS = ["help", "view", "update", "register"] as const;
+const SELF_ACTIONS = ["help", "list", "settings", "update", "register"] as const;
 const ADMIN_ACTIONS = ["help", "run", "status", "migrate", "prune"] as const;
 
-const getCommandKind = (command: string): CommandKind => {
+export const getCommandKind = (command: string): CommandKind => {
   if (command === "/pasr") return "self";
   if (command === "/pasr-admin") return "admin";
   return "unsupported";
 };
-
-const isSelfAction = (action: string): action is (typeof SELF_ACTIONS)[number] =>
-  SELF_ACTIONS.includes(action as (typeof SELF_ACTIONS)[number]);
 
 const isAdminAction = (action: string): action is (typeof ADMIN_ACTIONS)[number] =>
   ADMIN_ACTIONS.includes(action as (typeof ADMIN_ACTIONS)[number]);
@@ -357,16 +408,6 @@ const parseActiveValue = (value: unknown): boolean => {
   });
 };
 
-const formatDefaultChannelsForView = (channelIds: string[]): string => {
-  if (channelIds.length === 0) return "none";
-  return channelIds.map((channelId) => `<#${channelId}>`).join(",");
-};
-
-const formatDefaultUsersForView = (userIds: string[]): string => {
-  if (userIds.length === 0) return "none";
-  return userIds.map((userId) => `<@${userId}>`).join(",");
-};
-
 const parseStaticSelectValue = (value: unknown): string => {
   const record = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
   const option = record?.selected_option;
@@ -375,53 +416,31 @@ const parseStaticSelectValue = (value: unknown): string => {
   return typeof optionRecord.value === "string" ? optionRecord.value : "";
 };
 
-const buildSelfViewMessage = (resolved: {
-  active: boolean;
-  defaultNotifyChannels: string[];
-  defaultNotifyUsers: string[];
-  defaultRegistrationNotify: RegistrationNotifyMode;
-  created: boolean;
-  deleted: string[];
-}): string => {
-  const lines = [
-    "あなたの通知設定です。",
-    `通知対象: ${resolved.active ? "有効" : "無効"}`,
-    `既定の通知先チャンネル: ${formatDefaultChannelsForView(resolved.defaultNotifyChannels)}`,
-    `既定の通知先ユーザー: ${formatDefaultUsersForView(resolved.defaultNotifyUsers)}`,
-    `既定の登録通知: ${formatRegistrationNotifyModeLabel(resolved.defaultRegistrationNotify)}`
-  ];
-  if (resolved.created) lines.push("note: レコードが存在しなかったため新規作成しました。");
-  if (resolved.deleted.length > 0) lines.push(`note: 重複レコードを掃除しました (${resolved.deleted.length}件)。`);
-  return lines.join("\n");
-};
-
 const handleSelfImmediateText = async (
   config: AppConfig,
   payload: SlackCommandPayload,
-  action: string
-): Promise<string> => {
-  if (!isSelfAction(action)) {
-    return `unsupported action: ${action}\n${buildHelpText()}`;
-  }
-  switch (action) {
+  parse: SelfCommandParse
+): Promise<SlashCommandDispatch> => {
+  switch (parse.kind) {
     case "help":
-      return buildHelpText();
-    case "update":
-      {
-        const resolved = await resolveSelfMasterRecord(config, payload);
-        await slackApi.openModal(
-          config,
-          payload.triggerId,
-          buildMemberMasterModalView({
-            userId: payload.userId,
-            active: resolved.active,
-            defaultNotifyChannels: resolved.defaultNotifyChannels,
-            defaultNotifyUsers: resolved.defaultNotifyUsers,
-            defaultRegistrationNotify: resolved.defaultRegistrationNotify
-          })
-        );
-      }
-      return "設定フォームを開きました。";
+      return { mode: "text", text: buildHelpText() };
+    case "unknown":
+      return { mode: "text", text: `unsupported action: ${parse.action}\n${buildHelpText()}` };
+    case "settings": {
+      const resolved = await resolveSelfMasterRecord(config, payload);
+      await slackApi.openModal(
+        config,
+        payload.triggerId,
+        buildMemberMasterModalView({
+          userId: payload.userId,
+          active: resolved.active,
+          defaultNotifyChannels: resolved.defaultNotifyChannels,
+          defaultNotifyUsers: resolved.defaultNotifyUsers,
+          defaultRegistrationNotify: resolved.defaultRegistrationNotify
+        })
+      );
+      return { mode: "text", text: "設定フォームを開きました。" };
+    }
     case "register":
       await openAbsenceRegisterModal(config, {
         triggerId: payload.triggerId,
@@ -430,35 +449,78 @@ const handleSelfImmediateText = async (
         teamId: payload.teamId,
         triggerSource: "slash"
       });
-      return "不在登録フォームを開きました。";
-    case "view": {
-      const resolved = await resolveSelfMasterRecord(config, payload);
-      return buildSelfViewMessage(resolved);
+      return { mode: "text", text: "不在登録フォームを開きました。" };
+    case "list":
+    case "update_list":
+    case "update_invalid_date":
+      return { mode: "queue", listPrefix: selfListPrefixForParse(parse) };
+    case "update_date": {
+      const { absenceListId } = await resolveActiveListIds(config);
+      const listResponse = await slackApi.listItems(config, absenceListId, { fetchContext: "absence_update_date" });
+      const records: AbsenceRecord[] = [];
+      for (const item of listResponse.items ?? []) {
+        const parsed = parseAbsence(item);
+        if (parsed.ok) records.push(parsed.record);
+      }
+      const { day: todayJst } = getJstDateParts();
+      const matches = findOwnAbsenceByStartDate(records, payload.userId, parse.startDate, todayJst);
+      if (matches.length === 1) {
+        await openAbsenceEditModal(config, {
+          triggerId: payload.triggerId,
+          userId: payload.userId,
+          record: matches[0],
+          absenceListId
+        });
+        return { mode: "text", text: "編集フォームを開きました。" };
+      }
+      const listPrefix =
+        matches.length === 0
+          ? "指定された開始日の不在が見つかりませんでした。"
+          : "同じ開始日の不在が複数あります。一覧から編集してください。";
+      return { mode: "queue", listPrefix };
     }
     default: {
-      const _never: never = action;
+      const _never: never = parse;
       return _never;
     }
   }
+};
+
+export const resolveSlashCommandDispatch = async (
+  config: AppConfig,
+  payload: SlackCommandPayload
+): Promise<SlashCommandDispatch> => {
+  const commandKind = getCommandKind(payload.command);
+  const action = parseSlackCommandAction(payload.text);
+  if (commandKind === "admin") {
+    const adminText = await getAdminImmediateText(config, payload, action);
+    if (adminText !== undefined) return { mode: "text", text: adminText };
+    return { mode: "queue" };
+  }
+  if (commandKind === "self") {
+    const parse = parseSelfCommandText(payload.text);
+    if (!isSelfAction(parseSlackCommandAction(payload.text)) && parse.kind === "unknown") {
+      return { mode: "text", text: `unsupported action: ${parse.action}\n${buildHelpText()}` };
+    }
+    try {
+      return await handleSelfImmediateText(config, payload, parse);
+    } catch (error) {
+      return {
+        mode: "text",
+        text: `self record の準備に失敗しました: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
+  }
+  return { mode: "text", text: "unsupported slash command." };
 };
 
 export const getSlashCommandImmediateText = async (
   config: AppConfig,
   payload: SlackCommandPayload
 ): Promise<string | undefined> => {
-  const commandKind = getCommandKind(payload.command);
-  const action = parseSlackCommandAction(payload.text);
-  if (commandKind === "admin") {
-    return getAdminImmediateText(config, payload, action);
-  }
-  if (commandKind === "self") {
-    try {
-      return await handleSelfImmediateText(config, payload, action);
-    } catch (error) {
-      return `self record の準備に失敗しました: ${error instanceof Error ? error.message : String(error)}`;
-    }
-  }
-  return "unsupported slash command.";
+  const dispatch = await resolveSlashCommandDispatch(config, payload);
+  if (dispatch.mode === "text") return dispatch.text;
+  return undefined;
 };
 
 const getAdminImmediateText = async (
@@ -475,7 +537,7 @@ const getAdminImmediateText = async (
     const memberMasterListId = await readPersistedMemberMasterListId(config);
     return summary
       ? [
-          `last run: processed=${summary.processed} sent=${summary.sent} skipped=${summary.skipped} errors=${summary.errors}`,
+          `last run: processed=${summary.processed} sent=${summary.sent} skipped=${summary.skipped} deleted=${summary.deleted ?? 0} errors=${summary.errors}`,
           `run_id: ${summary.runId}`,
           `absent: ${buildSlackListLink(payload.teamId, summary.listId)}`,
           `master: ${memberMasterListId ? buildSlackListLink(payload.teamId, memberMasterListId) : "N/A"}`,
@@ -492,9 +554,22 @@ const getAdminImmediateText = async (
   return undefined;
 };
 
-export const runSlackCommandAsync = async (config: AppConfig, payload: SlackCommandPayload): Promise<void> => {
+export const runSlackCommandAsync = async (
+  config: AppConfig,
+  payload: SlackCommandPayload,
+  options?: { listPrefix?: string }
+): Promise<void> => {
+  const commandKind = getCommandKind(payload.command);
+  if (commandKind === "self") {
+    await showOwnAbsenceList(config, payload, {
+      prefixMessage: options?.listPrefix,
+      includeEdit: true
+    });
+    return;
+  }
+
   const action = parseSlackCommandAction(payload.text);
-  if (getCommandKind(payload.command) !== "admin") {
+  if (commandKind !== "admin") {
     return;
   }
 
@@ -530,13 +605,14 @@ export const runSlackCommandAsync = async (config: AppConfig, payload: SlackComm
           processed: result.processed,
           sent: result.sent,
           skipped: result.skipped,
+          deleted: result.deleted,
           errors: result.errors
         })
       );
 
       const status = result.errors > 0 ? "一部エラーあり" : "完了";
       const resultText = [
-        `run ${status}: processed=${result.processed} sent=${result.sent} skipped=${result.skipped} errors=${result.errors}`,
+        `run ${status}: processed=${result.processed} sent=${result.sent} skipped=${result.skipped} deleted=${result.deleted} errors=${result.errors}`,
         `run_id: ${runId}`
       ].join("\n");
       await postEphemeralResponse(config, payload, resultText);
@@ -621,9 +697,32 @@ export const handleSlackInteraction = async (
   config: AppConfig,
   payload: SlackInteractionPayload
 ): Promise<SlackInteractionResult> => {
-  const absenceResult = await handleAbsenceRegisterInteraction(config, payload);
-  if (payload.type === "block_actions" || payload.view?.callback_id === "pasr_absence_register") {
-    return absenceResult;
+  const registerResult = await handleAbsenceRegisterInteraction(config, payload);
+  if (payload.type === "view_submission" && payload.view?.callback_id === "pasr_absence_register") {
+    return registerResult;
+  }
+  if (payload.type === "block_actions") {
+    const registerActionId = payload.actions?.[0]?.action_id ?? "";
+    if (registerActionId === "pasr_register_open") {
+      return registerResult;
+    }
+  }
+
+  const listResult = await handleAbsenceListInteraction(config, payload);
+  if (listResult.followUp) {
+    return listResult;
+  }
+
+  const editResult = await handleAbsenceEditInteraction(config, payload);
+  if (payload.type === "view_submission" && payload.view?.callback_id === ABSENCE_EDIT_MODAL_CALLBACK_ID) {
+    if (!editResult.ok) {
+      return {
+        ok: false,
+        error: editResult.error,
+        errorBlockId: editResult.errorBlockId
+      };
+    }
+    return { ok: true };
   }
 
   if (payload.type !== "view_submission") {
@@ -640,14 +739,14 @@ export const handleSlackInteraction = async (
   } catch {
     return {
       ok: false,
-      error: "フォーム情報の読み取りに失敗しました。もう一度 /pasr update を実行してください。",
+      error: "フォーム情報の読み取りに失敗しました。もう一度 /pasr settings を実行してください。",
       errorBlockId: "active_block"
     };
   }
   if (!metadata || !metadata.userId) {
     return {
       ok: false,
-      error: "フォーム情報が不足しています。もう一度 /pasr update を実行してください。",
+      error: "フォーム情報が不足しています。もう一度 /pasr settings を実行してください。",
       errorBlockId: "active_block"
     };
   }

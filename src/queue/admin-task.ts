@@ -4,13 +4,15 @@ import { runSlackCommandAsync, slashCommandLogFields, notifySlashCommandEphemera
 
 export type AdminTaskMessage = {
   payload: SlackCommandPayload;
+  listPrefix?: string;
 };
 
 export const enqueueAdminTask = async (
   queue: Queue<AdminTaskMessage>,
-  payload: SlackCommandPayload
+  payload: SlackCommandPayload,
+  options?: { listPrefix?: string }
 ): Promise<void> => {
-  await queue.send({ payload });
+  await queue.send({ payload, listPrefix: options?.listPrefix });
 };
 
 export const processAdminTaskBatch = async (
@@ -27,7 +29,7 @@ export const processAdminTaskBatch = async (
       })
     );
     try {
-      await runSlackCommandAsync(config, message.body.payload);
+      await runSlackCommandAsync(config, message.body.payload, { listPrefix: message.body.listPrefix });
       message.ack();
       console.log(
         JSON.stringify({
