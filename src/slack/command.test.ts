@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildQueuedAdminAck,
+  buildQueuedSelfAck,
   isSlackAdminUser,
+  parseSelfCommandText,
   parseSlackCommandAction,
   parseSlackCommandPayload
 } from "./command";
@@ -58,6 +60,20 @@ describe("slash command parsers", () => {
     expect(buildQueuedAdminAck("migrate")).toContain("migrate");
     expect(buildQueuedAdminAck("prune")).toContain("prune");
     expect(buildQueuedAdminAck("unknown")).toContain("処理を実行中");
+  });
+
+  it("buildQueuedSelfAck returns list message", () => {
+    expect(buildQueuedSelfAck()).toContain("一覧");
+  });
+
+  it("parseSelfCommandText parses list settings update date and item id", () => {
+    expect(parseSelfCommandText("list")).toEqual({ kind: "list" });
+    expect(parseSelfCommandText("settings")).toEqual({ kind: "settings" });
+    expect(parseSelfCommandText("update")).toEqual({ kind: "update_list" });
+    expect(parseSelfCommandText("update 2026-06-10")).toEqual({ kind: "update_date", startDate: "2026-06-10" });
+    expect(parseSelfCommandText("update Rec0123ABC")).toEqual({ kind: "update_item", itemId: "Rec0123ABC" });
+    expect(parseSelfCommandText("update bad-date")).toEqual({ kind: "update_item", itemId: "bad-date" });
+    expect(parseSelfCommandText("update 2026-13-40")).toEqual({ kind: "update_invalid_date" });
   });
 
   it("isSlackAdminUser checks allowlist", () => {

@@ -103,6 +103,7 @@ export type LastRunSummary = {
   sent: number;
   skipped: number;
   errors: number;
+  deleted?: number;
   executedAt: string;
 };
 

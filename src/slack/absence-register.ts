@@ -314,7 +314,7 @@ const handleAbsenceRegisterSubmission = async (
     );
     const errorMessage =
       validationError.reason === "inactive_user"
-        ? "通知対象が無効です。/pasr update で有効化してください。"
+        ? "通知対象が無効です。/pasr settings で有効化してください。"
         : validationError.reason === "past_date"
           ? "過去日は指定できません。"
           : validationError.reason === "invalid_range"

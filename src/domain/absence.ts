@@ -1,4 +1,5 @@
 import type { SlackListItem } from "../slack/api";
+import { toNoteText } from "./rich-text-plain";
 import { pickListField, toStringArray, toStringValue } from "./slack-list-value";
 
 export const ABSENCE_LIST_NAME = "absence_list";
@@ -63,7 +64,7 @@ export const parseAbsence = (item: SlackListItem): ParseResult => {
   const endDateRaw = toStringValue(pickListField(item, "end_date"));
   const notifyChannels = toStringArray(pickListField(item, "notify_channels"));
   const notifyUsers = toStringArray(pickListField(item, "notify_users"));
-  const note = toStringValue(pickListField(item, "note"));
+  const note = toNoteText(pickListField(item, "note"));
   const endDate = endDateRaw || startDate;
 
   if (!targetUser) return { ok: false, itemId: item.id, reason: "missing_target_user" };
@@ -87,6 +88,29 @@ export const parseAbsence = (item: SlackListItem): ParseResult => {
 
 export const filterToday = (records: AbsenceRecord[], todayJst: string): AbsenceRecord[] =>
   records.filter((record) => record.startDate <= todayJst && todayJst <= record.endDate);
+
+export const filterEndedBefore = (records: AbsenceRecord[], todayJst: string): AbsenceRecord[] =>
+  records.filter((record) => record.endDate < todayJst);
+
+export const filterOwnFutureAbsences = (
+  records: AbsenceRecord[],
+  userId: string,
+  todayJst: string
+): AbsenceRecord[] =>
+  records
+    .filter((record) => record.targetUser === userId && record.endDate >= todayJst)
+    .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.itemId.localeCompare(b.itemId));
+
+export const findOwnAbsenceByStartDate = (
+  records: AbsenceRecord[],
+  userId: string,
+  startDate: string,
+  todayJst: string
+): AbsenceRecord[] =>
+  records.filter(
+    (record) =>
+      record.targetUser === userId && record.startDate === startDate && record.endDate >= todayJst
+  );
 
 export const groupByChannel = (records: AbsenceRecord[]): Map<string, AbsenceRecord[]> => {
   const grouped = new Map<string, AbsenceRecord[]>();

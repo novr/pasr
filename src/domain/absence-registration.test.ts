@@ -7,7 +7,8 @@ import {
   resolveAbsenceEndDate,
   resolveNotifyTargets,
   resolveRegistrationNotifyMode,
-  validateAbsenceRegistration
+  validateAbsenceRegistration,
+  validateAbsenceEdit
 } from "./absence-registration";
 
 describe("absence-registration", () => {
@@ -50,7 +51,7 @@ describe("absence-registration", () => {
       endDate: "",
       todayJst: "2026-06-15",
       notifyMode: "none",
-      channels: [],
+      channels: ["C1"],
       users: [],
       active: true
     });
@@ -81,6 +82,44 @@ describe("absence-registration", () => {
       active: true
     });
     expect(error).toEqual({ reason: "missing_notify_target", blockId: "channels_block" });
+  });
+
+  it("validateAbsenceRegistration requires notify target for none mode", () => {
+    const error = validateAbsenceRegistration({
+      startDate: "2026-06-20",
+      endDate: "2026-06-21",
+      todayJst: "2026-06-15",
+      notifyMode: "none",
+      channels: [],
+      users: [],
+      active: true
+    });
+    expect(error).toEqual({ reason: "missing_notify_target", blockId: "channels_block" });
+  });
+
+  it("validateAbsenceRegistration allows none mode with channel or user", () => {
+    expect(
+      validateAbsenceRegistration({
+        startDate: "2026-06-20",
+        endDate: "2026-06-21",
+        todayJst: "2026-06-15",
+        notifyMode: "none",
+        channels: ["C1"],
+        users: [],
+        active: true
+      })
+    ).toBeUndefined();
+    expect(
+      validateAbsenceRegistration({
+        startDate: "2026-06-20",
+        endDate: "2026-06-21",
+        todayJst: "2026-06-15",
+        notifyMode: "none",
+        channels: [],
+        users: ["U1"],
+        active: true
+      })
+    ).toBeUndefined();
   });
 
   it("validateAbsenceRegistration allows both with one side", () => {
@@ -131,5 +170,47 @@ describe("absence-registration", () => {
       sendChannels: false,
       sendUsers: false
     });
+  });
+});
+
+describe("validateAbsenceEdit", () => {
+  const base = {
+    startDate: "2026-06-10",
+    endDate: "2026-06-12",
+    todayJst: "2026-06-10",
+    channels: ["C1"],
+    users: [] as string[],
+    active: true,
+    originalStartDate: "2026-06-10"
+  };
+
+  it("allows ongoing absence with past original start date", () => {
+    expect(
+      validateAbsenceEdit({
+        ...base,
+        startDate: "2026-06-08",
+        originalStartDate: "2026-06-08"
+      })
+    ).toBeUndefined();
+  });
+
+  it("rejects changing start date into the past", () => {
+    expect(
+      validateAbsenceEdit({
+        ...base,
+        startDate: "2026-06-09",
+        originalStartDate: "2026-06-10"
+      })?.reason
+    ).toBe("past_start_change");
+  });
+
+  it("requires notify channels or users", () => {
+    expect(
+      validateAbsenceEdit({
+        ...base,
+        channels: [],
+        users: []
+      })?.reason
+    ).toBe("missing_notify_target");
   });
 });

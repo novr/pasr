@@ -77,10 +77,15 @@ const parseMemberMasterRow = (item: SlackListItem): MemberMasterRow | undefined 
   };
 };
 
-const fetchListItems = async (config: AppConfig, listId: string): Promise<{ items: SlackListItem[] }> => {
+const fetchListItems = async (
+  config: AppConfig,
+  listId: string
+): Promise<{ items: SlackListItem[]; pages: number }> => {
   const items: SlackListItem[] = [];
   let cursor: string | undefined;
+  let pages = 0;
   do {
+    pages += 1;
     const page = await slackApiPost<SlackListItemsListResponse>(config, "slackLists.items.list", {
       list_id: listId,
       limit: 200,
@@ -89,7 +94,20 @@ const fetchListItems = async (config: AppConfig, listId: string): Promise<{ item
     items.push(...(page.items ?? []));
     cursor = page.response_metadata?.next_cursor || undefined;
   } while (cursor);
-  return { items };
+  return { items, pages };
+};
+
+const logListFetchPages = (listId: string, context: string, pages: number, itemCount: number): void => {
+  console.log(
+    JSON.stringify({
+      level: "info",
+      event: "list_fetch_pages",
+      context,
+      listId,
+      pages,
+      item_count: itemCount
+    })
+  );
 };
 
 const findListIdsByName = async (config: AppConfig, listName: string): Promise<string[]> => {
@@ -153,6 +171,37 @@ const buildMemberMasterInitialFields = (
   return initialFields;
 };
 
+export const buildAbsenceUpdateCells = (
+  columnIds: NonNullable<Awaited<ReturnType<typeof resolveAbsenceColumnIds>>>,
+  rowId: string,
+  record: AbsenceRecord
+): Array<Record<string, unknown>> => {
+  const title = record.note?.trim() || record.targetUser;
+  const cells: Array<Record<string, unknown>> = [
+    { row_id: rowId, ...richTextField(columnIds.absenceTitle, title) },
+    { row_id: rowId, column_id: columnIds.targetUser, user: [record.targetUser] },
+    { row_id: rowId, column_id: columnIds.startDate, date: [record.startDate] },
+    { row_id: rowId, column_id: columnIds.endDate, date: [record.endDate] }
+  ];
+  if (columnIds.type) {
+    cells.push({
+      row_id: rowId,
+      column_id: columnIds.type,
+      select: [record.absenceType ?? DEFAULT_ABSENCE_TYPE]
+    });
+  }
+  if (columnIds.notifyChannels) {
+    cells.push({ row_id: rowId, column_id: columnIds.notifyChannels, channel: record.notifyChannels });
+  }
+  if (columnIds.notifyUsers) {
+    cells.push({ row_id: rowId, column_id: columnIds.notifyUsers, user: record.notifyUsers });
+  }
+  if (columnIds.note) {
+    cells.push({ row_id: rowId, ...richTextField(columnIds.note, record.note ?? "") });
+  }
+  return cells;
+};
+
 const buildAbsenceInitialFields = (
   columnIds: NonNullable<Awaited<ReturnType<typeof resolveAbsenceColumnIds>>>,
   record: AbsenceRecord
@@ -193,7 +242,13 @@ export const slackApi = {
 
   getAuthedUserId: async (config: AppConfig): Promise<string> => getAuthedUserId(config),
 
-  listItems: async (config: AppConfig, listId: string) => fetchListItems(config, listId),
+  listItems: async (config: AppConfig, listId: string, options?: { fetchContext?: string }) => {
+    const { items, pages } = await fetchListItems(config, listId);
+    if (options?.fetchContext) {
+      logListFetchPages(listId, options.fetchContext, pages, items.length);
+    }
+    return { items };
+  },
 
   createMemberMasterItem: async (
     config: AppConfig,
@@ -239,6 +294,12 @@ export const slackApi = {
   },
 
   deleteMemberMasterItem: async (config: AppConfig, listId: string, itemId: string) =>
+    slackApiPost<Record<string, unknown>>(config, "slackLists.items.delete", {
+      list_id: listId,
+      id: itemId
+    }),
+
+  deleteAbsenceItem: async (config: AppConfig, listId: string, itemId: string) =>
     slackApiPost<Record<string, unknown>>(config, "slackLists.items.delete", {
       list_id: listId,
       id: itemId
@@ -354,6 +415,17 @@ export const slackApi = {
       initial_fields: buildAbsenceInitialFields(columnIds, record)
     });
     return created;
+  },
+
+  updateAbsenceItem: async (config: AppConfig, listId: string, rowId: string, record: AbsenceRecord) => {
+    const columnIds = await resolveAbsenceColumnIds(config, listId);
+    if (!columnIds) {
+      throw new Error("absence column resolution failed");
+    }
+    return slackApiPost<Record<string, unknown>>(config, "slackLists.items.update", {
+      list_id: listId,
+      cells: buildAbsenceUpdateCells(columnIds, rowId, record)
+    });
   },
 
   renameList: async (config: AppConfig, listId: string, name: string) =>

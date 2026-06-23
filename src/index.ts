@@ -3,14 +3,16 @@ import { runDailyNotify } from "./jobs/daily-notify";
 import { enqueueAdminTask, processAdminTaskBatch, type AdminTaskMessage } from "./queue/admin-task";
 import {
   buildQueuedAdminAck,
+  buildQueuedSelfAck,
   COMMAND_ACK_DUPLICATE,
   COMMAND_ACK_ENQUEUE_FAILED,
   COMMAND_ACK_UNAUTHORIZED,
-  getSlashCommandImmediateText,
+  getCommandKind,
   handleSlackInteraction,
   isSlackAdminUser,
   parseSlackCommandAction,
   parseSlackCommandPayload,
+  resolveSlashCommandDispatch,
   slashCommandLogFields
 } from "./slack/command";
 import { handleAppMentionEvent } from "./slack/events";
@@ -187,8 +189,8 @@ export default {
         return text(COMMAND_ACK_UNAUTHORIZED);
       }
       const commandLog = slashCommandLogFields(payload);
-      const immediateText = await getSlashCommandImmediateText(config, payload);
-      if (immediateText) {
+      const dispatch = await resolveSlashCommandDispatch(config, payload);
+      if (dispatch.mode === "text") {
         console.log(
           JSON.stringify({
             level: "info",
@@ -197,7 +199,7 @@ export default {
             dispatch: "immediate"
           })
         );
-        return text(immediateText);
+        return text(dispatch.text);
       }
 
       console.log(
@@ -224,7 +226,7 @@ export default {
       }
       const action = parseSlackCommandAction(payload.text);
       try {
-        await enqueueAdminTask(env.ADMIN_TASK_QUEUE, payload);
+        await enqueueAdminTask(env.ADMIN_TASK_QUEUE, payload, { listPrefix: dispatch.listPrefix });
       } catch (error) {
         console.error(
           JSON.stringify({
@@ -236,7 +238,9 @@ export default {
         );
         return text(COMMAND_ACK_ENQUEUE_FAILED);
       }
-      return text(buildQueuedAdminAck(action));
+      const ack =
+        getCommandKind(payload.command) === "self" ? buildQueuedSelfAck() : buildQueuedAdminAck(action);
+      return text(ack);
     }
 
     if (pathname === "/slack/interactions" && request.method === "POST") {

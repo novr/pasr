@@ -1,5 +1,5 @@
 import type { AppConfig } from "../config";
-import { filterToday, groupByChannel, parseAbsence, type AbsenceRecord, type SkipReason } from "../domain/absence";
+import { filterToday, filterEndedBefore, groupByChannel, parseAbsence, type AbsenceRecord, type SkipReason } from "../domain/absence";
 import { formatAttendanceNoticeLine } from "../domain/absence-registration";
 import { pickListField, toBooleanValue, toStringValue } from "../domain/slack-list-value";
 import { ensureMemberMasterList, runSetup } from "./setup";
@@ -21,6 +21,7 @@ type DailyResult = {
   sent: number;
   skipped: number;
   errors: number;
+  deleted: number;
   skipReasons: Record<SkipReason, number>;
 };
 
@@ -157,7 +158,7 @@ const toJstDate = (): { day: string; weekday: number } => {
 };
 
 const buildMessageLine = (record: AbsenceRecord): string =>
-  formatAttendanceNoticeLine(record.targetUser, parseNoteText(record.note));
+  formatAttendanceNoticeLine(record.targetUser, record.note);
 
 const buildMessage = (today: string, records: AbsenceRecord[]): string => {
   if (records.length === 0) {
@@ -311,149 +312,79 @@ const sendDirectMessageNotifications = async (
   }
 };
 
-type RichNodeType =
-  | "text"
-  | "link"
-  | "emoji"
-  | "user"
-  | "channel"
-  | "broadcast"
-  | "date"
-  | "unknown";
-
-type RichContainerType =
-  | "rich_text"
-  | "rich_text_section"
-  | "rich_text_list"
-  | "rich_text_preformatted"
-  | "rich_text_quote"
-  | "unknown";
-
-const asRecord = (value: unknown): Record<string, unknown> | undefined =>
-  value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
-
-const normalizeNodeType = (value: unknown): RichNodeType => {
-  switch (value) {
-    case "text":
-      return "text";
-    case "link":
-      return "link";
-    case "emoji":
-      return "emoji";
-    case "user":
-      return "user";
-    case "channel":
-      return "channel";
-    case "broadcast":
-      return "broadcast";
-    case "date":
-      return "date";
-    default:
-      return "unknown";
-  }
-};
-
-const normalizeContainerType = (value: unknown): RichContainerType => {
-  switch (value) {
-    case "rich_text":
-      return "rich_text";
-    case "rich_text_section":
-      return "rich_text_section";
-    case "rich_text_list":
-      return "rich_text_list";
-    case "rich_text_preformatted":
-      return "rich_text_preformatted";
-    case "rich_text_quote":
-      return "rich_text_quote";
-    default:
-      return "unknown";
-  }
-};
-
-const pushIfPresent = (bucket: string[], value: unknown): void => {
-  if (typeof value !== "string") return;
-  const trimmed = value.trim();
-  if (trimmed.length > 0) bucket.push(trimmed);
-};
-
-const appendNodeText = (node: Record<string, unknown>, bucket: string[]): void => {
-  const nodeType = normalizeNodeType(node.type);
-  switch (nodeType) {
-    case "text":
-      pushIfPresent(bucket, node.text);
-      return;
-    case "link":
-      pushIfPresent(bucket, node.text);
-      pushIfPresent(bucket, node.url);
-      return;
-    case "emoji":
-      pushIfPresent(bucket, node.name);
-      return;
-    case "user":
-      if (typeof node.user_id === "string" && node.user_id.length > 0) {
-        bucket.push(`<@${node.user_id}>`);
+const deleteEndedAbsences = async (
+  config: AppConfig,
+  context: RunContext,
+  result: DailyResult,
+  listId: string,
+  day: string,
+  parsed: ReturnType<typeof parseAbsence>[]
+): Promise<void> => {
+  const endedRecords: AbsenceRecord[] = [];
+  for (const item of parsed) {
+    if (!item.ok) {
+      try {
+        await slackApi.deleteAbsenceItem(config, listId, item.itemId);
+        result.deleted += 1;
+        console.log(
+          JSON.stringify({
+            level: "info",
+            event: "parse_failed_absence_deleted",
+            run_id: context.runId,
+            trigger: context.trigger,
+            listId,
+            itemId: item.itemId,
+            reason: item.reason
+          })
+        );
+      } catch (error) {
+        result.errors += 1;
+        console.error(
+          JSON.stringify({
+            level: "error",
+            event: "absence_delete_failed",
+            run_id: context.runId,
+            trigger: context.trigger,
+            listId,
+            itemId: item.itemId,
+            message: error instanceof Error ? error.message : String(error)
+          })
+        );
       }
-      return;
-    case "channel":
-      if (typeof node.channel_id === "string" && node.channel_id.length > 0) {
-        bucket.push(`<#${node.channel_id}>`);
-      }
-      return;
-    case "broadcast":
-      pushIfPresent(bucket, node.range);
-      return;
-    case "date":
-      pushIfPresent(bucket, node.fallback);
-      return;
-    case "unknown":
-      return;
-  }
-};
-
-const collectTextNodes = (value: unknown, bucket: string[]): void => {
-  if (Array.isArray(value)) {
-    for (const entry of value) collectTextNodes(entry, bucket);
-    return;
-  }
-  const obj = asRecord(value);
-  if (!obj) return;
-
-  const nodeType = normalizeNodeType(obj.type);
-  if (nodeType !== "unknown") {
-    appendNodeText(obj, bucket);
-    return;
+      continue;
+    }
+    endedRecords.push(item.record);
   }
 
-  const containerType = normalizeContainerType(obj.type);
-  switch (containerType) {
-    case "rich_text":
-    case "rich_text_section":
-    case "rich_text_list":
-    case "rich_text_preformatted":
-    case "rich_text_quote":
-      collectTextNodes(obj.elements, bucket);
-      return;
-    case "unknown":
-      collectTextNodes(obj.elements, bucket);
-      collectTextNodes(obj.blocks, bucket);
-      collectTextNodes(obj.content, bucket);
-      return;
-  }
-};
-
-const parseNoteText = (note?: string): string | undefined => {
-  if (!note) return undefined;
-  const trimmed = note.trim();
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return trimmed;
-
-  try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    const texts: string[] = [];
-    collectTextNodes(parsed, texts);
-    const joined = texts.join(" ").trim();
-    return joined.length > 0 ? joined : trimmed;
-  } catch {
-    return trimmed;
+  for (const record of filterEndedBefore(endedRecords, day)) {
+    try {
+      await slackApi.deleteAbsenceItem(config, listId, record.itemId);
+      result.deleted += 1;
+      console.log(
+        JSON.stringify({
+          level: "info",
+          event: "ended_absence_deleted",
+          run_id: context.runId,
+          trigger: context.trigger,
+          listId,
+          itemId: record.itemId,
+          end_date: record.endDate
+        })
+      );
+    } catch (error) {
+      result.errors += 1;
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "absence_delete_failed",
+          run_id: context.runId,
+          trigger: context.trigger,
+          listId,
+          itemId: record.itemId,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      );
+    }
   }
 };
 
@@ -470,6 +401,7 @@ export const runDailyNotify = async (
     sent: 0,
     skipped: 0,
     errors: 0,
+    deleted: 0,
     skipReasons: zeroedReasons()
   };
   const { day } = toJstDate();
@@ -524,6 +456,8 @@ export const runDailyNotify = async (
   const groupedNotifyUsers = groupByNotifyUser(todaysForDm);
   await sendDirectMessageNotifications(config, context, result, resolvedListId, day, groupedNotifyUsers);
 
+  await deleteEndedAbsences(config, context, result, resolvedListId, day, parsed);
+
   console.log(
     JSON.stringify({
       level: "info",
@@ -535,6 +469,7 @@ export const runDailyNotify = async (
       sent: result.sent,
       skipped: result.skipped,
       errors: result.errors,
+      deleted: result.deleted,
       skipReasons: result.skipReasons
     })
   );
@@ -547,6 +482,7 @@ export const runDailyNotify = async (
       sent: result.sent,
       skipped: result.skipped,
       errors: result.errors,
+      deleted: result.deleted,
       executedAt: new Date().toISOString()
     });
   } catch (error) {
