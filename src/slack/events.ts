@@ -1,12 +1,13 @@
 import type { AppConfig } from "../config";
-import { ABSENCE_REGISTER_OPEN_ACTION_ID } from "./absence-register";
-import { slackApi } from "./api";
+import { stripAppMentionText } from "../domain/absence-mention-parse";
+import { handleAppMentionWithText, postMentionRegisterButton } from "./absence-mention";
 
 type AppMentionEvent = {
   type?: string;
   user?: string;
   channel?: string;
   thread_ts?: string;
+  text?: string;
 };
 
 type SlackEventEnvelope = {
@@ -54,24 +55,11 @@ export const handleAppMentionEvent = async (
     return;
   }
 
-  await slackApi.postEphemeral(
-    config,
-    channelId,
-    userId,
-    "不在を登録する場合は下のボタンを押してください。",
-    [
-      {
-        type: "actions",
-        block_id: "pasr_register_actions",
-        elements: [
-          {
-            type: "button",
-            action_id: ABSENCE_REGISTER_OPEN_ACTION_ID,
-            text: { type: "plain_text", text: "不在を登録" },
-            style: "primary"
-          }
-        ]
-      }
-    ]
-  );
+  const userText = stripAppMentionText(event.text ?? "");
+  if (userText.length === 0) {
+    await postMentionRegisterButton(config, channelId, userId);
+    return;
+  }
+
+  await handleAppMentionWithText(config, envelope);
 };

@@ -1,18 +1,17 @@
 import type { AppConfig } from "../config";
-import { DEFAULT_ABSENCE_TYPE, type AbsenceRecord } from "../domain/absence";
 import {
   formatRegistrationNotifyModeLabel,
   parseRegistrationNotifyMode,
   REGISTRATION_NOTIFY_SELECT_OPTIONS,
   resolveAbsenceEndDate,
-  resolveRegistrationNotifyMode,
-  validateAbsenceRegistration,
   type RegistrationNotifyMode
 } from "../domain/absence-registration";
-import { getJstDateParts } from "../domain/jst-date";
-import { runRegistrationNotifyAndAck } from "../jobs/registration-notify";
-import { ensureMemberMasterList, resolveActiveListIds } from "../jobs/setup";
+import { parseMentionConfirmPayload } from "../domain/absence-mention-parse";
+import { resolveActiveListIds } from "../jobs/setup";
+import { commitAbsenceRegistration } from "./absence-register-commit";
 import { slackApi } from "./api";
+import { resolveMasterContext } from "./member-master-context";
+import { consumeInteractionMessage } from "./interaction-message";
 
 export const ABSENCE_REGISTER_MODAL_CALLBACK_ID = "pasr_absence_register";
 export const ABSENCE_REGISTER_OPEN_ACTION_ID = "pasr_register_open";
@@ -23,20 +22,13 @@ type AbsenceRegisterMetadata = {
   channelId: string;
 };
 
-type MasterContext = {
-  memberMasterListId: string;
-  active: boolean;
-  defaultNotifyChannels: string[];
-  defaultNotifyUsers: string[];
-  defaultRegistrationNotify: RegistrationNotifyMode;
-};
-
 type SlackInteractionPayload = {
   type: string;
   trigger_id?: string;
+  response_url?: string;
   user?: { id?: string };
   channel?: { id?: string };
-  actions?: Array<{ action_id?: string }>;
+  actions?: Array<{ action_id?: string; value?: string }>;
   view?: {
     callback_id?: string;
     private_metadata?: string;
@@ -110,7 +102,39 @@ export const buildAbsenceRegisterModalView = (params: {
   defaultNotifyChannels: string[];
   defaultNotifyUsers: string[];
   defaultRegistrationNotify: RegistrationNotifyMode;
-}): Record<string, unknown> => ({
+  initialStartDate?: string;
+  initialEndDate?: string;
+  initialNote?: string;
+}): Record<string, unknown> => {
+  const startDateElement: Record<string, unknown> = {
+    type: "datepicker",
+    action_id: "start_date",
+    placeholder: { type: "plain_text", text: "開始日を選択" }
+  };
+  if (params.initialStartDate) {
+    startDateElement.initial_date = params.initialStartDate;
+  }
+
+  const endDateElement: Record<string, unknown> = {
+    type: "datepicker",
+    action_id: "end_date",
+    placeholder: { type: "plain_text", text: "終了日を選択" }
+  };
+  if (params.initialEndDate) {
+    endDateElement.initial_date = params.initialEndDate;
+  }
+
+  const noteElement: Record<string, unknown> = {
+    type: "plain_text_input",
+    action_id: "note_input",
+    multiline: true,
+    placeholder: { type: "plain_text", text: "例: 通院のため午後から、午前中のみ など" }
+  };
+  if (params.initialNote) {
+    noteElement.initial_value = params.initialNote;
+  }
+
+  return {
   type: "modal",
   callback_id: ABSENCE_REGISTER_MODAL_CALLBACK_ID,
   private_metadata: JSON.stringify({
@@ -139,34 +163,21 @@ export const buildAbsenceRegisterModalView = (params: {
       type: "input",
       block_id: "start_block",
       label: { type: "plain_text", text: "開始日" },
-      element: {
-        type: "datepicker",
-        action_id: "start_date",
-        placeholder: { type: "plain_text", text: "開始日を選択" }
-      }
+      element: startDateElement
     },
     {
       type: "input",
       block_id: "end_block",
       optional: true,
       label: { type: "plain_text", text: "終了日" },
-      element: {
-        type: "datepicker",
-        action_id: "end_date",
-        placeholder: { type: "plain_text", text: "終了日を選択" }
-      }
+      element: endDateElement
     },
     {
       type: "input",
       block_id: "note_block",
       optional: true,
       label: { type: "plain_text", text: "詳細（任意）" },
-      element: {
-        type: "plain_text_input",
-        action_id: "note_input",
-        multiline: true,
-        placeholder: { type: "plain_text", text: "例: 通院のため午後から、午前中のみ など" }
-      }
+      element: noteElement
     },
     {
       type: "input",
@@ -197,18 +208,7 @@ export const buildAbsenceRegisterModalView = (params: {
       element: buildRegistrationNotifySelectElement(params.defaultRegistrationNotify)
     }
   ]
-});
-
-const resolveMasterContext = async (config: AppConfig, userId: string): Promise<MasterContext> => {
-  const memberMasterListId = await ensureMemberMasterList(config);
-  const resolved = await slackApi.resolveMemberMasterRecord(config, memberMasterListId, userId);
-  return {
-    memberMasterListId,
-    active: resolved.active,
-    defaultNotifyChannels: resolved.defaultNotifyChannels,
-    defaultNotifyUsers: resolved.defaultNotifyUsers,
-    defaultRegistrationNotify: resolved.defaultRegistrationNotify
-  };
+};
 };
 
 const resolveAbsenceListId = async (config: AppConfig): Promise<string> => {
@@ -224,6 +224,9 @@ export const openAbsenceRegisterModal = async (
     channelId: string;
     teamId: string;
     triggerSource: "slash" | "mention_button";
+    initialStartDate?: string;
+    initialEndDate?: string;
+    initialNote?: string;
   }
 ): Promise<void> => {
   const master = await resolveMasterContext(config, params.userId);
@@ -237,7 +240,10 @@ export const openAbsenceRegisterModal = async (
       channelId: params.channelId,
       defaultNotifyChannels: master.defaultNotifyChannels,
       defaultNotifyUsers: master.defaultNotifyUsers,
-      defaultRegistrationNotify: master.defaultRegistrationNotify
+      defaultRegistrationNotify: master.defaultRegistrationNotify,
+      initialStartDate: params.initialStartDate,
+      initialEndDate: params.initialEndDate,
+      initialNote: params.initialNote
     })
   );
   console.log(
@@ -293,107 +299,23 @@ const handleAbsenceRegisterSubmission = async (
   );
 
   const master = await resolveMasterContext(config, metadata.userId);
-  const { day: todayJst } = getJstDateParts();
-  const validationError = validateAbsenceRegistration({
+  const result = await commitAbsenceRegistration(config, {
+    userId: metadata.userId,
+    channelId: metadata.channelId,
+    absenceListId: metadata.absenceListId,
     startDate,
     endDate,
-    todayJst,
-    notifyMode: selectedMode,
-    channels: notifyChannels,
-    users: notifyUsers,
+    note: note || undefined,
+    notifyChannels,
+    notifyUsers,
+    selectedMode,
     active: master.active
   });
-  if (validationError) {
-    console.warn(
-      JSON.stringify({
-        level: "warn",
-        event: "absence_register_validation_failed",
-        user_id: metadata.userId,
-        reason: validationError.reason
-      })
-    );
-    const errorMessage =
-      validationError.reason === "inactive_user"
-        ? "通知対象が無効です。/pasr settings で有効化してください。"
-        : validationError.reason === "past_date"
-          ? "過去日は指定できません。"
-          : validationError.reason === "invalid_range"
-            ? "開始日は終了日以前にしてください。"
-            : "登録通知の設定に合わせて通知先を指定してください。";
-    return { ok: false, error: errorMessage, errorBlockId: validationError.blockId };
+  if (!result.ok) {
+    return { ok: false, error: result.error, errorBlockId: result.errorBlockId };
   }
 
-  const record: AbsenceRecord = {
-    itemId: "",
-    targetUser: metadata.userId,
-    absenceType: DEFAULT_ABSENCE_TYPE,
-    startDate,
-    endDate,
-    notifyChannels: [...new Set(notifyChannels)],
-    notifyUsers: [...new Set(notifyUsers)],
-    note: note || undefined
-  };
-
-  let itemId = "";
-  try {
-    const created = await slackApi.createAbsenceItem(config, metadata.absenceListId, record);
-    itemId = created.id ?? created.item?.id ?? "";
-    record.itemId = itemId;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(
-      JSON.stringify({
-        level: "error",
-        event: "absence_register_failed",
-        user_id: metadata.userId,
-        list_id: metadata.absenceListId,
-        message
-      })
-    );
-    return {
-      ok: false,
-      error: `不在の登録に失敗しました: ${message}`,
-      errorBlockId: "start_block"
-    };
-  }
-
-  const resolvedMode = resolveRegistrationNotifyMode(
-    startDate,
-    endDate,
-    todayJst,
-    new Date(),
-    selectedMode
-  );
-
-  console.log(
-    JSON.stringify({
-      level: "info",
-      event: "absence_registered",
-      user_id: metadata.userId,
-      list_id: metadata.absenceListId,
-      item_id: itemId,
-      start_date: startDate,
-      end_date: endDate,
-      absence_type: DEFAULT_ABSENCE_TYPE,
-      registration_notify_mode: selectedMode,
-      resolved_notify_mode: resolvedMode
-    })
-  );
-
-  return {
-    ok: true,
-    followUp: async () => {
-      await runRegistrationNotifyAndAck(config, {
-        userId: metadata.userId,
-        channelId: metadata.channelId,
-        itemId,
-        listId: metadata.absenceListId,
-        record,
-        selectedMode,
-        resolvedMode
-      });
-    }
-  };
+  return { ok: true, followUp: result.followUp };
 };
 
 export const handleAbsenceRegisterInteraction = async (
@@ -408,7 +330,16 @@ export const handleAbsenceRegisterInteraction = async (
     const triggerId = payload.trigger_id ?? "";
     const userId = payload.user?.id ?? "";
     const channelId = payload.channel?.id ?? "";
+    const buttonValue = payload.actions?.[0]?.value ?? "";
     if (!triggerId || !userId || !channelId) {
+      return { ok: true };
+    }
+    const mentionDraft = parseMentionConfirmPayload(buttonValue);
+    if (mentionDraft) {
+      await consumeInteractionMessage(payload.response_url);
+    }
+    if (mentionDraft && mentionDraft.userId !== userId) {
+      await slackApi.postEphemeral(config, channelId, userId, "本人以外は編集できません。");
       return { ok: true };
     }
     try {
@@ -417,7 +348,10 @@ export const handleAbsenceRegisterInteraction = async (
         userId,
         channelId,
         teamId: "",
-        triggerSource: "mention_button"
+        triggerSource: "mention_button",
+        initialStartDate: mentionDraft?.startDate,
+        initialEndDate: mentionDraft?.endDate,
+        initialNote: mentionDraft?.note
       });
     } catch (error) {
       console.warn(

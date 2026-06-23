@@ -12,6 +12,7 @@ import { ensureMemberMasterList, resolveActiveListIds, runListMigration, runList
 import { ABSENCE_EDIT_MODAL_CALLBACK_ID, handleAbsenceEditInteraction, openAbsenceEditModal, formatResolveOwnAbsenceForEditError, resolveOwnAbsenceForEdit } from "./absence-edit";
 import { showOwnAbsenceList, handleAbsenceListInteraction } from "./absence-list";
 import { openAbsenceRegisterModal, handleAbsenceRegisterInteraction } from "./absence-register";
+import { handleAbsenceMentionInteraction, isMentionAction } from "./absence-mention";
 import { slackApi } from "./api";
 import { readLastRunSummary, readPersistedMemberMasterListId } from "../state/kv";
 
@@ -717,6 +718,11 @@ export const handleSlackInteraction = async (
   config: AppConfig,
   payload: SlackInteractionPayload
 ): Promise<SlackInteractionResult> => {
+  const mentionResult = await handleAbsenceMentionInteraction(config, payload);
+  if (isMentionAction(payload)) {
+    return mentionResult;
+  }
+
   const registerResult = await handleAbsenceRegisterInteraction(config, payload);
   if (payload.type === "view_submission" && payload.view?.callback_id === "pasr_absence_register") {
     return registerResult;

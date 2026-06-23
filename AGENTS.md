@@ -46,6 +46,10 @@ Worker は3ハンドラで構成する。
 - 不在の編集・削除は本人レコードのみ。編集時の登録通知再送なし
 - 終了済み（`end_date < today` JST）と parse 失敗行は daily run 後 `items.delete`（証票用途なし）
 - `app_mention` はチャンネル直下のみ（`thread_ts` ありは除外）
+  - AI 抽出は提案のみ。確定は ephemeral 確認 UI（`pasr_mention_confirm`）必須
+  - 通知先は `member_master` 既定（AI 抽出対象外）
+  - AI 失敗時は Modal ボタンへフォールバック
+  - mention confirm の List 書き込み・登録通知は `block_actions` 即時 ACK 後 `waitUntil`（`followUp`）。`absenceListId` は confirm 時に KV 正本から再取得し、button `value` には含めない
 
 ## データ境界（KV 正本）
 

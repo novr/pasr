@@ -42,3 +42,13 @@ export const isValidJstDateString = (value: string): boolean => {
   const date = new Date(Date.UTC(year, month - 1, day));
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 };
+
+export const addJstDays = (dateStr: string, days: number): string => {
+  if (!isValidJstDateString(dateStr)) return dateStr;
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day + days));
+  const y = shifted.getUTCFullYear();
+  const m = String(shifted.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(shifted.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};

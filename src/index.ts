@@ -59,6 +59,7 @@ type SlackEventEnvelope = {
     user?: string;
     channel?: string;
     thread_ts?: string;
+    text?: string;
   };
 };
 
