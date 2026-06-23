@@ -15,7 +15,6 @@
   },
   "vars": {
     "TZ": "Asia/Tokyo",
-    "SLACK_ABSENCE_LIST_ID": "",
     "SLACK_ADMIN_USER_IDS": ""
   },
   "observability": {

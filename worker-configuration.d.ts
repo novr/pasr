@@ -3,7 +3,6 @@
 // Runtime types generated with workerd@1.20260617.1 2026-06-20 nodejs_compat
 interface __BaseEnv_Env {
 	TZ: "Asia/Tokyo";
-	SLACK_ABSENCE_LIST_ID: "";
 }
 declare namespace Cloudflare {
 	interface GlobalProps {
@@ -16,7 +15,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "TZ" | "SLACK_ABSENCE_LIST_ID">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "TZ">> {}
 }
 
 // Begin runtime types

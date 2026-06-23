@@ -9,7 +9,6 @@ import {
   readPersistedListId,
   readPostedMessageTs,
   writePostedDirectMessageTs,
-  writePersistedListId,
   writePostedMessageTs
 } from "../state/kv";
 
@@ -58,7 +57,7 @@ const loadMemberMasterMap = async (
   config: AppConfig,
   memberMasterListId: string
 ): Promise<Map<string, MemberMasterRecord>> => {
-  const masterItems = await slackApi.listMemberMasterItems(config, memberMasterListId);
+  const masterItems = await slackApi.listItems(config, memberMasterListId);
   const memberMasterMap = new Map<string, MemberMasterRecord>();
   for (const item of masterItems.items ?? []) {
     const parsed = parseMemberMaster(item);
@@ -317,20 +316,133 @@ const sendDirectMessageNotifications = async (
   }
 };
 
+type RichNodeType =
+  | "text"
+  | "link"
+  | "emoji"
+  | "user"
+  | "channel"
+  | "broadcast"
+  | "date"
+  | "unknown";
+
+type RichContainerType =
+  | "rich_text"
+  | "rich_text_section"
+  | "rich_text_list"
+  | "rich_text_preformatted"
+  | "rich_text_quote"
+  | "unknown";
+
+const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+  value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+
+const normalizeNodeType = (value: unknown): RichNodeType => {
+  switch (value) {
+    case "text":
+      return "text";
+    case "link":
+      return "link";
+    case "emoji":
+      return "emoji";
+    case "user":
+      return "user";
+    case "channel":
+      return "channel";
+    case "broadcast":
+      return "broadcast";
+    case "date":
+      return "date";
+    default:
+      return "unknown";
+  }
+};
+
+const normalizeContainerType = (value: unknown): RichContainerType => {
+  switch (value) {
+    case "rich_text":
+      return "rich_text";
+    case "rich_text_section":
+      return "rich_text_section";
+    case "rich_text_list":
+      return "rich_text_list";
+    case "rich_text_preformatted":
+      return "rich_text_preformatted";
+    case "rich_text_quote":
+      return "rich_text_quote";
+    default:
+      return "unknown";
+  }
+};
+
+const pushIfPresent = (bucket: string[], value: unknown): void => {
+  if (typeof value !== "string") return;
+  const trimmed = value.trim();
+  if (trimmed.length > 0) bucket.push(trimmed);
+};
+
+const appendNodeText = (node: Record<string, unknown>, bucket: string[]): void => {
+  const nodeType = normalizeNodeType(node.type);
+  switch (nodeType) {
+    case "text":
+      pushIfPresent(bucket, node.text);
+      return;
+    case "link":
+      pushIfPresent(bucket, node.text);
+      pushIfPresent(bucket, node.url);
+      return;
+    case "emoji":
+      pushIfPresent(bucket, node.name);
+      return;
+    case "user":
+      if (typeof node.user_id === "string" && node.user_id.length > 0) {
+        bucket.push(`<@${node.user_id}>`);
+      }
+      return;
+    case "channel":
+      if (typeof node.channel_id === "string" && node.channel_id.length > 0) {
+        bucket.push(`<#${node.channel_id}>`);
+      }
+      return;
+    case "broadcast":
+      pushIfPresent(bucket, node.range);
+      return;
+    case "date":
+      pushIfPresent(bucket, node.fallback);
+      return;
+    case "unknown":
+      return;
+  }
+};
+
 const collectTextNodes = (value: unknown, bucket: string[]): void => {
   if (Array.isArray(value)) {
     for (const entry of value) collectTextNodes(entry, bucket);
     return;
   }
-  if (!value || typeof value !== "object") return;
+  const obj = asRecord(value);
+  if (!obj) return;
 
-  const obj = value as Record<string, unknown>;
-  if (obj.type === "text" && typeof obj.text === "string") {
-    const trimmed = obj.text.trim();
-    if (trimmed.length > 0) bucket.push(trimmed);
+  const nodeType = normalizeNodeType(obj.type);
+  if (nodeType !== "unknown") {
+    appendNodeText(obj, bucket);
+    return;
   }
-  if (Array.isArray(obj.elements)) {
-    collectTextNodes(obj.elements, bucket);
+
+  const containerType = normalizeContainerType(obj.type);
+  switch (containerType) {
+    case "rich_text":
+    case "rich_text_section":
+    case "rich_text_list":
+    case "rich_text_preformatted":
+    case "rich_text_quote":
+      collectTextNodes(obj.elements, bucket);
+      return;
+    case "unknown":
+      collectTextNodes(obj.elements, bucket);
+      collectTextNodes(obj.blocks, bucket);
+      collectTextNodes(obj.content, bucket);
+      return;
   }
 };
 
@@ -367,10 +479,6 @@ export const runDailyNotify = async (
   };
   const { day } = toJstDate();
   let listId = await readPersistedListId(config);
-  if (!listId && config.absenceListId) {
-    listId = config.absenceListId;
-    await writePersistedListId(config, listId);
-  }
   if (!listId) {
     const setupResult = await runSetup(config);
     listId = setupResult.listId;
@@ -380,7 +488,7 @@ export const runDailyNotify = async (
   const memberMasterListId = await ensureMemberMasterList(config);
   const memberMasterMap = await loadMemberMasterMap(config, memberMasterListId);
 
-  const listResponse = await slackApi.listAbsences(config, listId);
+  const listResponse = await slackApi.listItems(config, listId);
   const parsed = (listResponse.items ?? []).map(parseAbsence);
   result.processed = parsed.length;
 

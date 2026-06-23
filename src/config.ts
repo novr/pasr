@@ -2,7 +2,6 @@ export type Env = {
   PASR_STATE: KVNamespace;
   SLACK_BOT_TOKEN: string;
   SLACK_SIGNING_SECRET: string;
-  SLACK_ABSENCE_LIST_ID: string;
   RUN_ENDPOINT_TOKEN?: string;
   TZ: string;
   SLACK_ADMIN_USER_IDS?: string;
@@ -13,7 +12,6 @@ export type AppConfig = {
   runEndpointToken: string;
   slackBotToken: string;
   slackSigningSecret: string;
-  absenceListId: string;
   timezone: string;
   adminUserIds: string[];
 };
@@ -34,7 +32,6 @@ export const getConfig = (env: Env): AppConfig => {
     runEndpointToken: env.RUN_ENDPOINT_TOKEN ?? "",
     slackBotToken: env.SLACK_BOT_TOKEN,
     slackSigningSecret: env.SLACK_SIGNING_SECRET,
-    absenceListId: env.SLACK_ABSENCE_LIST_ID ?? "",
     timezone: env.TZ || "Asia/Tokyo",
     adminUserIds: (env.SLACK_ADMIN_USER_IDS ?? "")
       .split(",")
