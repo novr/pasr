@@ -7,7 +7,8 @@ import {
   resolveAbsenceEndDate,
   resolveNotifyTargets,
   resolveRegistrationNotifyMode,
-  validateAbsenceRegistration
+  validateAbsenceRegistration,
+  validateAbsenceEdit
 } from "./absence-registration";
 
 describe("absence-registration", () => {
@@ -131,5 +132,47 @@ describe("absence-registration", () => {
       sendChannels: false,
       sendUsers: false
     });
+  });
+});
+
+describe("validateAbsenceEdit", () => {
+  const base = {
+    startDate: "2026-06-10",
+    endDate: "2026-06-12",
+    todayJst: "2026-06-10",
+    channels: ["C1"],
+    users: [] as string[],
+    active: true,
+    originalStartDate: "2026-06-10"
+  };
+
+  it("allows ongoing absence with past original start date", () => {
+    expect(
+      validateAbsenceEdit({
+        ...base,
+        startDate: "2026-06-08",
+        originalStartDate: "2026-06-08"
+      })
+    ).toBeUndefined();
+  });
+
+  it("rejects changing start date into the past", () => {
+    expect(
+      validateAbsenceEdit({
+        ...base,
+        startDate: "2026-06-09",
+        originalStartDate: "2026-06-10"
+      })?.reason
+    ).toBe("past_start_change");
+  });
+
+  it("requires notify channels or users", () => {
+    expect(
+      validateAbsenceEdit({
+        ...base,
+        channels: [],
+        users: []
+      })?.reason
+    ).toBe("missing_notify_target");
   });
 });

@@ -140,3 +140,46 @@ export const buildRegistrationSuccessEphemeral = (params: {
   }
   return lines.join("\n");
 };
+
+export type AbsenceEditValidationError = {
+  reason: "past_end_date" | "past_start_change" | "invalid_range" | "missing_notify_target" | "inactive_user";
+  blockId: "start_block" | "end_block" | "channels_block" | "users_block";
+};
+
+export const formatAbsenceListLine = (record: {
+  startDate: string;
+  endDate: string;
+  note?: string;
+}): string => {
+  const period = formatAttendancePeriod(record.startDate, record.endDate);
+  const noteText = record.note?.trim();
+  return noteText ? `${period} — ${noteText}` : period;
+};
+
+export const validateAbsenceEdit = (input: {
+  startDate: string;
+  endDate: string;
+  todayJst: string;
+  channels: string[];
+  users: string[];
+  active: boolean;
+  originalStartDate: string;
+}): AbsenceEditValidationError | undefined => {
+  if (!input.active) {
+    return { reason: "inactive_user", blockId: "start_block" };
+  }
+  const endDate = resolveAbsenceEndDate(input.startDate, input.endDate);
+  if (endDate < input.todayJst) {
+    return { reason: "past_end_date", blockId: "end_block" };
+  }
+  if (input.startDate > endDate) {
+    return { reason: "invalid_range", blockId: "end_block" };
+  }
+  if (input.startDate < input.todayJst && input.startDate !== input.originalStartDate) {
+    return { reason: "past_start_change", blockId: "start_block" };
+  }
+  if (input.channels.length === 0 && input.users.length === 0) {
+    return { reason: "missing_notify_target", blockId: "channels_block" };
+  }
+  return undefined;
+};
