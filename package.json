@@ -7,11 +7,14 @@
     "dev": "wrangler dev --test-scheduled",
     "deploy": "wrangler deploy",
     "types": "wrangler types",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
     "@types/node": "^24.0.10",
     "typescript": "^5.9.2",
+    "vitest": "^3.2.4",
     "wrangler": "^4.21.1"
   }
 }
