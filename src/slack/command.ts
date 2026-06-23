@@ -298,9 +298,6 @@ const handleSelfImmediateText = async (
   action: string
 ): Promise<string> => {
   if (!isSelfAction(action)) {
-    if (action === "run" || action === "status") {
-      return "この操作は /pasr-admin で実行してください。";
-    }
     return `unsupported action: ${action}\n${buildHelpText()}`;
   }
   switch (action) {
