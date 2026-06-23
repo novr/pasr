@@ -1,4 +1,5 @@
 export const MEMBER_MASTER_LIST_NAME = "member_master";
+export const MEMBER_MASTER_SCHEMA_VERSION = 2;
 
 export const memberMasterSchema = [
   {

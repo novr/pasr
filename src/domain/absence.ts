@@ -2,6 +2,7 @@ import type { SlackListItem } from "../slack/api";
 import { pickListField, toStringArray, toStringValue } from "./slack-list-value";
 
 export const ABSENCE_LIST_NAME = "absence_list";
+export const ABSENCE_SCHEMA_VERSION = 1;
 
 export const absenceSchema = [
   { key: "absence_title", name: "Absence", type: "text", is_primary_column: true },
