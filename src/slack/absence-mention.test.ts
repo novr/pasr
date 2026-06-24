@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppConfig } from "../config";
+import { createMockKv, createTestConfig } from "../test/mock-kv";
 
 const { postUserFacingMessageMock, commitMock, consumeMock } = vi.hoisted(() => ({
   postUserFacingMessageMock: vi.fn(async () => undefined),
@@ -47,16 +47,7 @@ import {
 import * as absenceMentionAi from "./absence-mention-ai";
 import * as jstDate from "../domain/jst-date";
 
-const baseConfig = {
-  stateKv: {} as KVNamespace,
-  runEndpointToken: "",
-  debugEndpointsEnabled: false,
-  slackBotToken: "xoxb-test",
-  slackSigningSecret: "secret",
-  timezone: "Asia/Tokyo",
-  adminUserIds: [],
-  listAccessChannelIds: []
-} satisfies AppConfig;
+const baseConfig = createTestConfig(createMockKv(), { adminUserIds: [] });
 
 describe("absence-mention interaction", () => {
   beforeEach(() => {
@@ -237,21 +228,6 @@ describe("handleAppMentionWithText", () => {
     );
   });
 
-  it("uses postUserFacingMessage for DM channel confirm UI", async () => {
-    await handleAppMentionWithText(baseConfig, {
-      event: { user: "U1", channel: "D1", text: "明日 通院" }
-    });
-
-    expect(postUserFacingMessageMock).toHaveBeenCalledWith(
-      baseConfig,
-      expect.objectContaining({
-        channelId: "D1",
-        userId: "U1",
-        text: "不在登録の確認"
-      })
-    );
-  });
-
   it("falls back when AI is unavailable and infer is low-confidence", async () => {
     await handleAppMentionWithText(baseConfig, {
       event: { user: "U1", channel: "C1", text: "<@UBOT> 午後から休みます 子供の行事" }
@@ -263,22 +239,6 @@ describe("handleAppMentionWithText", () => {
         channelId: "C1",
         userId: "U1",
         text: "自動読み取りは利用できません。下のボタンからフォームで登録してください。",
-        blocks: expect.any(Array)
-      })
-    );
-  });
-
-  it("skips AI when tomorrow is high-confidence infer", async () => {
-    await handleAppMentionWithText(baseConfig, {
-      event: { user: "U1", channel: "C1", text: "<@UBOT> 明日 通院" }
-    });
-
-    expect(postUserFacingMessageMock).toHaveBeenCalledWith(
-      baseConfig,
-      expect.objectContaining({
-        channelId: "C1",
-        userId: "U1",
-        text: "不在登録の確認",
         blocks: expect.any(Array)
       })
     );

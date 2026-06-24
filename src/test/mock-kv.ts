@@ -1,3 +1,5 @@
+import type { AppConfig } from "../config";
+
 type KvEntry = {
   value: string;
 };
@@ -21,7 +23,10 @@ export const createMockKv = (): KVNamespace => {
   } as unknown as KVNamespace;
 };
 
-export const createTestConfig = (stateKv: KVNamespace) => ({
+export const createTestConfig = (
+  stateKv: KVNamespace,
+  overrides: Partial<AppConfig> = {}
+): AppConfig => ({
   stateKv,
   runEndpointToken: "test-token",
   debugEndpointsEnabled: false,
@@ -29,5 +34,6 @@ export const createTestConfig = (stateKv: KVNamespace) => ({
   slackSigningSecret: "test-secret",
   timezone: "Asia/Tokyo",
   adminUserIds: ["U_ADMIN"],
-  listAccessChannelIds: []
+  listAccessChannelIds: [],
+  ...overrides
 });

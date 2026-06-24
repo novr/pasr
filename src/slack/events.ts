@@ -1,10 +1,5 @@
 import type { AppConfig } from "../config";
-import { stripAppMentionText } from "../domain/absence-mention-parse";
-import {
-  handleAppMentionWithText,
-  postMentionRegisterButton,
-  type MentionRequestEnvelope
-} from "./absence-mention";
+import { handleAppMentionWithText, type MentionRequestEnvelope } from "./absence-mention";
 import { slackApi } from "./api";
 
 const THREAD_MENTION_GUIDANCE =
@@ -85,12 +80,6 @@ export const handleAppMentionEvent = async (
     return;
   }
 
-  const userText = stripAppMentionText(mentionEvent.text ?? "");
-  if (userText.length === 0) {
-    await postMentionRegisterButton(config, channelId, userId);
-    return;
-  }
-
   await handleAppMentionWithText(config, envelope as MentionRequestEnvelope);
 };
 
@@ -130,12 +119,6 @@ export const handleDirectMessageEvent = async (
       channel_id: channelId
     })
   );
-
-  const userText = stripAppMentionText(event.text ?? "");
-  if (userText.length === 0) {
-    await postMentionRegisterButton(config, channelId, userId);
-    return;
-  }
 
   await handleAppMentionWithText(config, envelope as MentionRequestEnvelope);
 };
