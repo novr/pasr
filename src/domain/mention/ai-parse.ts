@@ -22,6 +22,21 @@ const readStringField = (record: Record<string, unknown>, keys: string[]): strin
   return "";
 };
 
+const readLooseDateField = (raw: string, field: "startDate" | "endDate"): string => {
+  const match = raw.match(new RegExp(`"${field}"\\s*:\\s*"(\\d{4}-\\d{2}-\\d{2})"`));
+  return match?.[1] ?? "";
+};
+
+const readLooseNoteField = (raw: string): string => {
+  const match = raw.match(/"note"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (!match?.[1]) return "";
+  try {
+    return JSON.parse(`"${match[1]}"`);
+  } catch {
+    return match[1];
+  }
+};
+
 const parseAbsenceMentionRecord = (record: Record<string, unknown>): AbsenceMentionDraft | undefined => {
   const startDate = readStringField(record, ["startDate", "start_date"]);
   const endDateRaw = readStringField(record, ["endDate", "end_date"]);
@@ -37,15 +52,43 @@ const parseAbsenceMentionRecord = (record: Record<string, unknown>): AbsenceMent
   };
 };
 
+const parseLooseAbsenceMentionJson = (raw: string): AbsenceMentionDraft | undefined => {
+  const startDate = readLooseDateField(raw, "startDate");
+  const endDateRaw = readLooseDateField(raw, "endDate");
+  if (!isValidJstDateString(startDate)) return undefined;
+  const endDate = resolveAbsenceEndDate(startDate, endDateRaw);
+  if (!isValidJstDateString(endDate)) return undefined;
+  const noteRaw = readLooseNoteField(raw);
+  const { note, truncated } = parseNoteField(noteRaw);
+  return {
+    startDate,
+    endDate,
+    note,
+    noteTruncated: truncated || undefined
+  };
+};
+
 export const parseAbsenceMentionAiResponse = (raw: string): AbsenceMentionDraft | undefined => {
+  const jsonText = extractJsonObject(raw);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(extractJsonObject(raw));
+    parsed = JSON.parse(jsonText);
   } catch {
-    return undefined;
+    return parseLooseAbsenceMentionJson(jsonText);
   }
-  if (!parsed || typeof parsed !== "object") return undefined;
+  if (!parsed || typeof parsed !== "object") return parseLooseAbsenceMentionJson(jsonText);
   return parseAbsenceMentionRecord(parsed as Record<string, unknown>);
+};
+
+const readChoiceContent = (response: Record<string, unknown>): string | undefined => {
+  const choices = response.choices;
+  if (!Array.isArray(choices) || choices.length === 0) return undefined;
+  const first = choices[0];
+  if (!first || typeof first !== "object") return undefined;
+  const message = (first as Record<string, unknown>).message;
+  if (!message || typeof message !== "object") return undefined;
+  const content = (message as Record<string, unknown>).content;
+  return typeof content === "string" ? content : undefined;
 };
 
 export const parseAbsenceMentionFromAiRun = (response: unknown): AbsenceMentionDraft | undefined => {
@@ -56,8 +99,16 @@ export const parseAbsenceMentionFromAiRun = (response: unknown): AbsenceMentionD
     return parseAbsenceMentionRecord(inner as Record<string, unknown>);
   }
   if (typeof inner === "string") {
-    return parseAbsenceMentionAiResponse(inner);
+    const parsed = parseAbsenceMentionAiResponse(inner);
+    if (parsed) return parsed;
   }
+
+  const choiceContent = readChoiceContent(record);
+  if (choiceContent) {
+    const parsed = parseAbsenceMentionAiResponse(choiceContent);
+    if (parsed) return parsed;
+  }
+
   return parseAbsenceMentionRecord(record);
 };
 

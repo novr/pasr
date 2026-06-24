@@ -19,13 +19,22 @@ export const enrichMentionDraftDates = (
   draft: AbsenceMentionDraft
 ): AbsenceMentionDraft => {
   const inferred = inferMentionDateRange(userText, todayJst);
-  if (!inferred || !shouldOverrideMentionDraftDates(draft, inferred)) {
+  if (!inferred) {
     return draft;
+  }
+  const hint = inferred.interpretationHint
+    ? { dateInterpretationHint: inferred.interpretationHint }
+    : {};
+  if (!shouldOverrideMentionDraftDates(draft, inferred)) {
+    const datesMatch =
+      draft.startDate === inferred.startDate && draft.endDate === inferred.endDate;
+    return datesMatch ? { ...draft, ...hint } : draft;
   }
   return {
     ...draft,
     startDate: inferred.startDate,
-    endDate: inferred.endDate
+    endDate: inferred.endDate,
+    ...hint
   };
 };
 

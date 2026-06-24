@@ -62,6 +62,38 @@ const compareMonthDay = (leftMonth: number, leftDay: number, rightMonth: number,
   return leftDay - rightDay;
 };
 
+const JP_WEEKDAY_LABEL: Record<string, string> = {
+  日: "日曜",
+  月: "月曜",
+  火: "火曜",
+  水: "水曜",
+  木: "木曜",
+  金: "金曜",
+  土: "土曜"
+};
+
+const formatWeekdayInterpretationHint = (
+  modifier: "今週" | "来週" | "翌週",
+  weekday: string,
+  bumpedToNextWeek: boolean
+): string => {
+  const label = JP_WEEKDAY_LABEL[weekday] ?? `${weekday}曜`;
+  if (modifier === "来週" || modifier === "翌週") {
+    return `来週の${label}日で解釈しました`;
+  }
+  if (bumpedToNextWeek) {
+    return `今週の${label}日（過ぎていたため翌週）で解釈しました`;
+  }
+  return `今週の${label}日で解釈しました`;
+};
+
+export const hasAmbiguousMentionDateExpressions = (userText: string): boolean => {
+  const text = stripAppMentionText(userText);
+  const mentionsRelativeDay = /(?:今日|明日|明後日|あさって)/.test(text);
+  const mentionsWeekdayDate = /(今週|来週|翌週)(?:\s*|の)(月|火|水|木|金|土|日)曜?日?/.test(text);
+  return mentionsRelativeDay && mentionsWeekdayDate;
+};
+
 const resolveMonthDayInFuture = (todayJst: string, month: string, day: string): string | undefined => {
   let year = Number(todayJst.slice(0, 4));
   let candidate = formatMonthDay(String(year), month, day);
@@ -110,6 +142,10 @@ export const inferMentionDateRange = (
 ): InferredMentionDateRange | undefined => {
   const text = stripAppMentionText(userText);
 
+  if (hasAmbiguousMentionDateExpressions(text)) {
+    return undefined;
+  }
+
   const isoRange = text.match(/(\d{4}-\d{2}-\d{2})\s*から\s*(\d{4}-\d{2}-\d{2})\s*まで/);
   if (isoRange) {
     const startDate = isoRange[1];
@@ -141,34 +177,80 @@ export const inferMentionDateRange = (
       return {
         startDate,
         endDate: addJstDays(startDate, spanDays - 1),
-        confidence: "high"
+        confidence: "high",
+        interpretationHint: `${relativeSpan[1]}から${spanDays}日間で解釈しました`
       };
     }
   }
 
-  const weekDay = text.match(/(今週|来週|翌週)\s*(月|火|水|木|金|土|日)曜?日?/);
+  const hasSpecificWeekday = /(今週|来週|翌週)(?:\s*|の)(月|火|水|木|金|土|日)曜?日?/.test(text);
+  if (text.match(/来週は/) && !hasSpecificWeekday) {
+    const nextSunday = addJstDays(sundayOfWeekContaining(todayJst), 7);
+    return {
+      startDate: nextSunday,
+      endDate: addJstDays(nextSunday, 6),
+      confidence: "high",
+      interpretationHint: "来週（日曜〜土曜）で解釈しました"
+    };
+  }
+
+  const weekDay = text.match(/(今週|来週|翌週)(?:\s*|の)(月|火|水|木|金|土|日)曜?日?/);
   if (weekDay) {
-    const startDate = resolveJpWeekday(
-      todayJst,
-      weekDay[1] as "今週" | "来週" | "翌週",
-      weekDay[2]
-    );
+    const modifier = weekDay[1] as "今週" | "来週" | "翌週";
+    const weekday = weekDay[2];
+    const offset = JP_WEEKDAY_OFFSET_FROM_SUNDAY[weekday];
+    let sunday = sundayOfWeekContaining(todayJst);
+    if (modifier === "来週" || modifier === "翌週") {
+      sunday = addJstDays(sunday, 7);
+    }
+    const naiveResolved = offset !== undefined ? addJstDays(sunday, offset) : undefined;
+    const bumpedToNextWeek =
+      modifier === "今週" && naiveResolved !== undefined && naiveResolved < todayJst;
+    const startDate = resolveJpWeekday(todayJst, modifier, weekday);
     if (startDate && isValidJstDateString(startDate)) {
-      return { startDate, endDate: startDate, confidence: "high" };
+      return {
+        startDate,
+        endDate: startDate,
+        confidence: "high",
+        interpretationHint: formatWeekdayInterpretationHint(modifier, weekday, bumpedToNextWeek)
+      };
     }
   }
 
   const singleSlash = text.match(/(?:^|\s)(\d{1,2})\/(\d{1,2})(?:\s|$)/);
   if (singleSlash) {
+    const year = Number(todayJst.slice(0, 4));
+    const naiveCandidate = formatMonthDay(String(year), singleSlash[1], singleSlash[2]);
     const startDate = resolveMonthDayInFuture(todayJst, singleSlash[1], singleSlash[2]);
     if (startDate) {
-      return { startDate, endDate: startDate, confidence: "low" };
+      const rolledToNextYear = naiveCandidate < todayJst;
+      return {
+        startDate,
+        endDate: startDate,
+        confidence: "low",
+        interpretationHint: rolledToNextYear
+          ? `${singleSlash[1]}/${singleSlash[2]} を翌年として解釈しました`
+          : undefined
+      };
     }
   }
 
-  const relativeSingle = text.match(/(?:^|\s)(今日|明日|明後日|あさって)(?:\s|$)/);
+  const relativeSingle = text.match(/(?:^|\s)(今日|明日)(?:\s|$)/);
   if (relativeSingle) {
     const startDate = resolveRelativeDay(todayJst, relativeSingle[1]);
+    if (startDate) {
+      return {
+        startDate,
+        endDate: startDate,
+        confidence: "high",
+        interpretationHint: `${relativeSingle[1]}で解釈しました`
+      };
+    }
+  }
+
+  const relativeSingleLow = text.match(/(?:^|\s)(明後日|あさって)(?:\s|$)/);
+  if (relativeSingleLow) {
+    const startDate = resolveRelativeDay(todayJst, relativeSingleLow[1]);
     if (startDate) {
       return { startDate, endDate: startDate, confidence: "low" };
     }

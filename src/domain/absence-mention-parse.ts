@@ -7,7 +7,7 @@ export {
   type MentionConfirmPayload
 } from "./mention/types";
 export { stripAppMentionText, stripDateExpressionsFromMentionText } from "./mention/text";
-export { inferMentionDateRange } from "./mention/date-infer";
+export { inferMentionDateRange, hasAmbiguousMentionDateExpressions } from "./mention/date-infer";
 export { enrichMentionDraft, enrichMentionDraftDates, enrichMentionDraftNote } from "./mention/enrich";
 export { tryInferMentionDraftWithoutAi } from "./mention/infer-draft";
 export {

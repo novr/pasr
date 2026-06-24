@@ -1,6 +1,5 @@
 import { describe, expect, it, beforeAll } from "vitest";
 import {
-  MENTION_AI_INFER_CASES,
   MENTION_AI_INTEGRATION_TODAY,
   MENTION_AI_MODEL_CASES
 } from "./mention-ai-cases";

@@ -1,6 +1,10 @@
 import type { AppConfig } from "../config";
 import { stripAppMentionText } from "../domain/absence-mention-parse";
 import { handleAppMentionWithText, postMentionRegisterButton } from "./absence-mention";
+import { slackApi } from "./api";
+
+const THREAD_MENTION_GUIDANCE =
+  "スレッド内では利用できません。チャンネル直下で @PASR をメンションしてください。";
 
 type AppMentionEvent = {
   type?: string;
@@ -52,6 +56,7 @@ export const handleAppMentionEvent = async (
         thread_ts: event.thread_ts ?? ""
       })
     );
+    await slackApi.postEphemeral(config, channelId, userId, THREAD_MENTION_GUIDANCE);
     return;
   }
 

@@ -104,19 +104,21 @@ export const MENTION_AI_INFER_CASES: MentionAiIntegrationCase[] = [
       endDate: "2026-06-26",
       noteIncludes: "午後"
     }
+  },
+  {
+    id: "next-week-trip-vague",
+    text: "来週は旅行なので不在です",
+    inferOnly: true,
+    expect: {
+      startDate: "2026-06-28",
+      endDate: "2026-07-04",
+      noteIncludes: "旅行"
+    }
   }
 ];
 
 /** AI 推論品質を検証するケース（結合テスト対象） */
 export const MENTION_AI_MODEL_CASES: MentionAiIntegrationCase[] = [
-  {
-    id: "next-week-trip-vague",
-    text: "来週は旅行なので不在です",
-    expect: {
-      dateStrict: false,
-      noteIncludes: "旅行"
-    }
-  },
   {
     id: "afternoon-only-no-date-keyword",
     text: "午後から休みます 子供の行事",

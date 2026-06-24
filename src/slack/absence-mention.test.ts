@@ -136,7 +136,7 @@ describe("absence-mention interaction", () => {
 
     expect(result).toEqual({ ok: true });
     expect(consumeMock).toHaveBeenCalledWith("https://hooks.slack.com/actions/T1/2/3");
-    expect(postEphemeralMock).not.toHaveBeenCalled();
+    expect(postEphemeralMock).toHaveBeenCalledWith(baseConfig, "C1", "U1", "キャンセルしました。");
   });
 
   it("handleAbsenceMentionInteraction rejects invalid confirm payload", async () => {
@@ -223,7 +223,7 @@ describe("handleAppMentionWithText", () => {
     });
 
     const messages = postEphemeralMock.mock.calls.map((call) => (call as unknown[])[3]);
-    expect(messages).not.toContain("不在内容を解釈しています…");
+    expect(messages).not.toContain("不在内容を確認しています…");
     expect(postEphemeralMock).toHaveBeenCalledWith(
       baseConfig,
       "C1",
@@ -235,6 +235,20 @@ describe("handleAppMentionWithText", () => {
 
   it("falls back when AI is unavailable and infer is low-confidence", async () => {
     await handleAppMentionWithText(baseConfig, {
+      event: { user: "U1", channel: "C1", text: "<@UBOT> 午後から休みます 子供の行事" }
+    });
+
+    expect(postEphemeralMock).toHaveBeenCalledWith(
+      baseConfig,
+      "C1",
+      "U1",
+      "自動読み取りは利用できません。下のボタンからフォームで登録してください。",
+      expect.any(Array)
+    );
+  });
+
+  it("skips AI when tomorrow is high-confidence infer", async () => {
+    await handleAppMentionWithText(baseConfig, {
       event: { user: "U1", channel: "C1", text: "<@UBOT> 明日 通院" }
     });
 
@@ -242,7 +256,7 @@ describe("handleAppMentionWithText", () => {
       baseConfig,
       "C1",
       "U1",
-      "AI 解釈は利用できません。下のボタンから Modal で登録してください。",
+      "不在登録の確認",
       expect.any(Array)
     );
   });
@@ -254,14 +268,14 @@ describe("handleAppMentionWithText", () => {
     });
 
     await handleAppMentionWithText(configWithAi, {
-      event: { user: "U1", channel: "C1", text: "<@UBOT> 明日 通院" }
+      event: { user: "U1", channel: "C1", text: "<@UBOT> 午後から休みます 子供の行事" }
     });
 
     expect(postEphemeralMock).toHaveBeenCalledWith(
       configWithAi,
       "C1",
       "U1",
-      "不在内容を解釈できませんでした。下のボタンから Modal で登録してください。",
+      "不在内容を読み取れませんでした。下のボタンからフォームで登録してください。",
       expect.any(Array)
     );
   });

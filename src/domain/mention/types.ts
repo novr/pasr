@@ -18,6 +18,7 @@ export type AbsenceMentionDraft = {
   endDate: string;
   note?: string;
   noteTruncated?: boolean;
+  dateInterpretationHint?: string;
 };
 
 export type MentionConfirmPayload = {
@@ -38,4 +39,5 @@ export type InferredMentionDateRange = {
   startDate: string;
   endDate: string;
   confidence: "high" | "low";
+  interpretationHint?: string;
 };

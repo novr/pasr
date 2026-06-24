@@ -2,6 +2,7 @@ import type { AppConfig } from "../config";
 import {
   buildMentionConfirmPayload,
   describeAiRunForLog,
+  hasAmbiguousMentionDateExpressions,
   parseMentionConfirmPayload,
   stripAppMentionText,
   tryInferMentionDraftWithoutAi,
@@ -10,7 +11,8 @@ import {
 import {
   formatAttendancePeriod,
   formatRegistrationNotifyModeLabel,
-  validateAbsenceRegistration
+  validateAbsenceRegistration,
+  type AbsenceRegisterValidationError
 } from "../domain/absence-registration";
 import { getJstDateParts } from "../domain/jst-date";
 import { resolveActiveListIds } from "../jobs/setup";
@@ -29,6 +31,9 @@ import { runAbsenceMentionAi } from "./absence-mention-ai";
 
 export const ABSENCE_MENTION_CONFIRM_ACTION_ID = "pasr_mention_confirm";
 export const ABSENCE_MENTION_CANCEL_ACTION_ID = "pasr_mention_cancel";
+
+const MENTION_FORM_FALLBACK_SUFFIX = "下のボタンからフォームで登録してください。";
+const MENTION_PROGRESS_MESSAGE = "不在内容を確認しています…";
 
 type AppMentionEnvelope = {
   event_id?: string;
@@ -85,28 +90,50 @@ const postMentionFallback = async (
 const formatAiFailureUserMessage = (error?: Error): string => {
   const message = error?.message ?? "";
   if (message.includes("deprecated")) {
-    return "AI 解釈は一時的に利用できません。下のボタンから Modal で登録してください。";
+    return `自動読み取りは一時的に利用できません。${MENTION_FORM_FALLBACK_SUFFIX}`;
   }
-  return "不在内容を解釈できませんでした。下のボタンから Modal で登録してください。";
+  return `不在内容を読み取れませんでした。${MENTION_FORM_FALLBACK_SUFFIX}`;
+};
+
+const formatMentionValidationError = (
+  error: AbsenceRegisterValidationError,
+  draft: AbsenceMentionDraft
+): string => {
+  if (error.reason === "past_date") {
+    const date = error.blockId === "start_block" ? draft.startDate : draft.endDate;
+    return `${date} は過去日のため登録できません。`;
+  }
+  return formatAbsenceRegistrationValidationError(error);
 };
 
 const buildConfirmBlocks = (params: {
   draft: AbsenceMentionDraft;
   notifyLabel: string;
   confirmValue: string;
+  ambiguousDateWarning?: boolean;
 }): Array<Record<string, unknown>> => {
   const period = formatAttendancePeriod(params.draft.startDate, params.draft.endDate);
   const noteLine =
     params.draft.note && params.draft.note.length > 0 ? `• 詳細: ${params.draft.note}` : "• 詳細: （なし）";
   const truncateNote =
     params.draft.noteTruncated === true ? "\n_※ 詳細は長いため先頭 500 文字のみ登録されます_" : "";
+  const hintLine = params.draft.dateInterpretationHint
+    ? `\n_${params.draft.dateInterpretationHint}_`
+    : "";
+  const ambiguousLine = params.ambiguousDateWarning
+    ? "\n_※ 日付の表現が複数あるため、期間をご確認ください_"
+    : "";
   const lines = [
-    "解釈結果:",
+    "登録内容:",
     `• 期間: ${period}`,
     noteLine,
     `• 通知: ${params.notifyLabel}（既定）`,
+    hintLine,
+    ambiguousLine,
     truncateNote
-  ].join("\n");
+  ]
+    .filter((line) => line.length > 0)
+    .join("\n");
 
   return [
     { type: "section", text: { type: "mrkdwn", text: lines } },
@@ -129,7 +156,7 @@ const buildConfirmBlocks = (params: {
         {
           type: "button",
           action_id: ABSENCE_REGISTER_OPEN_ACTION_ID,
-          text: { type: "plain_text", text: "Modalで編集" },
+          text: { type: "plain_text", text: "フォームで編集" },
           value: params.confirmValue
         }
       ]
@@ -164,7 +191,7 @@ export const handleAppMentionWithText = async (
       config,
       channelId,
       userId,
-      "AI 解釈は利用できません。下のボタンから Modal で登録してください。"
+      `自動読み取りは利用できません。${MENTION_FORM_FALLBACK_SUFFIX}`
     );
     return;
   }
@@ -180,7 +207,7 @@ export const handleAppMentionWithText = async (
         channel_id: channelId
       })
     );
-    await slackApi.postEphemeral(config, channelId, userId, "不在内容を解釈しています…");
+    await slackApi.postEphemeral(config, channelId, userId, MENTION_PROGRESS_MESSAGE);
   } else {
     console.log(
       JSON.stringify({
@@ -229,7 +256,7 @@ export const handleAppMentionWithText = async (
       config,
       channelId,
       userId,
-      "不在内容を解釈できませんでした。下のボタンから Modal で登録してください。"
+      `不在内容を読み取れませんでした。${MENTION_FORM_FALLBACK_SUFFIX}`
     );
     return;
   }
@@ -249,7 +276,7 @@ export const handleAppMentionWithText = async (
       config,
       channelId,
       userId,
-      `${formatAbsenceRegistrationValidationError(validationError)}\n下のボタンから Modal で登録してください。`
+      `${formatMentionValidationError(validationError, draft)}\n${MENTION_FORM_FALLBACK_SUFFIX}`
     );
     return;
   }
@@ -261,18 +288,19 @@ export const handleAppMentionWithText = async (
       config,
       channelId,
       userId,
-      "確認データが長すぎます。下のボタンから Modal で登録してください。"
+      `確認データが長すぎます。${MENTION_FORM_FALLBACK_SUFFIX}`
     );
     return;
   }
 
   const notifyLabel = formatRegistrationNotifyModeLabel(master.defaultRegistrationNotify);
+  const ambiguousDateWarning = hasAmbiguousMentionDateExpressions(userText);
   await slackApi.postEphemeral(
     config,
     channelId,
     userId,
     "不在登録の確認",
-    buildConfirmBlocks({ draft, notifyLabel, confirmValue })
+    buildConfirmBlocks({ draft, notifyLabel, confirmValue, ambiguousDateWarning })
   );
 
   console.log(
@@ -306,6 +334,7 @@ export const handleAbsenceMentionInteraction = async (
 
   if (actionId === ABSENCE_MENTION_CANCEL_ACTION_ID) {
     await consumeInteractionMessage(payload.response_url);
+    await slackApi.postEphemeral(config, channelId, actorUserId, "キャンセルしました。");
     console.log(
       JSON.stringify({
         level: "info",

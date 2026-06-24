@@ -46,7 +46,7 @@ export const runAbsenceMentionAi = async (
       lastResponse = await config.ai.run(ABSENCE_MENTION_AI_MODEL, {
         messages,
         temperature: 0,
-        max_tokens: 256,
+        max_tokens: 384,
         response_format: ABSENCE_MENTION_AI_RESPONSE_FORMAT
       });
       const draft = parseAbsenceMentionFromAiRun(lastResponse);

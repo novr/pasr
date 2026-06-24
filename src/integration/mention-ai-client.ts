@@ -23,13 +23,46 @@ export const isMentionAiIntegrationReady = async (): Promise<{ ready: boolean; r
     return { ready: false, reason: "RUN_ENDPOINT_TOKEN is not set" };
   }
   try {
-    const response = await fetch(`${baseUrl}/health`);
-    if (!response.ok) {
+    const health = await fetch(`${baseUrl}/health`);
+    if (!health.ok) {
       return {
         ready: false,
-        reason: `health returned ${response.status} at ${baseUrl} (start npm run dev and ensure port is free)`
+        reason: `health returned ${health.status} at ${baseUrl} (start npm run dev and ensure port is free)`
       };
     }
+
+    const debug = await fetch(`${baseUrl}/debug/mention-ai`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ text: "integration probe", todayJst: "2099-01-01" })
+    });
+    if (debug.status === 404) {
+      return {
+        ready: false,
+        reason: [
+          `POST /debug/mention-ai returned 404 at ${baseUrl}.`,
+          "1) Add DEBUG_ENDPOINTS_ENABLED=true to .dev.vars and restart npm run dev",
+          "2) Stop stale wrangler on port 8787 (integration tests default to http://localhost:8787)",
+          "3) If dev runs on another port, set PASR_DEV_URL (e.g. PASR_DEV_URL=http://localhost:8788)"
+        ].join(" ")
+      };
+    }
+    if (debug.status === 401) {
+      return {
+        ready: false,
+        reason: "POST /debug/mention-ai returned 401. RUN_ENDPOINT_TOKEN must match between .dev.vars and wrangler dev"
+      };
+    }
+    if (debug.status !== 200 && debug.status !== 422) {
+      return {
+        ready: false,
+        reason: `POST /debug/mention-ai returned ${debug.status} at ${baseUrl}`
+      };
+    }
+
     return { ready: true };
   } catch {
     return { ready: false, reason: `dev server not reachable at ${baseUrl} (run: npm run dev)` };

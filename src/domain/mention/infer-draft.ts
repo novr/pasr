@@ -16,6 +16,7 @@ export const tryInferMentionDraftWithoutAi = (
   }
   return enrichMentionDraftNote(userText, {
     startDate: inferred.startDate,
-    endDate: inferred.endDate
+    endDate: inferred.endDate,
+    dateInterpretationHint: inferred.interpretationHint
   });
 };

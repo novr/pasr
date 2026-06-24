@@ -1,0 +1,5 @@
+# Copy to .dev.vars for local `npm run dev` and integration tests.
+# Restart `npm run dev` after editing.
+
+RUN_ENDPOINT_TOKEN=replace-with-local-token
+DEBUG_ENDPOINTS_ENABLED=true
