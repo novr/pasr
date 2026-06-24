@@ -7,6 +7,7 @@ export type Env = {
   SLACK_BOT_TOKEN: string;
   SLACK_SIGNING_SECRET: string;
   RUN_ENDPOINT_TOKEN?: string;
+  DEBUG_ENDPOINTS_ENABLED?: string;
   TZ: string;
   SLACK_ADMIN_USER_IDS?: string;
   SLACK_LIST_ACCESS_CHANNEL_IDS?: string;
@@ -16,6 +17,7 @@ export type AppConfig = {
   stateKv: KVNamespace;
   ai?: Ai;
   runEndpointToken: string;
+  debugEndpointsEnabled: boolean;
   slackBotToken: string;
   slackSigningSecret: string;
   timezone: string;
@@ -41,6 +43,7 @@ export const getConfig = (env: Env): AppConfig => {
     stateKv: env.PASR_STATE,
     ai: env.AI,
     runEndpointToken: env.RUN_ENDPOINT_TOKEN ?? "",
+    debugEndpointsEnabled: env.DEBUG_ENDPOINTS_ENABLED === "true" || env.DEBUG_ENDPOINTS_ENABLED === "1",
     slackBotToken: env.SLACK_BOT_TOKEN,
     slackSigningSecret: env.SLACK_SIGNING_SECRET,
     timezone: env.TZ || "Asia/Tokyo",

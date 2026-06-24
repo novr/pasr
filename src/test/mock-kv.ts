@@ -24,6 +24,7 @@ export const createMockKv = (): KVNamespace => {
 export const createTestConfig = (stateKv: KVNamespace) => ({
   stateKv,
   runEndpointToken: "test-token",
+  debugEndpointsEnabled: false,
   slackBotToken: "xoxb-test",
   slackSigningSecret: "test-secret",
   timezone: "Asia/Tokyo",

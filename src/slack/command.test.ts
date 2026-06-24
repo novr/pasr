@@ -12,6 +12,7 @@ import type { AppConfig } from "../config";
 const config: AppConfig = {
   stateKv: {} as KVNamespace,
   runEndpointToken: "",
+  debugEndpointsEnabled: false,
   slackBotToken: "xoxb-test",
   slackSigningSecret: "secret",
   timezone: "Asia/Tokyo",

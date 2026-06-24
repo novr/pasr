@@ -17,6 +17,7 @@ import {
   slashCommandLogFields
 } from "./slack/command";
 import { handleAppMentionEvent } from "./slack/events";
+import { debugAbsenceMentionAi } from "./slack/absence-mention-ai";
 import { verifySlackSignature } from "./slack/signature";
 import { SLACK_EVENT_DEDUPE_TTL_SEC, isDuplicateSlackCommandTrigger, isDuplicateSlackEvent } from "./state/event-dedupe";
 
@@ -132,6 +133,29 @@ export default {
       }
       const result = await runDailyNotify(config, { runId, trigger: "manual" });
       return json({ ok: true, runId: result.runId });
+    }
+
+    if (pathname === "/debug/mention-ai" && request.method === "POST") {
+      if (!config.debugEndpointsEnabled) {
+        return json({ ok: false, error: "Not Found" }, 404);
+      }
+      if (!hasValidRunToken(request, config.runEndpointToken)) {
+        return json({ ok: false, error: "Unauthorized" }, 401);
+      }
+      let body: { text?: string; todayJst?: string };
+      try {
+        body = (await request.json()) as { text?: string; todayJst?: string };
+      } catch {
+        return json({ ok: false, error: "Bad Request" }, 400);
+      }
+      if (!body.text || body.text.trim().length === 0) {
+        return json({ ok: false, error: "text is required" }, 400);
+      }
+      const result = await debugAbsenceMentionAi(config, {
+        text: body.text,
+        todayJst: body.todayJst
+      });
+      return json(result, result.ok ? 200 : 422);
     }
 
     if (pathname === "/slack/events" && request.method === "POST") {
@@ -323,6 +347,7 @@ export default {
     if (
       pathname === "/run" ||
       pathname === "/health" ||
+      pathname === "/debug/mention-ai" ||
       pathname === "/slack/events" ||
       pathname === "/slack/command" ||
       pathname === "/slack/interactions"

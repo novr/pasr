@@ -4,12 +4,15 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --test-scheduled",
+    "dev": "wrangler dev --test-scheduled --port 8787",
+    "debug:mention-ai": "node --experimental-strip-types scripts/debug-mention-ai.ts",
     "deploy": "wrangler deploy",
     "types": "wrangler types",
     "check": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:integration": "PASR_RUN_INTEGRATION=1 vitest run --config vitest.integration.config.ts",
+    "test:integration:watch": "PASR_RUN_INTEGRATION=1 vitest --config vitest.integration.config.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.10",

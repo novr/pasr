@@ -37,6 +37,7 @@ import { buildAbsenceRegisterModalView } from "./absence-register";
 const baseConfig = {
   stateKv: {} as KVNamespace,
   runEndpointToken: "",
+  debugEndpointsEnabled: false,
   slackBotToken: "xoxb-test",
   slackSigningSecret: "secret",
   timezone: "Asia/Tokyo",
