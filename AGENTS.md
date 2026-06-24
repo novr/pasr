@@ -33,7 +33,7 @@ Worker は3ハンドラで構成する。
 
 ## Slash Command 権限
 
-**`/pasr`** — 全ユーザー可。`list` / `update`（一覧）は Queue 非同期。`update YYYY-MM-DD` の Modal は同期（`trigger_id`）。
+**`/pasr`** — 全ユーザー可。`list` / `update`（一覧）は Queue 非同期。`settings` / `register` / `update`（Modal 起動）は HTTP で即時 ACK し、実処理は `waitUntil`（`trigger_id` 期限内に Modal 起動）。Queue 系も dedupe / enqueue は `waitUntil`。重複時は `response_url` で通知。
 
 **`/pasr-admin`** — `SLACK_ADMIN_USER_IDS` allowlist 必須。非該当は即時 ACK のみ（`Received. Processing...`）、実処理なし。
 - `help` / `status`: 即時応答
@@ -46,6 +46,10 @@ Worker は3ハンドラで構成する。
 - 不在の編集・削除は本人レコードのみ。編集時の登録通知再送なし
 - 終了済み（`end_date < today` JST）と parse 失敗行は daily run 後 `items.delete`（証票用途なし）
 - `app_mention` はチャンネル直下のみ（`thread_ts` ありは除外）
+  - AI 抽出は提案のみ。確定は ephemeral 確認 UI（`pasr_mention_confirm`）必須
+  - 通知先は `member_master` 既定（AI 抽出対象外）
+  - AI 失敗時は Modal ボタンへフォールバック。解釈開始時に ephemeral で進行を通知
+  - mention confirm の List 書き込み・登録通知は `block_actions` 即時 ACK 後 `waitUntil`（`followUp`）。`absenceListId` は confirm 時に KV 正本から再取得し、button `value` には含めない。`channelId` は interaction の channel と confirm payload の両方を照合し、commit には interaction 側を使用。確認 UI の削除（consume）は検証通過後のみ（キャンセルは即時）
 
 ## データ境界（KV 正本）
 

@@ -3,6 +3,7 @@ import type { AdminTaskMessage } from "./queue/admin-task";
 export type Env = {
   PASR_STATE: KVNamespace;
   ADMIN_TASK_QUEUE: Queue<AdminTaskMessage>;
+  AI?: Ai;
   SLACK_BOT_TOKEN: string;
   SLACK_SIGNING_SECRET: string;
   RUN_ENDPOINT_TOKEN?: string;
@@ -13,6 +14,7 @@ export type Env = {
 
 export type AppConfig = {
   stateKv: KVNamespace;
+  ai?: Ai;
   runEndpointToken: string;
   slackBotToken: string;
   slackSigningSecret: string;
@@ -37,6 +39,7 @@ export const getConfig = (env: Env): AppConfig => {
 
   return {
     stateKv: env.PASR_STATE,
+    ai: env.AI,
     runEndpointToken: env.RUN_ENDPOINT_TOKEN ?? "",
     slackBotToken: env.SLACK_BOT_TOKEN,
     slackSigningSecret: env.SLACK_SIGNING_SECRET,

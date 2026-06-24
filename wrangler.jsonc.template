@@ -27,6 +27,9 @@
       }
     ]
   },
+  "ai": {
+    "binding": "AI"
+  },
   "vars": {
     "TZ": "Asia/Tokyo",
     "SLACK_ADMIN_USER_IDS": "",
