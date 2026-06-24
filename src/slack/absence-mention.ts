@@ -1,12 +1,10 @@
 import type { AppConfig } from "../config";
 import {
-  ABSENCE_MENTION_AI_RESPONSE_FORMAT,
-  buildAbsenceMentionPrompt,
   buildMentionConfirmPayload,
   describeAiRunForLog,
-  parseAbsenceMentionFromAiRun,
   parseMentionConfirmPayload,
   stripAppMentionText,
+  tryInferMentionDraftWithoutAi,
   type AbsenceMentionDraft
 } from "../domain/absence-mention-parse";
 import {
@@ -27,11 +25,10 @@ import {
 import { slackApi } from "./api";
 import { resolveMasterContext } from "./member-master-context";
 import { consumeInteractionMessage } from "./interaction-message";
+import { runAbsenceMentionAi } from "./absence-mention-ai";
 
 export const ABSENCE_MENTION_CONFIRM_ACTION_ID = "pasr_mention_confirm";
 export const ABSENCE_MENTION_CANCEL_ACTION_ID = "pasr_mention_cancel";
-
-const ABSENCE_MENTION_AI_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast";
 
 type AppMentionEnvelope = {
   event_id?: string;
@@ -91,46 +88,6 @@ const formatAiFailureUserMessage = (error?: Error): string => {
     return "AI 解釈は一時的に利用できません。下のボタンから Modal で登録してください。";
   }
   return "不在内容を解釈できませんでした。下のボタンから Modal で登録してください。";
-};
-
-type AbsenceMentionAiRunResult = {
-  draft?: AbsenceMentionDraft;
-  lastResponse?: unknown;
-  error?: Error;
-};
-
-const runAbsenceMentionAi = async (
-  config: AppConfig,
-  todayJst: string,
-  userText: string
-): Promise<AbsenceMentionAiRunResult> => {
-  if (!config.ai) {
-    return { error: new Error("Workers AI binding is not configured") };
-  }
-  const messages = buildAbsenceMentionPrompt(todayJst, userText);
-  let lastError: unknown;
-  let lastResponse: unknown;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      lastResponse = await config.ai.run(ABSENCE_MENTION_AI_MODEL, {
-        messages,
-        temperature: 0,
-        max_tokens: 256,
-        response_format: ABSENCE_MENTION_AI_RESPONSE_FORMAT
-      });
-      const draft = parseAbsenceMentionFromAiRun(lastResponse);
-      if (draft) return { draft, lastResponse };
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  if (lastError) {
-    return {
-      error: lastError instanceof Error ? lastError : new Error(String(lastError)),
-      lastResponse
-    };
-  }
-  return { lastResponse };
 };
 
 const buildConfirmBlocks = (params: {
@@ -200,7 +157,9 @@ export const handleAppMentionWithText = async (
     return;
   }
 
-  if (!config.ai) {
+  const { day: todayJst } = getJstDateParts();
+  const inferDraft = tryInferMentionDraftWithoutAi(userText, todayJst);
+  if (!config.ai && !inferDraft) {
     await postMentionFallback(
       config,
       channelId,
@@ -210,21 +169,34 @@ export const handleAppMentionWithText = async (
     return;
   }
 
-  const { day: todayJst } = getJstDateParts();
-  console.log(
-    JSON.stringify({
-      level: "info",
-      event: "absence_mention_ai_started",
-      event_id: envelope.event_id ?? "",
-      team_id: envelope.team_id ?? "",
-      user_id: userId,
-      channel_id: channelId
-    })
-  );
+  if (!inferDraft) {
+    console.log(
+      JSON.stringify({
+        level: "info",
+        event: "absence_mention_ai_started",
+        event_id: envelope.event_id ?? "",
+        team_id: envelope.team_id ?? "",
+        user_id: userId,
+        channel_id: channelId
+      })
+    );
+    await slackApi.postEphemeral(config, channelId, userId, "不在内容を解釈しています…");
+  } else {
+    console.log(
+      JSON.stringify({
+        level: "info",
+        event: "absence_mention_infer_skipped",
+        event_id: envelope.event_id ?? "",
+        team_id: envelope.team_id ?? "",
+        user_id: userId,
+        channel_id: channelId,
+        start_date: inferDraft.startDate,
+        end_date: inferDraft.endDate
+      })
+    );
+  }
 
-  await slackApi.postEphemeral(config, channelId, userId, "不在内容を解釈しています…");
-
-  const aiResult = await runAbsenceMentionAi(config, todayJst, userText);
+  const aiResult = await runAbsenceMentionAi(config, todayJst, userText, { inferredDraft: inferDraft });
   if (aiResult.error) {
     console.warn(
       JSON.stringify({

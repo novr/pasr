@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../config";
 
 const { postEphemeralMock, commitMock, consumeMock } = vi.hoisted(() => ({
@@ -43,12 +43,16 @@ import {
   ABSENCE_MENTION_CANCEL_ACTION_ID,
   ABSENCE_MENTION_CONFIRM_ACTION_ID,
   handleAbsenceMentionInteraction,
+  handleAppMentionWithText,
   isMentionAction
 } from "./absence-mention";
+import * as absenceMentionAi from "./absence-mention-ai";
+import * as jstDate from "../domain/jst-date";
 
 const baseConfig = {
   stateKv: {} as KVNamespace,
   runEndpointToken: "",
+  debugEndpointsEnabled: false,
   slackBotToken: "xoxb-test",
   slackSigningSecret: "secret",
   timezone: "Asia/Tokyo",
@@ -200,5 +204,65 @@ describe("absence-mention interaction", () => {
     });
     expect(result).toEqual({ ok: true });
     expect(commitMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleAppMentionWithText", () => {
+  beforeEach(() => {
+    vi.spyOn(jstDate, "getJstDateParts").mockReturnValue({ day: "2026-06-24", hour: 10 });
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("skips progress message on high-confidence infer without AI binding", async () => {
+    await handleAppMentionWithText(baseConfig, {
+      event: { user: "U1", channel: "C1", text: "<@UBOT> 来週月曜休み" }
+    });
+
+    const messages = postEphemeralMock.mock.calls.map((call) => (call as unknown[])[3]);
+    expect(messages).not.toContain("不在内容を解釈しています…");
+    expect(postEphemeralMock).toHaveBeenCalledWith(
+      baseConfig,
+      "C1",
+      "U1",
+      "不在登録の確認",
+      expect.any(Array)
+    );
+  });
+
+  it("falls back when AI is unavailable and infer is low-confidence", async () => {
+    await handleAppMentionWithText(baseConfig, {
+      event: { user: "U1", channel: "C1", text: "<@UBOT> 明日 通院" }
+    });
+
+    expect(postEphemeralMock).toHaveBeenCalledWith(
+      baseConfig,
+      "C1",
+      "U1",
+      "AI 解釈は利用できません。下のボタンから Modal で登録してください。",
+      expect.any(Array)
+    );
+  });
+
+  it("falls back when AI run fails", async () => {
+    const configWithAi = { ...baseConfig, ai: {} as Ai };
+    vi.spyOn(absenceMentionAi, "runAbsenceMentionAi").mockResolvedValueOnce({
+      error: new Error("model unavailable")
+    });
+
+    await handleAppMentionWithText(configWithAi, {
+      event: { user: "U1", channel: "C1", text: "<@UBOT> 明日 通院" }
+    });
+
+    expect(postEphemeralMock).toHaveBeenCalledWith(
+      configWithAi,
+      "C1",
+      "U1",
+      "不在内容を解釈できませんでした。下のボタンから Modal で登録してください。",
+      expect.any(Array)
+    );
   });
 });

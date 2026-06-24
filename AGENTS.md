@@ -25,6 +25,15 @@ Worker は3ハンドラで構成する。
 - `absence.notify_channels` / `absence.notify_users` は daily 実行時に master default で補完しない
 - `scheduled` の週末スキップを回避する強制フラグは導入しない
 
+## app_mention 日付解釈
+
+- 判定基準は JST の `todayJst`
+- `M/D` など年省略表現は `todayJst` の年を起点とし、解釈結果が過去日になる場合は翌年へ繰り上げ（未来日規定）
+- `M/D〜M/D` で年跨ぎ（例: `12/28〜1/3`）は終了側を適切な翌年へ補完
+- 「今週」「来週」「翌週」+ 曜日の週境界は労働基準法の「1週間」（日曜〜土曜）に従う
+- `今週`+曜日が過去日になる場合は翌週の同一曜日へ繰り上げ（未来日規定）
+- ISO 完全日付（`YYYY-MM-DD`）はユーザー指定どおり解釈（繰り上げなし）。過去日の ISO は AI スキップ対象外
+
 ## Slack 署名・重複抑止
 
 - 署名検証は `request.text()` の生ボディを使用（JSON 再構成文字列は使わない）
@@ -49,6 +58,7 @@ Worker は3ハンドラで構成する。
   - AI 抽出は提案のみ。確定は ephemeral 確認 UI（`pasr_mention_confirm`）必須
   - 通知先は `member_master` 既定（AI 抽出対象外）
   - AI 失敗時は Modal ボタンへフォールバック。解釈開始時に ephemeral で進行を通知
+  - high 信頼度の日付 infer で完結する場合は Workers AI を呼ばない（`absence_mention_infer_skipped`）。ただし `startDate` / `endDate` が `todayJst` より前の場合はスキップしない
   - mention confirm の List 書き込み・登録通知は `block_actions` 即時 ACK 後 `waitUntil`（`followUp`）。`absenceListId` は confirm 時に KV 正本から再取得し、button `value` には含めない。`channelId` は interaction の channel と confirm payload の両方を照合し、commit には interaction 側を使用。確認 UI の削除（consume）は検証通過後のみ（キャンセルは即時）
 
 ## データ境界（KV 正本）
@@ -99,6 +109,9 @@ Store: `PASR_STATE` KV
 - domain / queue / dedupe / transient / list-discovery 変更時は `npm test`
 - テスト・npm scripts 変更時は README「開発・テスト」を同時更新
 - 単体テストは I/O モック前提。`@cloudflare/vitest-pool-workers` 統合テストは導入しない
+- mention AI 結合テストは `src/integration/*.integration.test.ts` に分離し、`PASR_RUN_INTEGRATION=1` 時のみ `npm run test:integration` で実行（CI 対象外）
+- infer で日付が決まるケースは `MENTION_AI_INFER_CASES`（単体テスト）。結合は `MENTION_AI_MODEL_CASES`（AI 推論品質）のみ
+- `/debug/mention-ai` は `DEBUG_ENDPOINTS_ENABLED=true` 時のみ有効（本番では無効）。`RUN_ENDPOINT_TOKEN` 必須
 - Queue: 一時障害のみ retry。subrequest 上限は retry しない（`src/errors/transient.test.ts`）
 - dedupe / 署名検証仕様変更時は対応 `*.test.ts` を更新
 - 自明コメントと dead code を残さない
