@@ -123,4 +123,37 @@ describe("handleAbsenceRegisterInteraction", () => {
     expect(consumeMock).not.toHaveBeenCalled();
     expect(openModalMock).toHaveBeenCalled();
   });
+
+  it("rejects mention draft with mismatched channelId", async () => {
+    const { slackApi } = await import("./api");
+    const postEphemeral = vi.mocked(slackApi.postEphemeral);
+
+    const confirmValue = JSON.stringify({
+      v: 1,
+      userId: "U1",
+      channelId: "C_OTHER",
+      startDate: "2026-06-24",
+      endDate: "2026-06-24",
+      note: "午前通院"
+    });
+
+    const result = await handleAbsenceRegisterInteraction(baseConfig, {
+      type: "block_actions",
+      trigger_id: "TR1",
+      response_url: "https://hooks.slack.com/actions/T1/2/3",
+      user: { id: "U1" },
+      channel: { id: "C1" },
+      actions: [{ action_id: "pasr_register_open", value: confirmValue }]
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(consumeMock).not.toHaveBeenCalled();
+    expect(openModalMock).not.toHaveBeenCalled();
+    expect(postEphemeral).toHaveBeenCalledWith(
+      baseConfig,
+      "C1",
+      "U1",
+      "確認情報が無効です。もう一度 @PASR で登録してください。"
+    );
+  });
 });

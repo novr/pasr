@@ -85,6 +85,14 @@ const postMentionFallback = async (
   await postMentionRegisterButton(config, channelId, userId, text);
 };
 
+const formatAiFailureUserMessage = (error?: Error): string => {
+  const message = error?.message ?? "";
+  if (message.includes("deprecated")) {
+    return "AI 解釈は一時的に利用できません。下のボタンから Modal で登録してください。";
+  }
+  return "不在内容を解釈できませんでした。下のボタンから Modal で登録してください。";
+};
+
 type AbsenceMentionAiRunResult = {
   draft?: AbsenceMentionDraft;
   lastResponse?: unknown;
@@ -214,6 +222,8 @@ export const handleAppMentionWithText = async (
     })
   );
 
+  await slackApi.postEphemeral(config, channelId, userId, "不在内容を解釈しています…");
+
   const aiResult = await runAbsenceMentionAi(config, todayJst, userText);
   if (aiResult.error) {
     console.warn(
@@ -226,12 +236,7 @@ export const handleAppMentionWithText = async (
         message: aiResult.error.message
       })
     );
-    await postMentionFallback(
-      config,
-      channelId,
-      userId,
-      "不在内容を解釈できませんでした。下のボタンから Modal で登録してください。"
-    );
+    await postMentionFallback(config, channelId, userId, formatAiFailureUserMessage(aiResult.error));
     return;
   }
 
@@ -327,9 +332,8 @@ export const handleAbsenceMentionInteraction = async (
   const channelId = payload.channel?.id ?? "";
   if (!actorUserId || !channelId) return { ok: true };
 
-  await consumeInteractionMessage(payload.response_url);
-
   if (actionId === ABSENCE_MENTION_CANCEL_ACTION_ID) {
+    await consumeInteractionMessage(payload.response_url);
     console.log(
       JSON.stringify({
         level: "info",
@@ -357,7 +361,19 @@ export const handleAbsenceMentionInteraction = async (
     return { ok: true };
   }
 
-  const { userId, channelId: confirmChannelId, startDate, endDate, note } = confirmPayload;
+  if (confirmPayload.channelId !== channelId) {
+    await slackApi.postEphemeral(
+      config,
+      channelId,
+      actorUserId,
+      "確認情報が無効です。もう一度 @PASR で登録してください。"
+    );
+    return { ok: true };
+  }
+
+  await consumeInteractionMessage(payload.response_url);
+
+  const { userId, startDate, endDate, note } = confirmPayload;
 
   return {
     ok: true,
@@ -366,7 +382,7 @@ export const handleAbsenceMentionInteraction = async (
       const master = await resolveMasterContext(config, userId);
       const result = await commitAbsenceRegistration(config, {
         userId,
-        channelId: confirmChannelId,
+        channelId,
         absenceListId,
         startDate,
         endDate,
@@ -387,7 +403,7 @@ export const handleAbsenceMentionInteraction = async (
           level: "info",
           event: "absence_mention_confirmed",
           user_id: userId,
-          channel_id: confirmChannelId,
+          channel_id: channelId,
           list_id: absenceListId,
           start_date: startDate,
           end_date: endDate

@@ -156,11 +156,40 @@ describe("absence-mention interaction", () => {
 
     expect(result).toEqual({ ok: true });
     expect(commitMock).not.toHaveBeenCalled();
+    expect(consumeMock).not.toHaveBeenCalled();
     expect(postEphemeralMock).toHaveBeenCalledWith(
       baseConfig,
       "C1",
       "U1",
       "確認情報の読み取りに失敗しました。もう一度 @PASR で登録してください。"
+    );
+  });
+
+  it("handleAbsenceMentionInteraction rejects mismatched channelId", async () => {
+    const confirmValue = JSON.stringify({
+      v: 1,
+      userId: "U1",
+      channelId: "C_OTHER",
+      startDate: "2026-06-25",
+      endDate: "2026-06-25"
+    });
+
+    const result = await handleAbsenceMentionInteraction(baseConfig, {
+      type: "block_actions",
+      response_url: "https://hooks.slack.com/actions/T1/2/3",
+      user: { id: "U1" },
+      channel: { id: "C1" },
+      actions: [{ action_id: ABSENCE_MENTION_CONFIRM_ACTION_ID, value: confirmValue }]
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(commitMock).not.toHaveBeenCalled();
+    expect(consumeMock).not.toHaveBeenCalled();
+    expect(postEphemeralMock).toHaveBeenCalledWith(
+      baseConfig,
+      "C1",
+      "U1",
+      "確認情報が無効です。もう一度 @PASR で登録してください。"
     );
   });
 

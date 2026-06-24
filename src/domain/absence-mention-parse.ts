@@ -134,6 +134,7 @@ export const buildAbsenceMentionPrompt = (
   userText: string
 ): AbsenceMentionAiMessage[] => {
   const tomorrow = addJstDays(todayJst, 1);
+  const rangeEnd = addJstDays(todayJst, 2);
   return [
     {
       role: "system",
@@ -168,6 +169,18 @@ export const buildAbsenceMentionPrompt = (
         startDate: tomorrow,
         endDate: tomorrow,
         note: "通院のため午後から"
+      })
+    },
+    {
+      role: "user",
+      content: "明後日から2日間 休み"
+    },
+    {
+      role: "assistant",
+      content: JSON.stringify({
+        startDate: tomorrow,
+        endDate: rangeEnd,
+        note: "休み"
       })
     },
     {

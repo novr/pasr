@@ -10,6 +10,7 @@ import {
   getCommandKind,
   handleSlackInteraction,
   isSlackAdminUser,
+  notifySlashCommandEphemeral,
   parseSlackCommandAction,
   parseSlackCommandPayload,
   resolveSlashCommandDispatch,
@@ -203,6 +204,36 @@ export default {
         return text(dispatch.text);
       }
 
+      if (dispatch.mode === "deferred") {
+        console.log(
+          JSON.stringify({
+            level: "info",
+            event: "slash_command_received",
+            ...commandLog,
+            dispatch: "deferred"
+          })
+        );
+        ctx.waitUntil(
+          dispatch.run().catch(async (error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            console.error(
+              JSON.stringify({
+                level: "error",
+                event: "slash_command_deferred_failed",
+                ...commandLog,
+                message
+              })
+            );
+            await notifySlashCommandEphemeral(
+              config,
+              payload,
+              `処理に失敗しました: ${message}`
+            );
+          })
+        );
+        return text(dispatch.ackText);
+      }
+
       console.log(
         JSON.stringify({
           level: "info",
@@ -211,36 +242,41 @@ export default {
           dispatch: "queue"
         })
       );
-      const duplicate = await isDuplicateSlackCommandTrigger(config, payload.triggerId);
-      if (duplicate) {
-        console.warn(
-          JSON.stringify({
-            level: "warn",
-            event: "duplicate_command_dropped",
-            trigger_id: payload.triggerId,
-            user_id: payload.userId,
-            team_id: payload.teamId,
-            dedupe_ttl_sec: SLACK_EVENT_DEDUPE_TTL_SEC
-          })
-        );
-        return text(COMMAND_ACK_DUPLICATE);
-      }
       const action = parseSlackCommandAction(payload.text);
-      try {
-        await enqueueAdminTask(env.ADMIN_TASK_QUEUE, payload, { listPrefix: dispatch.listPrefix });
-      } catch (error) {
-        console.error(
-          JSON.stringify({
-            level: "error",
-            event: "slash_command_enqueue_failed",
-            ...commandLog,
-            message: error instanceof Error ? error.message : String(error)
-          })
-        );
-        return text(COMMAND_ACK_ENQUEUE_FAILED);
-      }
       const ack =
         getCommandKind(payload.command) === "self" ? buildQueuedSelfAck() : buildQueuedAdminAck(action);
+      ctx.waitUntil(
+        (async () => {
+          const duplicate = await isDuplicateSlackCommandTrigger(config, payload.triggerId);
+          if (duplicate) {
+            console.warn(
+              JSON.stringify({
+                level: "warn",
+                event: "duplicate_command_dropped",
+                trigger_id: payload.triggerId,
+                user_id: payload.userId,
+                team_id: payload.teamId,
+                dedupe_ttl_sec: SLACK_EVENT_DEDUPE_TTL_SEC
+              })
+            );
+            await notifySlashCommandEphemeral(config, payload, COMMAND_ACK_DUPLICATE);
+            return;
+          }
+          try {
+            await enqueueAdminTask(env.ADMIN_TASK_QUEUE, payload, { listPrefix: dispatch.listPrefix });
+          } catch (error) {
+            console.error(
+              JSON.stringify({
+                level: "error",
+                event: "slash_command_enqueue_failed",
+                ...commandLog,
+                message: error instanceof Error ? error.message : String(error)
+              })
+            );
+            await notifySlashCommandEphemeral(config, payload, COMMAND_ACK_ENQUEUE_FAILED);
+          }
+        })()
+      );
       return text(ack);
     }
 

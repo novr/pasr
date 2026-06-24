@@ -335,12 +335,21 @@ export const handleAbsenceRegisterInteraction = async (
       return { ok: true };
     }
     const mentionDraft = parseMentionConfirmPayload(buttonValue);
-    if (mentionDraft) {
-      await consumeInteractionMessage(payload.response_url);
-    }
     if (mentionDraft && mentionDraft.userId !== userId) {
       await slackApi.postEphemeral(config, channelId, userId, "本人以外は編集できません。");
       return { ok: true };
+    }
+    if (mentionDraft && mentionDraft.channelId !== channelId) {
+      await slackApi.postEphemeral(
+        config,
+        channelId,
+        userId,
+        "確認情報が無効です。もう一度 @PASR で登録してください。"
+      );
+      return { ok: true };
+    }
+    if (mentionDraft) {
+      await consumeInteractionMessage(payload.response_url);
     }
     try {
       await openAbsenceRegisterModal(config, {

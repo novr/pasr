@@ -66,7 +66,8 @@ type SlackInteractionPayload = {
 
 export type SlashCommandDispatch =
   | { mode: "text"; text: string }
-  | { mode: "queue"; listPrefix?: string };
+  | { mode: "queue"; listPrefix?: string }
+  | { mode: "deferred"; ackText: string; run: () => Promise<void> };
 
 export type SelfCommandParse =
   | { kind: "help" }
@@ -429,76 +430,103 @@ const handleSelfImmediateText = async (
       return { mode: "text", text: buildHelpText() };
     case "unknown":
       return { mode: "text", text: `unsupported action: ${parse.action}\n${buildHelpText()}` };
-    case "settings": {
-      const resolved = await resolveSelfMasterRecord(config, payload);
-      await slackApi.openModal(
-        config,
-        payload.triggerId,
-        buildMemberMasterModalView({
-          userId: payload.userId,
-          active: resolved.active,
-          defaultNotifyChannels: resolved.defaultNotifyChannels,
-          defaultNotifyUsers: resolved.defaultNotifyUsers,
-          defaultRegistrationNotify: resolved.defaultRegistrationNotify
-        })
-      );
-      return { mode: "text", text: "設定フォームを開きました。" };
-    }
+    case "settings":
+      return {
+        mode: "deferred",
+        ackText: "設定フォームを開きます…",
+        run: async () => {
+          const resolved = await resolveSelfMasterRecord(config, payload);
+          await slackApi.openModal(
+            config,
+            payload.triggerId,
+            buildMemberMasterModalView({
+              userId: payload.userId,
+              active: resolved.active,
+              defaultNotifyChannels: resolved.defaultNotifyChannels,
+              defaultNotifyUsers: resolved.defaultNotifyUsers,
+              defaultRegistrationNotify: resolved.defaultRegistrationNotify
+            })
+          );
+        }
+      };
     case "register":
-      await openAbsenceRegisterModal(config, {
-        triggerId: payload.triggerId,
-        userId: payload.userId,
-        channelId: payload.channelId,
-        teamId: payload.teamId,
-        triggerSource: "slash"
-      });
-      return { mode: "text", text: "不在登録フォームを開きました。" };
+      return {
+        mode: "deferred",
+        ackText: "不在登録フォームを開きます…",
+        run: async () => {
+          await openAbsenceRegisterModal(config, {
+            triggerId: payload.triggerId,
+            userId: payload.userId,
+            channelId: payload.channelId,
+            teamId: payload.teamId,
+            triggerSource: "slash"
+          });
+        }
+      };
     case "list":
     case "update_list":
     case "update_invalid_date":
       return { mode: "queue", listPrefix: selfListPrefixForParse(parse) };
-    case "update_date": {
-      const { absenceListId } = await resolveActiveListIds(config);
-      const listResponse = await slackApi.listItems(config, absenceListId, { fetchContext: "absence_update_date" });
-      const records: AbsenceRecord[] = [];
-      for (const item of listResponse.items ?? []) {
-        const parsed = parseAbsence(item);
-        if (parsed.ok) records.push(parsed.record);
-      }
-      const { day: todayJst } = getJstDateParts();
-      const matches = findOwnAbsenceByStartDate(records, payload.userId, parse.startDate, todayJst);
-      if (matches.length === 1) {
-        await openAbsenceEditModal(config, {
-          triggerId: payload.triggerId,
-          userId: payload.userId,
-          record: matches[0],
-          absenceListId
-        });
-        return { mode: "text", text: "編集フォームを開きました。" };
-      }
-      const listPrefix =
-        matches.length === 0
-          ? "指定された開始日の不在が見つかりませんでした。"
-          : "同じ開始日の不在が複数あります。一覧から編集してください。";
-      return { mode: "queue", listPrefix };
-    }
+    case "update_date":
+      return {
+        mode: "deferred",
+        ackText: "編集フォームを準備しています…",
+        run: async () => {
+          const { absenceListId } = await resolveActiveListIds(config);
+          const listResponse = await slackApi.listItems(config, absenceListId, {
+            fetchContext: "absence_update_date"
+          });
+          const records: AbsenceRecord[] = [];
+          for (const item of listResponse.items ?? []) {
+            const parsed = parseAbsence(item);
+            if (parsed.ok) records.push(parsed.record);
+          }
+          const { day: todayJst } = getJstDateParts();
+          const matches = findOwnAbsenceByStartDate(records, payload.userId, parse.startDate, todayJst);
+          if (matches.length === 1) {
+            await openAbsenceEditModal(config, {
+              triggerId: payload.triggerId,
+              userId: payload.userId,
+              record: matches[0],
+              absenceListId
+            });
+            return;
+          }
+          const listPrefix =
+            matches.length === 0
+              ? "指定された開始日の不在が見つかりませんでした。"
+              : "同じ開始日の不在が複数あります。一覧から編集してください。";
+          await showOwnAbsenceList(config, payload, { prefixMessage: listPrefix, includeEdit: true });
+        }
+      };
     case "update_item": {
-      const resolved = await resolveOwnAbsenceForEdit(
-        config,
-        payload.userId,
-        parse.itemId,
-        "absence_update_item"
-      );
-      if (!resolved.ok) {
-        return { mode: "text", text: formatResolveOwnAbsenceForEditError(resolved.reason) };
-      }
-      await openAbsenceEditModal(config, {
-        triggerId: payload.triggerId,
-        userId: payload.userId,
-        record: resolved.record,
-        absenceListId: resolved.absenceListId
-      });
-      return { mode: "text", text: "編集フォームを開きました。" };
+      const itemId = parse.itemId;
+      return {
+        mode: "deferred",
+        ackText: "編集フォームを準備しています…",
+        run: async () => {
+          const resolved = await resolveOwnAbsenceForEdit(
+            config,
+            payload.userId,
+            itemId,
+            "absence_update_item"
+          );
+          if (!resolved.ok) {
+            await notifySlashCommandEphemeral(
+              config,
+              payload,
+              formatResolveOwnAbsenceForEditError(resolved.reason)
+            );
+            return;
+          }
+          await openAbsenceEditModal(config, {
+            triggerId: payload.triggerId,
+            userId: payload.userId,
+            record: resolved.record,
+            absenceListId: resolved.absenceListId
+          });
+        }
+      };
     }
     default: {
       const _never: never = parse;
