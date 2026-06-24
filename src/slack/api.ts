@@ -439,10 +439,16 @@ export const slackApi = {
       file: listId
     }),
 
-  postChannelMessage: async (config: AppConfig, channel: string, text: string) =>
+  postChannelMessage: async (
+    config: AppConfig,
+    channel: string,
+    text: string,
+    blocks?: Array<Record<string, unknown>>
+  ) =>
     slackApiPost<{ ts?: string }>(config, "chat.postMessage", {
       channel,
-      text
+      text,
+      ...(blocks ? { blocks } : {})
     }),
 
   postEphemeral: async (

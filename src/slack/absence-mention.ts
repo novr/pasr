@@ -24,10 +24,10 @@ import {
   commitAbsenceRegistration,
   formatAbsenceRegistrationValidationError
 } from "./absence-register-commit";
-import { slackApi } from "./api";
 import { resolveMasterContext } from "./member-master-context";
 import { consumeInteractionMessage } from "./interaction-message";
 import { runAbsenceMentionAi } from "./absence-mention-ai";
+import { postUserFacingMessage } from "./user-message";
 
 export const ABSENCE_MENTION_CONFIRM_ACTION_ID = "pasr_mention_confirm";
 export const ABSENCE_MENTION_CANCEL_ACTION_ID = "pasr_mention_cancel";
@@ -35,7 +35,7 @@ export const ABSENCE_MENTION_CANCEL_ACTION_ID = "pasr_mention_cancel";
 const MENTION_FORM_FALLBACK_SUFFIX = "下のボタンからフォームで登録してください。";
 const MENTION_PROGRESS_MESSAGE = "不在内容を確認しています…";
 
-type AppMentionEnvelope = {
+export type MentionRequestEnvelope = {
   event_id?: string;
   team_id?: string;
   event?: {
@@ -75,7 +75,7 @@ export const postMentionRegisterButton = async (
   userId: string,
   text = "不在を登録する場合は下のボタンを押してください。"
 ): Promise<void> => {
-  await slackApi.postEphemeral(config, channelId, userId, text, mentionRegisterBlocks());
+  await postUserFacingMessage(config, { channelId, userId, text, blocks: mentionRegisterBlocks() });
 };
 
 const postMentionFallback = async (
@@ -171,7 +171,7 @@ export const isMentionAction = (payload: SlackInteractionPayload): boolean => {
 
 export const handleAppMentionWithText = async (
   config: AppConfig,
-  envelope: AppMentionEnvelope
+  envelope: MentionRequestEnvelope
 ): Promise<void> => {
   const event = envelope.event;
   const userId = event?.user ?? "";
@@ -207,7 +207,11 @@ export const handleAppMentionWithText = async (
         channel_id: channelId
       })
     );
-    await slackApi.postEphemeral(config, channelId, userId, MENTION_PROGRESS_MESSAGE);
+    await postUserFacingMessage(config, {
+      channelId,
+      userId,
+      text: MENTION_PROGRESS_MESSAGE
+    });
   } else {
     console.log(
       JSON.stringify({
@@ -295,13 +299,12 @@ export const handleAppMentionWithText = async (
 
   const notifyLabel = formatRegistrationNotifyModeLabel(master.defaultRegistrationNotify);
   const ambiguousDateWarning = hasAmbiguousMentionDateExpressions(userText);
-  await slackApi.postEphemeral(
-    config,
+  await postUserFacingMessage(config, {
     channelId,
     userId,
-    "不在登録の確認",
-    buildConfirmBlocks({ draft, notifyLabel, confirmValue, ambiguousDateWarning })
-  );
+    text: "不在登録の確認",
+    blocks: buildConfirmBlocks({ draft, notifyLabel, confirmValue, ambiguousDateWarning })
+  });
 
   console.log(
     JSON.stringify({
@@ -334,7 +337,11 @@ export const handleAbsenceMentionInteraction = async (
 
   if (actionId === ABSENCE_MENTION_CANCEL_ACTION_ID) {
     await consumeInteractionMessage(payload.response_url);
-    await slackApi.postEphemeral(config, channelId, actorUserId, "キャンセルしました。");
+    await postUserFacingMessage(config, {
+      channelId,
+      userId: actorUserId,
+      text: "キャンセルしました。"
+    });
     console.log(
       JSON.stringify({
         level: "info",
@@ -348,27 +355,29 @@ export const handleAbsenceMentionInteraction = async (
 
   const confirmPayload = parseMentionConfirmPayload(action?.value ?? "");
   if (!confirmPayload) {
-    await slackApi.postEphemeral(
-      config,
+    await postUserFacingMessage(config, {
       channelId,
-      actorUserId,
-      "確認情報の読み取りに失敗しました。もう一度 @PASR で登録してください。"
-    );
+      userId: actorUserId,
+      text: "確認情報の読み取りに失敗しました。もう一度 @PASR で登録してください。"
+    });
     return { ok: true };
   }
 
   if (actorUserId !== confirmPayload.userId) {
-    await slackApi.postEphemeral(config, channelId, actorUserId, "本人以外は登録できません。");
+    await postUserFacingMessage(config, {
+      channelId,
+      userId: actorUserId,
+      text: "本人以外は登録できません。"
+    });
     return { ok: true };
   }
 
   if (confirmPayload.channelId !== channelId) {
-    await slackApi.postEphemeral(
-      config,
+    await postUserFacingMessage(config, {
       channelId,
-      actorUserId,
-      "確認情報が無効です。もう一度 @PASR で登録してください。"
-    );
+      userId: actorUserId,
+      text: "確認情報が無効です。もう一度 @PASR で登録してください。"
+    });
     return { ok: true };
   }
 
@@ -395,7 +404,11 @@ export const handleAbsenceMentionInteraction = async (
       });
 
       if (!result.ok) {
-        await slackApi.postEphemeral(config, channelId, actorUserId, result.error);
+        await postUserFacingMessage(config, {
+          channelId,
+          userId: actorUserId,
+          text: result.error
+        });
         return;
       }
 

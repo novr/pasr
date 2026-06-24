@@ -16,7 +16,7 @@ import {
   resolveSlashCommandDispatch,
   slashCommandLogFields
 } from "./slack/command";
-import { handleAppMentionEvent } from "./slack/events";
+import { handleAppMentionEvent, handleDirectMessageEvent } from "./slack/events";
 import { debugAbsenceMentionAi } from "./slack/absence-mention-ai";
 import { verifySlackSignature } from "./slack/signature";
 import { SLACK_EVENT_DEDUPE_TTL_SEC, isDuplicateSlackCommandTrigger, isDuplicateSlackEvent } from "./state/event-dedupe";
@@ -58,8 +58,11 @@ type SlackEventEnvelope = {
   team_id?: string;
   event?: {
     type?: string;
+    subtype?: string;
     user?: string;
+    bot_id?: string;
     channel?: string;
+    channel_type?: string;
     thread_ts?: string;
     text?: string;
   };
@@ -106,6 +109,11 @@ const handleSlackEventCallback = async (
 
   if (envelope.event?.type === "app_mention") {
     await handleAppMentionEvent(config, envelope);
+    return;
+  }
+
+  if (envelope.event?.type === "message" && envelope.event.channel_type === "im") {
+    await handleDirectMessageEvent(config, envelope);
   }
 };
 

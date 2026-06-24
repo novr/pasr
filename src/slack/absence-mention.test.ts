@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../config";
 
-const { postEphemeralMock, commitMock, consumeMock } = vi.hoisted(() => ({
-  postEphemeralMock: vi.fn(async () => ({})),
+const { postUserFacingMessageMock, commitMock, consumeMock } = vi.hoisted(() => ({
+  postUserFacingMessageMock: vi.fn(async () => undefined),
   commitMock: vi.fn(async () => ({
     ok: true as const,
     followUp: async () => undefined
@@ -10,10 +10,8 @@ const { postEphemeralMock, commitMock, consumeMock } = vi.hoisted(() => ({
   consumeMock: vi.fn(async () => undefined)
 }));
 
-vi.mock("./api", () => ({
-  slackApi: {
-    postEphemeral: postEphemeralMock
-  }
+vi.mock("./user-message", () => ({
+  postUserFacingMessage: postUserFacingMessageMock
 }));
 
 vi.mock("./interaction-message", () => ({
@@ -136,7 +134,11 @@ describe("absence-mention interaction", () => {
 
     expect(result).toEqual({ ok: true });
     expect(consumeMock).toHaveBeenCalledWith("https://hooks.slack.com/actions/T1/2/3");
-    expect(postEphemeralMock).toHaveBeenCalledWith(baseConfig, "C1", "U1", "キャンセルしました。");
+    expect(postUserFacingMessageMock).toHaveBeenCalledWith(baseConfig, {
+      channelId: "C1",
+      userId: "U1",
+      text: "キャンセルしました。"
+    });
   });
 
   it("handleAbsenceMentionInteraction rejects invalid confirm payload", async () => {
@@ -161,12 +163,11 @@ describe("absence-mention interaction", () => {
     expect(result).toEqual({ ok: true });
     expect(commitMock).not.toHaveBeenCalled();
     expect(consumeMock).not.toHaveBeenCalled();
-    expect(postEphemeralMock).toHaveBeenCalledWith(
-      baseConfig,
-      "C1",
-      "U1",
-      "確認情報の読み取りに失敗しました。もう一度 @PASR で登録してください。"
-    );
+    expect(postUserFacingMessageMock).toHaveBeenCalledWith(baseConfig, {
+      channelId: "C1",
+      userId: "U1",
+      text: "確認情報の読み取りに失敗しました。もう一度 @PASR で登録してください。"
+    });
   });
 
   it("handleAbsenceMentionInteraction rejects mismatched channelId", async () => {
@@ -189,12 +190,11 @@ describe("absence-mention interaction", () => {
     expect(result).toEqual({ ok: true });
     expect(commitMock).not.toHaveBeenCalled();
     expect(consumeMock).not.toHaveBeenCalled();
-    expect(postEphemeralMock).toHaveBeenCalledWith(
-      baseConfig,
-      "C1",
-      "U1",
-      "確認情報が無効です。もう一度 @PASR で登録してください。"
-    );
+    expect(postUserFacingMessageMock).toHaveBeenCalledWith(baseConfig, {
+      channelId: "C1",
+      userId: "U1",
+      text: "確認情報が無効です。もう一度 @PASR で登録してください。"
+    });
   });
 
   it("handleAbsenceMentionInteraction ignores non-mention actions", async () => {
@@ -222,14 +222,33 @@ describe("handleAppMentionWithText", () => {
       event: { user: "U1", channel: "C1", text: "<@UBOT> 来週月曜休み" }
     });
 
-    const messages = postEphemeralMock.mock.calls.map((call) => (call as unknown[])[3]);
-    expect(messages).not.toContain("不在内容を確認しています…");
-    expect(postEphemeralMock).toHaveBeenCalledWith(
+    const progressCalls = (postUserFacingMessageMock.mock.calls as unknown[][]).filter(
+      (call) => (call[1] as { text?: string })?.text === "不在内容を確認しています…"
+    );
+    expect(progressCalls).toHaveLength(0);
+    expect(postUserFacingMessageMock).toHaveBeenCalledWith(
       baseConfig,
-      "C1",
-      "U1",
-      "不在登録の確認",
-      expect.any(Array)
+      expect.objectContaining({
+        channelId: "C1",
+        userId: "U1",
+        text: "不在登録の確認",
+        blocks: expect.any(Array)
+      })
+    );
+  });
+
+  it("uses postUserFacingMessage for DM channel confirm UI", async () => {
+    await handleAppMentionWithText(baseConfig, {
+      event: { user: "U1", channel: "D1", text: "明日 通院" }
+    });
+
+    expect(postUserFacingMessageMock).toHaveBeenCalledWith(
+      baseConfig,
+      expect.objectContaining({
+        channelId: "D1",
+        userId: "U1",
+        text: "不在登録の確認"
+      })
     );
   });
 
@@ -238,12 +257,14 @@ describe("handleAppMentionWithText", () => {
       event: { user: "U1", channel: "C1", text: "<@UBOT> 午後から休みます 子供の行事" }
     });
 
-    expect(postEphemeralMock).toHaveBeenCalledWith(
+    expect(postUserFacingMessageMock).toHaveBeenCalledWith(
       baseConfig,
-      "C1",
-      "U1",
-      "自動読み取りは利用できません。下のボタンからフォームで登録してください。",
-      expect.any(Array)
+      expect.objectContaining({
+        channelId: "C1",
+        userId: "U1",
+        text: "自動読み取りは利用できません。下のボタンからフォームで登録してください。",
+        blocks: expect.any(Array)
+      })
     );
   });
 
@@ -252,12 +273,14 @@ describe("handleAppMentionWithText", () => {
       event: { user: "U1", channel: "C1", text: "<@UBOT> 明日 通院" }
     });
 
-    expect(postEphemeralMock).toHaveBeenCalledWith(
+    expect(postUserFacingMessageMock).toHaveBeenCalledWith(
       baseConfig,
-      "C1",
-      "U1",
-      "不在登録の確認",
-      expect.any(Array)
+      expect.objectContaining({
+        channelId: "C1",
+        userId: "U1",
+        text: "不在登録の確認",
+        blocks: expect.any(Array)
+      })
     );
   });
 
@@ -271,12 +294,14 @@ describe("handleAppMentionWithText", () => {
       event: { user: "U1", channel: "C1", text: "<@UBOT> 午後から休みます 子供の行事" }
     });
 
-    expect(postEphemeralMock).toHaveBeenCalledWith(
+    expect(postUserFacingMessageMock).toHaveBeenCalledWith(
       configWithAi,
-      "C1",
-      "U1",
-      "不在内容を読み取れませんでした。下のボタンからフォームで登録してください。",
-      expect.any(Array)
+      expect.objectContaining({
+        channelId: "C1",
+        userId: "U1",
+        text: "不在内容を読み取れませんでした。下のボタンからフォームで登録してください。",
+        blocks: expect.any(Array)
+      })
     );
   });
 });

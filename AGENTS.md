@@ -61,6 +61,10 @@ Worker は3ハンドラで構成する。
   - AI 失敗時は Modal ボタンへフォールバック。解釈開始時に ephemeral で進行を通知
   - high 信頼度の日付 infer で完結する場合は Workers AI を呼ばない（`absence_mention_infer_skipped`）。ただし `startDate` / `endDate` が `todayJst` より前の場合はスキップしない
   - mention confirm の List 書き込み・登録通知は `block_actions` 即時 ACK 後 `waitUntil`（`followUp`）。`absenceListId` は confirm 時に KV 正本から再取得し、button `value` には含めない。`channelId` は interaction の channel と confirm payload の両方を照合し、commit には interaction 側を使用。確認 UI の削除（consume）は検証通過後のみ（キャンセルは即時）
+- Bot DM（`message.im`）は自然文登録の入口。`subtype` / `bot_id` 付きは処理しない
+  - フローは `app_mention` 本文付きと同じ（infer / AI → 確認 UI → 登録）
+  - DM 応答は `chat.postMessage`（ephemeral 不可）。チャンネルは引き続き ephemeral
+  - 確認 UI・エラー・キャンセル ACK も DM では会話に残る
 
 ## データ境界（KV 正本）
 
