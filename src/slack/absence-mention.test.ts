@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppConfig } from "../config";
+import { createMockKv, createTestConfig } from "../test/mock-kv";
 
 const { postUserFacingMessageMock, commitMock, consumeMock } = vi.hoisted(() => ({
   postUserFacingMessageMock: vi.fn(async () => undefined),
@@ -47,16 +47,7 @@ import {
 import * as absenceMentionAi from "./absence-mention-ai";
 import * as jstDate from "../domain/jst-date";
 
-const baseConfig = {
-  stateKv: {} as KVNamespace,
-  runEndpointToken: "",
-  debugEndpointsEnabled: false,
-  slackBotToken: "xoxb-test",
-  slackSigningSecret: "secret",
-  timezone: "Asia/Tokyo",
-  adminUserIds: [],
-  listAccessChannelIds: []
-} satisfies AppConfig;
+const baseConfig = createTestConfig(createMockKv(), { adminUserIds: [] });
 
 describe("absence-mention interaction", () => {
   beforeEach(() => {

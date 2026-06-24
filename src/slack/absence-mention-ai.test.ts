@@ -1,17 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AppConfig } from "../config";
+import { createMockKv, createTestConfig } from "../test/mock-kv";
 import { debugAbsenceMentionAi, runAbsenceMentionAi } from "./absence-mention-ai";
 
-const baseConfig = {
-  stateKv: {} as KVNamespace,
-  runEndpointToken: "",
-  debugEndpointsEnabled: false,
-  slackBotToken: "xoxb-test",
-  slackSigningSecret: "secret",
-  timezone: "Asia/Tokyo",
-  adminUserIds: [],
-  listAccessChannelIds: []
-} satisfies AppConfig;
+const baseConfig = createTestConfig(createMockKv(), { adminUserIds: [] });
 
 describe("absence-mention-ai", () => {
   it("runAbsenceMentionAi returns error when AI binding is missing and infer cannot resolve", async () => {

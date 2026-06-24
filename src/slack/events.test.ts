@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppConfig } from "../config";
+import { createMockKv, createTestConfig } from "../test/mock-kv";
 
 const { postEphemeralMock } = vi.hoisted(() => ({
   postEphemeralMock: vi.fn(async () => ({}))
@@ -13,51 +13,22 @@ vi.mock("./api", () => ({
 
 import { handleAppMentionEvent, shouldProcessDirectMessage } from "./events";
 
-const baseConfig = {
-  stateKv: {} as KVNamespace,
-  runEndpointToken: "",
-  debugEndpointsEnabled: false,
-  slackBotToken: "xoxb-test",
-  slackSigningSecret: "secret",
-  timezone: "Asia/Tokyo",
-  adminUserIds: [],
-  listAccessChannelIds: []
-} satisfies AppConfig;
+const baseConfig = createTestConfig(createMockKv(), { adminUserIds: [] });
 
 describe("shouldProcessDirectMessage", () => {
-  it("accepts user messages without subtype or bot_id", () => {
-    expect(
-      shouldProcessDirectMessage({
-        type: "message",
-        channel_type: "im",
-        user: "U1",
-        channel: "D1",
-        text: "明日 通院"
-      })
-    ).toBe(true);
-  });
+  const baseEvent = {
+    type: "message",
+    channel_type: "im",
+    user: "U1",
+    channel: "D1"
+  } as const;
 
-  it("rejects bot and subtype messages", () => {
-    expect(
-      shouldProcessDirectMessage({
-        type: "message",
-        channel_type: "im",
-        user: "U1",
-        channel: "D1",
-        subtype: "message_changed",
-        text: "x"
-      })
-    ).toBe(false);
-    expect(
-      shouldProcessDirectMessage({
-        type: "message",
-        channel_type: "im",
-        user: "U1",
-        channel: "D1",
-        bot_id: "B1",
-        text: "x"
-      })
-    ).toBe(false);
+  it("accepts user messages and rejects bot or subtype messages", () => {
+    expect(shouldProcessDirectMessage({ ...baseEvent, text: "明日 通院" })).toBe(true);
+    expect(shouldProcessDirectMessage({ ...baseEvent, subtype: "message_changed", text: "x" })).toBe(
+      false
+    );
+    expect(shouldProcessDirectMessage({ ...baseEvent, bot_id: "B1", text: "x" })).toBe(false);
   });
 });
 

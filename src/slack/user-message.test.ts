@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppConfig } from "../config";
+import { createMockKv, createTestConfig } from "../test/mock-kv";
 
 const { postChannelMessageMock, postEphemeralMock } = vi.hoisted(() => ({
   postChannelMessageMock: vi.fn(async () => ({ ts: "1.0" })),
@@ -15,16 +15,7 @@ vi.mock("./api", () => ({
 
 import { isImChannelId, postUserFacingMessage } from "./user-message";
 
-const baseConfig = {
-  stateKv: {} as KVNamespace,
-  runEndpointToken: "",
-  debugEndpointsEnabled: false,
-  slackBotToken: "xoxb-test",
-  slackSigningSecret: "secret",
-  timezone: "Asia/Tokyo",
-  adminUserIds: [],
-  listAccessChannelIds: []
-} satisfies AppConfig;
+const baseConfig = createTestConfig(createMockKv(), { adminUserIds: [] });
 
 describe("user-message", () => {
   beforeEach(() => {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppConfig } from "../config";
+import { createMockKv, createTestConfig } from "../test/mock-kv";
 
 const { openModalMock, consumeMock } = vi.hoisted(() => ({
   openModalMock: vi.fn(async () => ({})),
@@ -34,16 +34,7 @@ vi.mock("../jobs/setup", () => ({
 import { handleAbsenceRegisterInteraction } from "./absence-register";
 import { buildAbsenceRegisterModalView } from "./absence-register";
 
-const baseConfig = {
-  stateKv: {} as KVNamespace,
-  runEndpointToken: "",
-  debugEndpointsEnabled: false,
-  slackBotToken: "xoxb-test",
-  slackSigningSecret: "secret",
-  timezone: "Asia/Tokyo",
-  adminUserIds: [],
-  listAccessChannelIds: []
-} satisfies AppConfig;
+const baseConfig = createTestConfig(createMockKv(), { adminUserIds: [] });
 
 describe("buildAbsenceRegisterModalView", () => {
   const baseParams = {
