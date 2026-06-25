@@ -7,7 +7,6 @@ import {
   type RegistrationNotifyMode
 } from "../domain/absence-registration";
 import { parseMentionConfirmPayload } from "../domain/absence-mention-parse";
-import { resolveActiveListIds } from "../jobs/setup";
 import { commitAbsenceRegistration } from "./absence-register-commit";
 import { slackApi } from "./api";
 import { resolveMasterContext } from "./member-master-context";
@@ -22,7 +21,6 @@ export { ABSENCE_REGISTER_OPEN_ACTION_ID } from "./action-ids";
 
 type AbsenceRegisterMetadata = {
   userId: string;
-  absenceListId: string;
   channelId: string;
 };
 
@@ -103,7 +101,6 @@ const buildRegistrationNotifySelectElement = (
 
 export const buildAbsenceRegisterModalView = (params: {
   userId: string;
-  absenceListId: string;
   channelId: string;
   defaultNotifyChannels: string[];
   defaultNotifyUsers: string[];
@@ -145,7 +142,6 @@ export const buildAbsenceRegisterModalView = (params: {
   callback_id: ABSENCE_REGISTER_MODAL_CALLBACK_ID,
   private_metadata: JSON.stringify({
     userId: params.userId,
-    absenceListId: params.absenceListId,
     channelId: params.channelId
   } satisfies AbsenceRegisterMetadata),
   title: { type: "plain_text", text: "不在登録" },
@@ -217,11 +213,6 @@ export const buildAbsenceRegisterModalView = (params: {
 };
 };
 
-const resolveAbsenceListId = async (config: AppConfig): Promise<string> => {
-  const { absenceListId } = await resolveActiveListIds(config);
-  return absenceListId;
-};
-
 export const openAbsenceRegisterModal = async (
   config: AppConfig,
   params: {
@@ -236,13 +227,11 @@ export const openAbsenceRegisterModal = async (
   }
 ): Promise<void> => {
   const master = await resolveMasterContext(config, params.userId);
-  const absenceListId = await resolveAbsenceListId(config);
   await slackApi.openModal(
     config,
     params.triggerId,
     buildAbsenceRegisterModalView({
       userId: params.userId,
-      absenceListId,
       channelId: params.channelId,
       defaultNotifyChannels: master.defaultNotifyChannels,
       defaultNotifyUsers: master.defaultNotifyUsers,
@@ -266,10 +255,9 @@ export const openAbsenceRegisterModal = async (
 const parseAbsenceRegisterMetadata = (raw: string): AbsenceRegisterMetadata | undefined => {
   try {
     const parsed = JSON.parse(raw) as AbsenceRegisterMetadata;
-    if (!parsed?.userId || !parsed?.absenceListId) return undefined;
+    if (!parsed?.userId) return undefined;
     return {
       userId: parsed.userId,
-      absenceListId: parsed.absenceListId,
       channelId: parsed.channelId ?? ""
     };
   } catch {
@@ -308,7 +296,6 @@ const handleAbsenceRegisterSubmission = async (
   const result = await commitAbsenceRegistration(config, {
     userId: metadata.userId,
     channelId: metadata.channelId,
-    absenceListId: metadata.absenceListId,
     startDate,
     endDate,
     note: note || undefined,

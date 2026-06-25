@@ -1,10 +1,7 @@
 import type { AppConfig } from "../config";
 
-const LIST_ID_KEY = "absence:config:list_id";
-const MEMBER_MASTER_LIST_ID_KEY = "member_master:config:list_id";
-const ABSENCE_SCHEMA_VERSION_KEY = "absence:config:schema_version";
-const MEMBER_MASTER_SCHEMA_VERSION_KEY = "member_master:config:schema_version";
-const LAST_RUN_SUMMARY_KEY = "absence:run:last_summary";
+const IMPORT_COMPLETED_KEY = "db:import:completed";
+const IMPORT_SUMMARY_KEY = "db:import:summary";
 
 const postTsKey = (jstDate: string, channelId: string): string =>
   `absence:post:${jstDate}:${channelId}`;
@@ -12,49 +9,37 @@ const postTsKey = (jstDate: string, channelId: string): string =>
 const directMessageTsKey = (jstDate: string, userId: string): string =>
   `absence:dm:${jstDate}:${userId}`;
 
+const LIST_ID_KEY = "absence:config:list_id";
+const MEMBER_MASTER_LIST_ID_KEY = "member_master:config:list_id";
+
+export const readImportCompleted = async (config: AppConfig): Promise<boolean> => {
+  const value = await config.stateKv.get(IMPORT_COMPLETED_KEY);
+  return value === "true";
+};
+
+export const writeImportCompleted = async (config: AppConfig, summary: unknown): Promise<void> => {
+  await config.stateKv.put(IMPORT_COMPLETED_KEY, "true");
+  await config.stateKv.put(IMPORT_SUMMARY_KEY, JSON.stringify(summary));
+};
+
+export const readImportSummary = async (config: AppConfig): Promise<unknown | undefined> => {
+  const value = await config.stateKv.get(IMPORT_SUMMARY_KEY);
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
+};
+
 export const readPersistedListId = async (config: AppConfig): Promise<string | undefined> => {
   const value = await config.stateKv.get(LIST_ID_KEY);
   return value && value.length > 0 ? value : undefined;
 };
 
-export const writePersistedListId = async (config: AppConfig, listId: string): Promise<void> => {
-  if (!listId) return;
-  await config.stateKv.put(LIST_ID_KEY, listId);
-};
-
-export const readPersistedAbsenceSchemaVersion = async (config: AppConfig): Promise<number | undefined> => {
-  const value = await config.stateKv.get(ABSENCE_SCHEMA_VERSION_KEY);
-  if (!value) return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-};
-
-export const writePersistedAbsenceSchemaVersion = async (config: AppConfig, version: number): Promise<void> => {
-  await config.stateKv.put(ABSENCE_SCHEMA_VERSION_KEY, String(version));
-};
-
 export const readPersistedMemberMasterListId = async (config: AppConfig): Promise<string | undefined> => {
   const value = await config.stateKv.get(MEMBER_MASTER_LIST_ID_KEY);
   return value && value.length > 0 ? value : undefined;
-};
-
-export const writePersistedMemberMasterListId = async (config: AppConfig, listId: string): Promise<void> => {
-  if (!listId) return;
-  await config.stateKv.put(MEMBER_MASTER_LIST_ID_KEY, listId);
-};
-
-export const readPersistedMemberMasterSchemaVersion = async (config: AppConfig): Promise<number | undefined> => {
-  const value = await config.stateKv.get(MEMBER_MASTER_SCHEMA_VERSION_KEY);
-  if (!value) return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-};
-
-export const writePersistedMemberMasterSchemaVersion = async (
-  config: AppConfig,
-  version: number
-): Promise<void> => {
-  await config.stateKv.put(MEMBER_MASTER_SCHEMA_VERSION_KEY, String(version));
 };
 
 export const readPostedMessageTs = async (
@@ -98,17 +83,17 @@ export const writePostedDirectMessageTs = async (
 export type LastRunSummary = {
   runId: string;
   trigger: "manual" | "scheduled";
-  listId: string;
   processed: number;
   sent: number;
   skipped: number;
   errors: number;
   deleted?: number;
   executedAt: string;
+  dbStatus?: string;
 };
 
 export const readLastRunSummary = async (config: AppConfig): Promise<LastRunSummary | undefined> => {
-  const value = await config.stateKv.get(LAST_RUN_SUMMARY_KEY);
+  const value = await config.stateKv.get("absence:run:last_summary");
   if (!value) return undefined;
   try {
     return JSON.parse(value) as LastRunSummary;
@@ -118,75 +103,5 @@ export const readLastRunSummary = async (config: AppConfig): Promise<LastRunSumm
 };
 
 export const writeLastRunSummary = async (config: AppConfig, summary: LastRunSummary): Promise<void> => {
-  await config.stateKv.put(LAST_RUN_SUMMARY_KEY, JSON.stringify(summary));
-};
-
-const PRUNE_PENDING_KEY = "prune:pending";
-
-export type PruneCandidate = {
-  listId: string;
-  listName: string;
-  archived?: boolean;
-};
-
-const MIGRATION_IN_PROGRESS_KEY = "migration:in_progress";
-const MIGRATION_IN_PROGRESS_TTL_SEC = 600;
-
-const readPrunePendingRecords = async (config: AppConfig): Promise<PruneCandidate[]> => {
-  const value = await config.stateKv.get(PRUNE_PENDING_KEY);
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value) as PruneCandidate[];
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (entry): entry is PruneCandidate =>
-        !!entry &&
-        typeof entry.listId === "string" &&
-        entry.listId.length > 0 &&
-        typeof entry.listName === "string" &&
-        entry.listName.length > 0
-    );
-  } catch {
-    return [];
-  }
-};
-
-export const readPrunePending = async (config: AppConfig): Promise<PruneCandidate[]> =>
-  readPrunePendingRecords(config);
-
-export const addPrunePending = async (
-  config: AppConfig,
-  candidates: PruneCandidate[]
-): Promise<void> => {
-  if (candidates.length === 0) return;
-  const records = await readPrunePendingRecords(config);
-  const byId = new Map(records.map((entry) => [entry.listId, entry]));
-  for (const candidate of candidates) {
-    byId.set(candidate.listId, candidate);
-  }
-  await config.stateKv.put(PRUNE_PENDING_KEY, JSON.stringify([...byId.values()]));
-};
-
-export const removePrunePending = async (config: AppConfig, listId: string): Promise<void> => {
-  const records = await readPrunePendingRecords(config);
-  const next = records.filter((entry) => entry.listId !== listId);
-  if (next.length === records.length) return;
-  if (next.length === 0) {
-    await config.stateKv.delete(PRUNE_PENDING_KEY);
-    return;
-  }
-  await config.stateKv.put(PRUNE_PENDING_KEY, JSON.stringify(next));
-};
-
-export const tryAcquireMigrationLock = async (config: AppConfig): Promise<boolean> => {
-  const existing = await config.stateKv.get(MIGRATION_IN_PROGRESS_KEY);
-  if (existing) return false;
-  await config.stateKv.put(MIGRATION_IN_PROGRESS_KEY, new Date().toISOString(), {
-    expirationTtl: MIGRATION_IN_PROGRESS_TTL_SEC
-  });
-  return true;
-};
-
-export const releaseMigrationLock = async (config: AppConfig): Promise<void> => {
-  await config.stateKv.delete(MIGRATION_IN_PROGRESS_KEY);
+  await config.stateKv.put("absence:run:last_summary", JSON.stringify(summary));
 };

@@ -25,16 +25,11 @@ vi.mock("./absence-register-commit", () => ({
 
 vi.mock("./member-master-context", () => ({
   resolveMasterContext: vi.fn(async () => ({
-    memberMasterListId: "LMM",
     active: true,
     defaultNotifyChannels: ["C_NOTIFY"],
     defaultNotifyUsers: [],
     defaultRegistrationNotify: "none" as const
   }))
-}));
-
-vi.mock("../jobs/setup", () => ({
-  resolveActiveListIds: vi.fn(async () => ({ absenceListId: "L1", memberMasterListId: "LMM" }))
 }));
 
 import {
@@ -75,7 +70,7 @@ describe("absence-mention interaction", () => {
     ).toBe(false);
   });
 
-  it("handleAbsenceMentionInteraction returns followUp that commits with KV list id", async () => {
+  it("handleAbsenceMentionInteraction returns followUp that commits registration", async () => {
     const confirmValue = JSON.stringify({
       v: 1,
       userId: "U1",
@@ -106,10 +101,12 @@ describe("absence-mention interaction", () => {
       expect.objectContaining({
         userId: "U1",
         channelId: "C1",
-        absenceListId: "L1",
         startDate: "2026-06-25",
         endDate: "2026-06-25",
-        note: "通院"
+        note: "通院",
+        notifyChannels: ["C_NOTIFY"],
+        selectedMode: "none",
+        active: true
       })
     );
   });

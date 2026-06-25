@@ -1,45 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { createMockKv, createTestConfig } from "../test/mock-kv";
-import {
-  addPrunePending,
-  readPrunePending,
-  releaseMigrationLock,
-  removePrunePending,
-  tryAcquireMigrationLock
-} from "./kv";
+import { readImportCompleted, readImportSummary, writeImportCompleted } from "./kv";
 
-describe("kv prune pending", () => {
-  it("merges prune pending by list id", async () => {
+describe("import kv", () => {
+  it("readImportCompleted returns false when unset", async () => {
     const config = createTestConfig(createMockKv());
-    await addPrunePending(config, [{ listId: "L1", listName: "absence_list__archived__L1", archived: true }]);
-    await addPrunePending(config, [{ listId: "L1", listName: "absence_list__archived__L1-renamed", archived: true }]);
-    expect(await readPrunePending(config)).toEqual([
-      { listId: "L1", listName: "absence_list__archived__L1-renamed", archived: true }
-    ]);
+    expect(await readImportCompleted(config)).toBe(false);
   });
 
-  it("removePrunePending deletes key when empty", async () => {
-    const kv = createMockKv();
-    const config = createTestConfig(kv);
-    await addPrunePending(config, [{ listId: "L1", listName: "n1", archived: true }]);
-    await removePrunePending(config, "L1");
-    expect(await readPrunePending(config)).toEqual([]);
-  });
-
-  it("readPrunePending returns empty array for invalid json", async () => {
-    const kv = createMockKv();
-    await kv.put("prune:pending", "{not-json");
-    const config = createTestConfig(kv);
-    expect(await readPrunePending(config)).toEqual([]);
-  });
-});
-
-describe("migration lock", () => {
-  it("allows only one active lock", async () => {
+  it("writeImportCompleted stores summary", async () => {
     const config = createTestConfig(createMockKv());
-    expect(await tryAcquireMigrationLock(config)).toBe(true);
-    expect(await tryAcquireMigrationLock(config)).toBe(false);
-    await releaseMigrationLock(config);
-    expect(await tryAcquireMigrationLock(config)).toBe(true);
+    const summary = { absences: { processed: 9 }, memberMaster: { processed: 12 } };
+    await writeImportCompleted(config, summary);
+    expect(await readImportCompleted(config)).toBe(true);
+    expect(await readImportSummary(config)).toEqual(summary);
   });
 });

@@ -12,7 +12,6 @@ export type RegistrationNotifyParams = {
   userId: string;
   channelId: string;
   itemId: string;
-  listId: string;
   record: AbsenceRecord;
   selectedMode: RegistrationNotifyMode;
   resolvedMode: RegistrationNotifyMode;
@@ -112,7 +111,6 @@ export const runRegistrationNotifyAndAck = async (
         event: "registration_notify_done",
         user_id: params.userId,
         item_id: params.itemId,
-        list_id: params.listId,
         registration_notify_mode: params.selectedMode,
         resolved_notify_mode: params.resolvedMode,
         channels_sent: result.channelsSent,

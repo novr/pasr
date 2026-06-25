@@ -15,7 +15,6 @@ import {
   type AbsenceRegisterValidationError
 } from "../domain/absence-registration";
 import { getJstDateParts } from "../domain/jst-date";
-import { resolveActiveListIds } from "../jobs/setup";
 import {
   ABSENCE_REGISTER_OPEN_ACTION_ID,
   type AbsenceRegisterInteractionResult
@@ -388,12 +387,10 @@ export const handleAbsenceMentionInteraction = async (
   return {
     ok: true,
     followUp: async () => {
-      const { absenceListId } = await resolveActiveListIds(config);
       const master = await resolveMasterContext(config, userId);
       const result = await commitAbsenceRegistration(config, {
         userId,
         channelId,
-        absenceListId,
         startDate,
         endDate,
         note,
@@ -418,7 +415,6 @@ export const handleAbsenceMentionInteraction = async (
           event: "absence_mention_confirmed",
           user_id: userId,
           channel_id: channelId,
-          list_id: absenceListId,
           start_date: startDate,
           end_date: endDate
         })

@@ -10,6 +10,14 @@
       "id": "REPLACE_WITH_KV_NAMESPACE_ID"
     }
   ],
+  "d1_databases": [
+    {
+      "binding": "PASR_DB",
+      "database_name": "pasr-db",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
   "triggers": {
     "crons": ["0 0 * * *"]
   },
@@ -33,8 +41,7 @@
   },
   "vars": {
     "TZ": "Asia/Tokyo",
-    "SLACK_ADMIN_USER_IDS": "",
-    "SLACK_LIST_ACCESS_CHANNEL_IDS": ""
+    "SLACK_ADMIN_USER_IDS": ""
   },
   "observability": {
     "enabled": true,

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMockKv, createTestConfig } from "../test/mock-kv";
-import { createListDiscovery, LIST_DISCOVERY_MAX_PAGES } from "./list-discovery";
+import { createListDiscovery, LIST_DISCOVERY_MAX_PAGES } from "../import/list-discovery";
 
 const config = createTestConfig(createMockKv());
 

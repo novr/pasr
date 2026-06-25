@@ -11,13 +11,13 @@ import type { AppConfig } from "../config";
 
 const config: AppConfig = {
   stateKv: {} as KVNamespace,
+  db: {} as D1Database,
   runEndpointToken: "",
   debugEndpointsEnabled: false,
   slackBotToken: "xoxb-test",
   slackSigningSecret: "secret",
   timezone: "Asia/Tokyo",
-  adminUserIds: ["U_ADMIN"],
-  listAccessChannelIds: []
+  adminUserIds: ["U_ADMIN"]
 };
 
 describe("slash command parsers", () => {
@@ -58,8 +58,6 @@ describe("slash command parsers", () => {
 
   it("buildQueuedAdminAck returns action-specific messages", () => {
     expect(buildQueuedAdminAck("run")).toContain("通知処理");
-    expect(buildQueuedAdminAck("migrate")).toContain("migrate");
-    expect(buildQueuedAdminAck("prune")).toContain("prune");
     expect(buildQueuedAdminAck("unknown")).toContain("処理を実行中");
   });
 
