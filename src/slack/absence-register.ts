@@ -11,9 +11,11 @@ import { resolveActiveListIds } from "../jobs/setup";
 import { commitAbsenceRegistration } from "./absence-register-commit";
 import { slackApi } from "./api";
 import { resolveMasterContext } from "./member-master-context";
+import { resolveAppHomeDmChannelId } from "./app-home-channel";
 import { isAppHomeBlockActions } from "./app-home-context";
 import { ABSENCE_REGISTER_OPEN_ACTION_ID } from "./action-ids";
 import { consumeInteractionMessage } from "./interaction-message";
+import { postUserFacingMessage } from "./user-message";
 
 export const ABSENCE_REGISTER_MODAL_CALLBACK_ID = "pasr_absence_register";
 export { ABSENCE_REGISTER_OPEN_ACTION_ID } from "./action-ids";
@@ -335,7 +337,54 @@ export const handleAbsenceRegisterInteraction = async (
     const userId = payload.user?.id ?? "";
     const channelId = payload.channel?.id ?? "";
     const buttonValue = payload.actions?.[0]?.value ?? "";
-    if (!triggerId || !userId || !channelId) {
+    const fromAppHome = isAppHomeBlockActions(payload);
+    if (!userId) {
+      return { ok: true };
+    }
+    if (!triggerId) {
+      if (fromAppHome) {
+        try {
+          const dmChannelId = await resolveAppHomeDmChannelId(config, userId, channelId);
+          await postUserFacingMessage(config, {
+            channelId: dmChannelId,
+            userId,
+            text: "登録フォームを開けませんでした。もう一度お試しください。"
+          });
+        } catch (error) {
+          console.warn(
+            JSON.stringify({
+              level: "warn",
+              event: "absence_register_app_home_notify_failed",
+              user_id: userId,
+              message: error instanceof Error ? error.message : String(error)
+            })
+          );
+        }
+      }
+      return { ok: true };
+    }
+    let resolvedChannelId = channelId;
+    if (fromAppHome && !resolvedChannelId) {
+      try {
+        resolvedChannelId = await resolveAppHomeDmChannelId(config, userId);
+      } catch (error) {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "absence_register_dm_resolve_failed",
+            user_id: userId,
+            message: error instanceof Error ? error.message : String(error)
+          })
+        );
+        await postUserFacingMessage(config, {
+          channelId,
+          userId,
+          text: "登録フォームを開けませんでした。しばらく待ってから再度お試しください。"
+        }).catch(() => undefined);
+        return { ok: true };
+      }
+    }
+    if (!resolvedChannelId) {
       return { ok: true };
     }
     const mentionDraft = parseMentionConfirmPayload(buttonValue);
@@ -343,10 +392,10 @@ export const handleAbsenceRegisterInteraction = async (
       await slackApi.postEphemeral(config, channelId, userId, "本人以外は編集できません。");
       return { ok: true };
     }
-    if (mentionDraft && mentionDraft.channelId !== channelId) {
+    if (mentionDraft && mentionDraft.channelId !== resolvedChannelId) {
       await slackApi.postEphemeral(
         config,
-        channelId,
+        resolvedChannelId,
         userId,
         "確認情報が無効です。もう一度 @PASR で登録してください。"
       );
@@ -359,9 +408,9 @@ export const handleAbsenceRegisterInteraction = async (
       await openAbsenceRegisterModal(config, {
         triggerId,
         userId,
-        channelId,
+        channelId: resolvedChannelId,
         teamId: "",
-        triggerSource: isAppHomeBlockActions(payload) ? "app_home" : "mention_button",
+        triggerSource: fromAppHome ? "app_home" : "mention_button",
         initialStartDate: mentionDraft?.startDate,
         initialEndDate: mentionDraft?.endDate,
         initialNote: mentionDraft?.note
@@ -375,6 +424,25 @@ export const handleAbsenceRegisterInteraction = async (
           message: error instanceof Error ? error.message : String(error)
         })
       );
+      if (fromAppHome) {
+        try {
+          const dmChannelId = await resolveAppHomeDmChannelId(config, userId, resolvedChannelId);
+          await postUserFacingMessage(config, {
+            channelId: dmChannelId,
+            userId,
+            text: "登録フォームを開けませんでした。しばらく待ってから再度お試しください。"
+          });
+        } catch (notifyError) {
+          console.warn(
+            JSON.stringify({
+              level: "warn",
+              event: "absence_register_app_home_notify_failed",
+              user_id: userId,
+              message: notifyError instanceof Error ? notifyError.message : String(notifyError)
+            })
+          );
+        }
+      }
     }
     return { ok: true };
   }

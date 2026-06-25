@@ -12,8 +12,9 @@ import {
 } from "./app-home";
 import { isAppHomeBlockActions } from "./app-home-context";
 
-const { publishHomeViewMock } = vi.hoisted(() => ({
-  publishHomeViewMock: vi.fn(async () => ({}))
+const { publishHomeViewMock, openDirectMessageMock } = vi.hoisted(() => ({
+  publishHomeViewMock: vi.fn(async () => ({})),
+  openDirectMessageMock: vi.fn(async () => "D1")
 }));
 
 const { openMemberMasterSettingsModalMock } = vi.hoisted(() => ({
@@ -30,7 +31,8 @@ const { postUserFacingMessageMock } = vi.hoisted(() => ({
 
 vi.mock("./api", () => ({
   slackApi: {
-    publishHomeView: publishHomeViewMock
+    publishHomeView: publishHomeViewMock,
+    openDirectMessage: openDirectMessageMock
   }
 }));
 
@@ -225,14 +227,34 @@ describe("handleAppHomeInteraction", () => {
     );
   });
 
+  it("resolves DM channel when App Home list payload has no channel", async () => {
+    const result = await handleAppHomeInteraction(baseConfig, {
+      type: "block_actions",
+      user: { id: "U1" },
+      actions: [{ action_id: APP_HOME_LIST_OPEN_ACTION_ID }]
+    });
+
+    expect(result.handled).toBe(true);
+    await result.followUp?.();
+
+    expect(openDirectMessageMock).toHaveBeenCalledWith(baseConfig, "U1");
+    expect(showOwnAbsenceListMock).toHaveBeenCalledWith(
+      baseConfig,
+      expect.objectContaining({
+        userId: "U1",
+        channelId: "D1",
+        responseUrl: ""
+      }),
+      { includeEdit: true }
+    );
+  });
+
   it("notifies user when list followUp fails", async () => {
     showOwnAbsenceListMock.mockRejectedValueOnce(new Error("list failed"));
 
     const result = await handleAppHomeInteraction(baseConfig, {
       type: "block_actions",
       user: { id: "U1" },
-      channel: { id: "D1" },
-      response_url: "https://hooks.slack.com/actions/T/1/2",
       actions: [{ action_id: APP_HOME_LIST_OPEN_ACTION_ID }]
     });
 
@@ -248,23 +270,19 @@ describe("handleAppHomeInteraction", () => {
     );
   });
 
-  it("notifies user when list context is missing", async () => {
+  it("notifies user when DM channel cannot be resolved for list", async () => {
+    openDirectMessageMock.mockRejectedValue(new Error("dm failed"));
+
     const result = await handleAppHomeInteraction(baseConfig, {
       type: "block_actions",
       user: { id: "U1" },
-      channel: { id: "D1" },
       actions: [{ action_id: APP_HOME_LIST_OPEN_ACTION_ID }]
     });
 
-    expect(result).toEqual({ handled: true, ok: true });
-    expect(postUserFacingMessageMock).toHaveBeenCalledWith(
-      baseConfig,
-      expect.objectContaining({
-        channelId: "D1",
-        userId: "U1",
-        text: expect.stringContaining("不在一覧")
-      })
-    );
+    await result.followUp?.();
+
+    expect(showOwnAbsenceListMock).not.toHaveBeenCalled();
+    expect(postUserFacingMessageMock).not.toHaveBeenCalled();
   });
 
   it("ignores unrelated actions", async () => {

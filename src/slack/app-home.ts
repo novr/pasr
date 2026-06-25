@@ -6,6 +6,7 @@ import {
 } from "./action-ids";
 import { showOwnAbsenceList } from "./absence-list";
 import { slackApi } from "./api";
+import { resolveAppHomeDmChannelId } from "./app-home-channel";
 import { openMemberMasterSettingsModal } from "./member-master-modal";
 import { postUserFacingMessage } from "./user-message";
 import type { SlackEventEnvelope } from "./events";
@@ -42,10 +43,10 @@ const notifyAppHomeUser = async (
   config: AppConfig,
   params: { channelId?: string; userId: string; text: string }
 ): Promise<void> => {
-  if (!params.channelId) return;
   try {
+    const channelId = await resolveAppHomeDmChannelId(config, params.userId, params.channelId);
     await postUserFacingMessage(config, {
-      channelId: params.channelId,
+      channelId,
       userId: params.userId,
       text: params.text
     });
@@ -218,19 +219,12 @@ export const handleAppHomeInteraction = async (
   }
 
   if (actionId === APP_HOME_LIST_OPEN_ACTION_ID) {
-    if (!responseUrl || !channelId) {
-      await notifyAppHomeUser(config, {
-        channelId,
-        userId,
-        text: "不在一覧を表示できませんでした。もう一度お試しください。"
-      });
-      return { handled: true, ok: true };
-    }
     return {
       handled: true,
       ok: true,
       followUp: async () => {
         try {
+          const resolvedChannelId = await resolveAppHomeDmChannelId(config, userId, channelId);
           await showOwnAbsenceList(
             config,
             {
@@ -238,9 +232,9 @@ export const handleAppHomeInteraction = async (
               text: "list",
               userId,
               teamId: "",
-              channelId,
+              channelId: resolvedChannelId,
               triggerId: "",
-              responseUrl
+              responseUrl: responseUrl
             },
             { includeEdit: true }
           );

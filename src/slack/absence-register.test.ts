@@ -1,15 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMockKv, createTestConfig } from "../test/mock-kv";
 
-const { openModalMock, consumeMock } = vi.hoisted(() => ({
+const { openModalMock, consumeMock, openDirectMessageMock } = vi.hoisted(() => ({
   openModalMock: vi.fn(async () => ({})),
-  consumeMock: vi.fn(async () => undefined)
+  consumeMock: vi.fn(async () => undefined),
+  openDirectMessageMock: vi.fn(async () => "D1")
 }));
 
 vi.mock("./api", () => ({
   slackApi: {
     openModal: openModalMock,
-    postEphemeral: vi.fn(async () => ({}))
+    postEphemeral: vi.fn(async () => ({})),
+    openDirectMessage: openDirectMessageMock
   }
 }));
 
@@ -114,6 +116,27 @@ describe("handleAbsenceRegisterInteraction", () => {
     expect(result).toEqual({ ok: true });
     expect(consumeMock).not.toHaveBeenCalled();
     expect(openModalMock).toHaveBeenCalled();
+  });
+
+  it("opens register modal from App Home without channel in payload", async () => {
+    const result = await handleAbsenceRegisterInteraction(baseConfig, {
+      type: "block_actions",
+      trigger_id: "TR1",
+      user: { id: "U1" },
+      container: { type: "view" },
+      view: { type: "home" },
+      actions: [{ action_id: "pasr_register_open" }]
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(openDirectMessageMock).toHaveBeenCalledWith(baseConfig, "U1");
+    expect(openModalMock).toHaveBeenCalledWith(
+      baseConfig,
+      "TR1",
+      expect.objectContaining({
+        private_metadata: expect.stringContaining("\"channelId\":\"D1\"")
+      })
+    );
   });
 
   it("rejects mention draft with mismatched channelId", async () => {
