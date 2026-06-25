@@ -282,6 +282,19 @@ export const slackApi = {
       view
     }),
 
+  publishHomeView: async (
+    config: AppConfig,
+    userId: string,
+    blocks: Array<Record<string, unknown>>
+  ) =>
+    slackApiPost<Record<string, unknown>>(config, "views.publish", {
+      user_id: userId,
+      view: {
+        type: "home",
+        blocks
+      }
+    }),
+
   openDirectMessage: async (config: AppConfig, userId: string): Promise<string> => {
     const opened = await slackApiPost<SlackConversationOpenResponse>(config, "conversations.open", {
       users: userId

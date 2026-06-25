@@ -11,10 +11,12 @@ import { resolveActiveListIds } from "../jobs/setup";
 import { commitAbsenceRegistration } from "./absence-register-commit";
 import { slackApi } from "./api";
 import { resolveMasterContext } from "./member-master-context";
+import { isAppHomeBlockActions } from "./app-home-context";
+import { ABSENCE_REGISTER_OPEN_ACTION_ID } from "./action-ids";
 import { consumeInteractionMessage } from "./interaction-message";
 
 export const ABSENCE_REGISTER_MODAL_CALLBACK_ID = "pasr_absence_register";
-export const ABSENCE_REGISTER_OPEN_ACTION_ID = "pasr_register_open";
+export { ABSENCE_REGISTER_OPEN_ACTION_ID } from "./action-ids";
 
 type AbsenceRegisterMetadata = {
   userId: string;
@@ -28,8 +30,10 @@ type SlackInteractionPayload = {
   response_url?: string;
   user?: { id?: string };
   channel?: { id?: string };
+  container?: { type?: string };
   actions?: Array<{ action_id?: string; value?: string }>;
   view?: {
+    type?: string;
     callback_id?: string;
     private_metadata?: string;
     state?: {
@@ -223,7 +227,7 @@ export const openAbsenceRegisterModal = async (
     userId: string;
     channelId: string;
     teamId: string;
-    triggerSource: "slash" | "mention_button";
+    triggerSource: "slash" | "mention_button" | "app_home";
     initialStartDate?: string;
     initialEndDate?: string;
     initialNote?: string;
@@ -357,7 +361,7 @@ export const handleAbsenceRegisterInteraction = async (
         userId,
         channelId,
         teamId: "",
-        triggerSource: "mention_button",
+        triggerSource: isAppHomeBlockActions(payload) ? "app_home" : "mention_button",
         initialStartDate: mentionDraft?.startDate,
         initialEndDate: mentionDraft?.endDate,
         initialNote: mentionDraft?.note

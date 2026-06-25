@@ -65,6 +65,7 @@ Worker は3ハンドラで構成する。
   - フローは `app_mention` 本文付きと同じ（infer / AI → 確認 UI → 登録）
   - DM 応答は `chat.postMessage`（ephemeral 不可）。チャンネルは引き続き ephemeral
   - 確認 UI・エラー・キャンセル ACK も DM では会話に残る
+- App Home（`app_home_opened`, `tab=home`）は静的 `views.publish` のみ同期。登録・設定 Modal と一覧 ephemeral は `block_actions` 即時 ACK 後 `waitUntil`（list のみ followUp）
 
 ## データ境界（KV 正本）
 

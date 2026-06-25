@@ -1,7 +1,6 @@
 import type { AppConfig } from "../config";
 import {
   parseRegistrationNotifyMode,
-  REGISTRATION_NOTIFY_SELECT_OPTIONS,
   type RegistrationNotifyMode
 } from "../domain/absence-registration";
 import { isTransientError } from "../errors/transient";
@@ -13,6 +12,8 @@ import { ABSENCE_EDIT_MODAL_CALLBACK_ID, handleAbsenceEditInteraction, openAbsen
 import { showOwnAbsenceList, handleAbsenceListInteraction } from "./absence-list";
 import { openAbsenceRegisterModal, handleAbsenceRegisterInteraction } from "./absence-register";
 import { handleAbsenceMentionInteraction, isMentionAction } from "./absence-mention";
+import { handleAppHomeInteraction } from "./app-home";
+import { MEMBER_MASTER_MODAL_CALLBACK_ID, openMemberMasterSettingsModal } from "./member-master-modal";
 import { slackApi } from "./api";
 import { readLastRunSummary, readPersistedMemberMasterListId } from "../state/kv";
 
@@ -54,14 +55,16 @@ type SlackInteractionPayload = {
   user?: { id?: string };
   channel?: { id?: string };
   response_url?: string;
-  actions?: Array<{ action_id?: string; value?: string }>;
+  container?: { type?: string };
   view?: {
+    type?: string;
     callback_id?: string;
     private_metadata?: string;
     state?: {
       values?: Record<string, Record<string, unknown>>;
     };
   };
+  actions?: Array<{ action_id?: string; value?: string }>;
 };
 
 export type SlashCommandDispatch =
@@ -275,119 +278,6 @@ export const slashCommandLogFields = (payload: SlackCommandPayload): Record<stri
   has_response_url: payload.responseUrl.length > 0
 });
 
-const resolveSelfMasterRecord = async (
-  config: AppConfig,
-  payload: SlackCommandPayload
-): Promise<{
-  memberMasterListId: string;
-  recordId: string;
-  created: boolean;
-  deleted: string[];
-  targetUser: string;
-  active: boolean;
-  defaultNotifyChannels: string[];
-  defaultNotifyUsers: string[];
-  defaultRegistrationNotify: RegistrationNotifyMode;
-}> => {
-  const memberMasterListId = await ensureMemberMasterList(config);
-  const resolved = await slackApi.resolveMemberMasterRecord(config, memberMasterListId, payload.userId);
-  if (!resolved.kept) {
-    throw new Error("member_master record resolution failed");
-  }
-  return {
-    memberMasterListId,
-    recordId: resolved.kept,
-    created: resolved.created,
-    deleted: resolved.deleted,
-    targetUser: resolved.targetUser,
-    active: resolved.active,
-    defaultNotifyChannels: resolved.defaultNotifyChannels,
-    defaultNotifyUsers: resolved.defaultNotifyUsers,
-    defaultRegistrationNotify: resolved.defaultRegistrationNotify
-  };
-};
-
-const MEMBER_MASTER_MODAL_CALLBACK_ID = "pasr_member_master_update";
-
-const buildRegistrationNotifySelectElement = (
-  initialMode: RegistrationNotifyMode
-): Record<string, unknown> => {
-  const options = REGISTRATION_NOTIFY_SELECT_OPTIONS.map((option) => ({
-    text: { type: "plain_text", text: option.label },
-    value: option.value
-  }));
-  const initialOption = options.find((option) => option.value === initialMode) ?? options[0];
-  return {
-    type: "static_select",
-    action_id: "default_registration_notify_select",
-    options,
-    initial_option: initialOption
-  };
-};
-
-const buildMemberMasterModalView = (params: {
-  userId: string;
-  active: boolean;
-  defaultNotifyChannels: string[];
-  defaultNotifyUsers: string[];
-  defaultRegistrationNotify: RegistrationNotifyMode;
-}): Record<string, unknown> => ({
-  type: "modal",
-  callback_id: MEMBER_MASTER_MODAL_CALLBACK_ID,
-  private_metadata: JSON.stringify({
-    userId: params.userId
-  }),
-  title: { type: "plain_text", text: "PASR Self Profile" },
-  submit: { type: "plain_text", text: "Save" },
-  close: { type: "plain_text", text: "Cancel" },
-  blocks: [
-    {
-      type: "section",
-      text: { type: "mrkdwn", text: `更新対象: <@${params.userId}>` }
-    },
-    {
-      type: "input",
-      block_id: "active_block",
-      optional: true,
-      label: { type: "plain_text", text: "Active" },
-      element: {
-        type: "checkboxes",
-        action_id: "active_checkbox",
-        options: [{ text: { type: "plain_text", text: "通知対象として有効" }, value: "active" }],
-        initial_options: params.active ? [{ text: { type: "plain_text", text: "通知対象として有効" }, value: "active" }] : []
-      }
-    },
-    {
-      type: "input",
-      block_id: "channels_block",
-      optional: true,
-      label: { type: "plain_text", text: "Default Notify Channels" },
-      element: {
-        type: "multi_conversations_select",
-        action_id: "default_channels_select",
-        initial_conversations: params.defaultNotifyChannels
-      }
-    },
-    {
-      type: "input",
-      block_id: "users_block",
-      optional: true,
-      label: { type: "plain_text", text: "Default Notify Users" },
-      element: {
-        type: "multi_users_select",
-        action_id: "default_users_select",
-        initial_users: params.defaultNotifyUsers
-      }
-    },
-    {
-      type: "input",
-      block_id: "registration_notify_block",
-      label: { type: "plain_text", text: "既定の登録通知" },
-      element: buildRegistrationNotifySelectElement(params.defaultRegistrationNotify)
-    }
-  ]
-});
-
 const parseSelectedChannels = (value: unknown): string[] => {
   const record = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
   const selected = record?.selected_conversations;
@@ -435,18 +325,10 @@ const handleSelfImmediateText = async (
         mode: "deferred",
         ackText: "設定フォームを開きます…",
         run: async () => {
-          const resolved = await resolveSelfMasterRecord(config, payload);
-          await slackApi.openModal(
-            config,
-            payload.triggerId,
-            buildMemberMasterModalView({
-              userId: payload.userId,
-              active: resolved.active,
-              defaultNotifyChannels: resolved.defaultNotifyChannels,
-              defaultNotifyUsers: resolved.defaultNotifyUsers,
-              defaultRegistrationNotify: resolved.defaultRegistrationNotify
-            })
-          );
+          await openMemberMasterSettingsModal(config, {
+            triggerId: payload.triggerId,
+            userId: payload.userId
+          });
         }
       };
     case "register":
@@ -746,6 +628,11 @@ export const handleSlackInteraction = async (
   config: AppConfig,
   payload: SlackInteractionPayload
 ): Promise<SlackInteractionResult> => {
+  const homeResult = await handleAppHomeInteraction(config, payload);
+  if (homeResult.handled) {
+    return { ok: homeResult.ok, followUp: homeResult.followUp };
+  }
+
   const mentionResult = await handleAbsenceMentionInteraction(config, payload);
   if (isMentionAction(payload)) {
     return mentionResult;
