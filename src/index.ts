@@ -17,6 +17,7 @@ import {
   slashCommandLogFields
 } from "./slack/command";
 import { handleAppMentionEvent, handleDirectMessageEvent } from "./slack/events";
+import { handleAppHomeOpened } from "./slack/app-home";
 import { debugAbsenceMentionAi } from "./slack/absence-mention-ai";
 import { verifySlackSignature } from "./slack/signature";
 import { SLACK_EVENT_DEDUPE_TTL_SEC, isDuplicateSlackCommandTrigger, isDuplicateSlackEvent } from "./state/event-dedupe";
@@ -65,6 +66,7 @@ type SlackEventEnvelope = {
     channel_type?: string;
     thread_ts?: string;
     text?: string;
+    tab?: string;
   };
 };
 
@@ -114,6 +116,11 @@ const handleSlackEventCallback = async (
 
   if (envelope.event?.type === "message" && envelope.event.channel_type === "im") {
     await handleDirectMessageEvent(config, envelope);
+    return;
+  }
+
+  if (envelope.event?.type === "app_home_opened" && envelope.event.tab === "home") {
+    await handleAppHomeOpened(config, envelope);
   }
 };
 

@@ -23,10 +23,17 @@ type DirectMessageEvent = {
   text?: string;
 };
 
+type AppHomeOpenedEvent = {
+  type?: string;
+  user?: string;
+  channel?: string;
+  tab?: string;
+};
+
 export type SlackEventEnvelope = {
   event_id?: string;
   team_id?: string;
-  event?: AppMentionEvent | DirectMessageEvent;
+  event?: AppMentionEvent | DirectMessageEvent | AppHomeOpenedEvent;
 };
 
 const isDirectMessageEvent = (event: AppMentionEvent | DirectMessageEvent | undefined): event is DirectMessageEvent =>

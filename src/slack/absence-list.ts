@@ -9,6 +9,7 @@ import { getJstDateParts } from "../domain/jst-date";
 import { resolveActiveListIds } from "../jobs/setup";
 import { slackApi } from "./api";
 import type { SlackCommandPayload } from "./command";
+import { postUserFacingMessage } from "./user-message";
 
 export const ABSENCE_LIST_MAX_ROWS = 25;
 export const ABSENCE_DELETE_ACTION_ID = "pasr_absence_delete";
@@ -106,13 +107,12 @@ export const showOwnAbsenceList = async (
     if (payload.responseUrl) {
       await postResponseUrlEphemeral(payload.responseUrl, text, blocks.length > 0 ? blocks : undefined);
     } else if (payload.channelId) {
-      await slackApi.postEphemeral(
-        config,
-        payload.channelId,
-        payload.userId,
+      await postUserFacingMessage(config, {
+        channelId: payload.channelId,
+        userId: payload.userId,
         text,
-        blocks.length > 0 ? blocks : undefined
-      );
+        blocks: blocks.length > 0 ? blocks : undefined
+      });
     }
     console.log(
       JSON.stringify({
