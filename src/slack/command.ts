@@ -6,16 +6,25 @@ import {
 import { isTransientError } from "../errors/transient";
 import { runDailyNotify } from "../jobs/daily-notify";
 import { isValidJstDateString, getJstDateParts } from "../domain/jst-date";
-import { findOwnAbsenceByStartDate, parseAbsence, type AbsenceRecord } from "../domain/absence";
-import { ensureMemberMasterList, resolveActiveListIds, runListMigration, runListPrune } from "../jobs/setup";
-import { ABSENCE_EDIT_MODAL_CALLBACK_ID, handleAbsenceEditInteraction, openAbsenceEditModal, formatResolveOwnAbsenceForEditError, resolveOwnAbsenceForEdit } from "./absence-edit";
+import { checkDbSchema } from "../db/schema-check";
+import { getImportGateMessage } from "../db/import-gate";
+import { upsertMemberMaster } from "../db/member-master-repository";
+import { DbSchemaMismatchError, assertDbSchema } from "../db/schema-check";
+import {
+  ABSENCE_EDIT_MODAL_CALLBACK_ID,
+  handleAbsenceEditInteraction,
+  openAbsenceEditModal,
+  formatResolveOwnAbsenceForEditError,
+  resolveOwnAbsenceForEdit,
+  findOwnAbsenceRecordsByStartDate
+} from "./absence-edit";
 import { showOwnAbsenceList, handleAbsenceListInteraction } from "./absence-list";
 import { openAbsenceRegisterModal, handleAbsenceRegisterInteraction } from "./absence-register";
 import { handleAbsenceMentionInteraction, isMentionAction } from "./absence-mention";
 import { handleAppHomeInteraction } from "./app-home";
 import { MEMBER_MASTER_MODAL_CALLBACK_ID, openMemberMasterSettingsModal } from "./member-master-modal";
 import { slackApi } from "./api";
-import { readLastRunSummary, readPersistedMemberMasterListId } from "../state/kv";
+import { readImportCompleted, readLastRunSummary } from "../state/kv";
 
 export const COMMAND_ACK_UNAUTHORIZED = "Received. Processing...";
 export const COMMAND_ACK_DUPLICATE =
@@ -30,10 +39,6 @@ export const buildQueuedAdminAck = (action: string): string => {
   switch (action) {
     case "run":
       return "通知処理を実行中です。完了後に結果を表示します。";
-    case "migrate":
-      return "migrate を実行中です。完了後に結果を表示します。";
-    case "prune":
-      return "prune を実行中です。完了後に結果を表示します。";
     default:
       return "処理を実行中です。完了後に結果を表示します。";
   }
@@ -217,44 +222,13 @@ const buildAdminHelpText = (): string =>
   [
     "/pasr-admin help - 管理者向けコマンドの使い方表示",
     "/pasr-admin run - 通知処理を手動実行",
-    "/pasr-admin status - 直近実行の要約表示",
-    "/pasr-admin migrate - absence/member_master を新スキーマへ移行",
-    "/pasr-admin prune - migrate 後に旧 absence/member_master List を削除"
+    "/pasr-admin status - 直近実行の要約表示"
   ].join("\n");
-
-const buildSlackListLink = (teamId: string, listId: string): string =>
-  `https://app.slack.com/lists/${teamId}/${listId}`;
-
-const formatListLinks = (teamId: string, listIds: string[]): string =>
-  listIds.length > 0 ? listIds.map((listId) => buildSlackListLink(teamId, listId)).join(", ") : "none";
-
-const formatMigrationKind = (
-  teamId: string,
-  target: {
-    listName: string;
-    fromListIds: string[];
-    toListId: string;
-    sourceRows: number;
-    migratedRows: number;
-    skippedRows: number;
-    errors: number;
-    skipped: boolean;
-  }
-): string => {
-  if (target.skipped) {
-    return `${target.listName}: skip (up to date) list=${buildSlackListLink(teamId, target.toListId)}`;
-  }
-  return [
-    `${target.listName}: source=${target.sourceRows} migrated=${target.migratedRows} skipped=${target.skippedRows} errors=${target.errors}`,
-    `from: ${formatListLinks(teamId, target.fromListIds)}`,
-    `to: ${buildSlackListLink(teamId, target.toListId)}`
-  ].join("\n");
-};
 
 type CommandKind = "self" | "admin" | "unsupported";
 
 const SELF_ACTIONS = ["help", "list", "settings", "update", "register"] as const;
-const ADMIN_ACTIONS = ["help", "run", "status", "migrate", "prune"] as const;
+const ADMIN_ACTIONS = ["help", "run", "status"] as const;
 
 export const getCommandKind = (command: string): CommandKind => {
   if (command === "/pasr") return "self";
@@ -354,23 +328,18 @@ const handleSelfImmediateText = async (
         mode: "deferred",
         ackText: "編集フォームを準備しています…",
         run: async () => {
-          const { absenceListId } = await resolveActiveListIds(config);
-          const listResponse = await slackApi.listItems(config, absenceListId, {
-            fetchContext: "absence_update_date"
-          });
-          const records: AbsenceRecord[] = [];
-          for (const item of listResponse.items ?? []) {
-            const parsed = parseAbsence(item);
-            if (parsed.ok) records.push(parsed.record);
-          }
           const { day: todayJst } = getJstDateParts();
-          const matches = findOwnAbsenceByStartDate(records, payload.userId, parse.startDate, todayJst);
+          const matches = await findOwnAbsenceRecordsByStartDate(
+            config,
+            payload.userId,
+            parse.startDate,
+            todayJst
+          );
           if (matches.length === 1) {
             await openAbsenceEditModal(config, {
               triggerId: payload.triggerId,
               userId: payload.userId,
-              record: matches[0],
-              absenceListId
+              record: matches[0]
             });
             return;
           }
@@ -387,12 +356,7 @@ const handleSelfImmediateText = async (
         mode: "deferred",
         ackText: "編集フォームを準備しています…",
         run: async () => {
-          const resolved = await resolveOwnAbsenceForEdit(
-            config,
-            payload.userId,
-            itemId,
-            "absence_update_item"
-          );
+          const resolved = await resolveOwnAbsenceForEdit(config, payload.userId, itemId);
           if (!resolved.ok) {
             await notifySlashCommandEphemeral(
               config,
@@ -404,8 +368,7 @@ const handleSelfImmediateText = async (
           await openAbsenceEditModal(config, {
             triggerId: payload.triggerId,
             userId: payload.userId,
-            record: resolved.record,
-            absenceListId: resolved.absenceListId
+            record: resolved.record
           });
         }
       };
@@ -465,22 +428,19 @@ const getAdminImmediateText = async (
   if (action === "help") return buildAdminHelpText();
   if (action === "status") {
     const summary = await readLastRunSummary(config);
-    const memberMasterListId = await readPersistedMemberMasterListId(config);
+    const dbSchema = await checkDbSchema(config);
+    const importCompleted = await readImportCompleted(config);
+    const dbLine = `db: ${dbSchema === "ok" ? "ok" : "schema_missing"}`;
+    const importLine = `import: ${importCompleted ? "completed" : "pending"}`;
     return summary
       ? [
           `last run: processed=${summary.processed} sent=${summary.sent} skipped=${summary.skipped} deleted=${summary.deleted ?? 0} errors=${summary.errors}`,
           `run_id: ${summary.runId}`,
-          `absent: ${buildSlackListLink(payload.teamId, summary.listId)}`,
-          `master: ${memberMasterListId ? buildSlackListLink(payload.teamId, memberMasterListId) : "N/A"}`,
+          dbLine,
+          importLine,
           `executed_at: ${summary.executedAt}`
         ].join("\n")
-      : "No run history yet.";
-  }
-  if (action === "migrate") {
-    return undefined;
-  }
-  if (action === "prune") {
-    return undefined;
+      : [`No run history yet.`, dbLine, importLine].join("\n");
   }
   return undefined;
 };
@@ -504,7 +464,7 @@ export const runSlackCommandAsync = async (
     return;
   }
 
-  if (!isAdminAction(action) || (action !== "run" && action !== "migrate" && action !== "prune")) {
+  if (!isAdminAction(action) || action !== "run") {
     console.warn(
       JSON.stringify({
         level: "warn",
@@ -548,62 +508,6 @@ export const runSlackCommandAsync = async (
       ].join("\n");
       await postEphemeralResponse(config, payload, resultText);
       return;
-    }
-
-    if (action === "migrate") {
-      const result = await runListMigration(config);
-      if (result.skippedMigration) {
-        const resultText = [
-          "migrate skip: absence/member_master は最新スキーマです。",
-          formatMigrationKind(payload.teamId, result.absence),
-          formatMigrationKind(payload.teamId, result.memberMaster)
-        ].join("\n");
-        await postEphemeralResponse(config, payload, resultText);
-        return;
-      }
-      const totalErrors = result.absence.errors + result.memberMaster.errors;
-      const status = totalErrors > 0 ? "一部エラーあり" : "完了";
-      console.log(
-        JSON.stringify({
-          level: "info",
-          event: "slash_command_migrate_done",
-          command: payload.command,
-          action,
-          trigger_id: payload.triggerId,
-          user_id: payload.userId,
-          team_id: payload.teamId,
-          absence: result.absence,
-          memberMaster: result.memberMaster
-        })
-      );
-      const resultText = [
-        `migrate ${status}`,
-        formatMigrationKind(payload.teamId, result.absence),
-        formatMigrationKind(payload.teamId, result.memberMaster),
-        ...result.hints
-      ].join("\n");
-      await postEphemeralResponse(config, payload, resultText);
-      return;
-    }
-
-    if (action === "prune") {
-      const result = await runListPrune(config);
-      if (result.skippedPrune) {
-        const resultText = ["prune skip: 先に /pasr-admin migrate を実行してください。", ...result.hints].join("\n");
-        await postEphemeralResponse(config, payload, resultText);
-        return;
-      }
-      const totalErrors = result.absence.errors + result.memberMaster.errors;
-      const status = totalErrors > 0 ? "一部エラーあり" : "完了";
-      const resultText = [
-        `prune ${status}`,
-        `absence: found=${result.absence.found} deleted=${result.absence.deleted} errors=${result.absence.errors}`,
-        `member_master: found=${result.memberMaster.found} deleted=${result.memberMaster.deleted} errors=${result.memberMaster.errors}`,
-        `active absence: ${buildSlackListLink(payload.teamId, result.absence.activeListId)}`,
-        `active member_master: ${buildSlackListLink(payload.teamId, result.memberMaster.activeListId)}`,
-        ...result.hints
-      ].join("\n");
-      await postEphemeralResponse(config, payload, resultText);
     }
   } catch (error) {
     if (isTransientError(error)) throw error;
@@ -704,30 +608,26 @@ export const handleSlackInteraction = async (
   const defaultUsers = parseSelectedUsers(usersValue);
   const active = parseActiveValue(activeValue);
   const defaultRegistrationNotify = parseRegistrationNotifyMode(parseStaticSelectValue(registrationNotifyValue));
+  const gateMessage = await getImportGateMessage(config);
+  if (gateMessage) {
+    return { ok: false, error: gateMessage, errorBlockId: "active_block" };
+  }
   try {
-    const memberMasterListId = await ensureMemberMasterList(config);
-    const resolved = await slackApi.resolveMemberMasterRecord(config, memberMasterListId, metadata.userId);
-    await slackApi.updateMemberMasterItem(
-      config,
-      memberMasterListId,
-      resolved.kept,
-      metadata.userId,
-      defaultChannels,
-      defaultUsers,
-      active,
-      defaultRegistrationNotify
-    );
-    if (resolved.deleted.length > 0) {
-      console.warn(
-        JSON.stringify({
-          level: "warn",
-          event: "member_master_duplicates_cleaned_on_update",
-          targetUser: metadata.userId,
-          deletedCount: resolved.deleted.length,
-          keptRecordId: resolved.kept
-        })
-      );
+    await assertDbSchema(config);
+  } catch (error) {
+    if (error instanceof DbSchemaMismatchError) {
+      return { ok: false, error: "データベースの準備が完了していません。", errorBlockId: "active_block" };
     }
+    throw error;
+  }
+  try {
+    await upsertMemberMaster(config, {
+      targetUser: metadata.userId,
+      active,
+      defaultNotifyChannels: defaultChannels,
+      defaultNotifyUsers: defaultUsers,
+      defaultRegistrationNotify
+    });
     return { ok: true };
   } catch (error) {
     return {

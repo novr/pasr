@@ -1,13 +1,17 @@
 import type { AppConfig } from "../config";
-import { filterToday, filterEndedBefore, groupByChannel, parseAbsence, type AbsenceRecord, type SkipReason } from "../domain/absence";
+import { filterToday, groupByChannel, type AbsenceRecord, type SkipReason } from "../domain/absence";
 import { formatAttendanceNoticeLine } from "../domain/absence-registration";
-import { pickListField, toBooleanValue, toStringValue } from "../domain/slack-list-value";
-import { ensureMemberMasterList, runSetup } from "./setup";
-import { slackApi, type SlackListItem } from "../slack/api";
+import {
+  deleteAbsenceById,
+  listAbsenceIdsEndedBefore,
+  listAllAbsences
+} from "../db/absence-repository";
+import { ensureMemberMasterActive, loadMemberMasterActiveMap } from "../db/member-master-repository";
+import { assertDbSchema, checkDbSchema, DbSchemaMismatchError } from "../db/schema-check";
+import { slackApi } from "../slack/api";
 import {
   writeLastRunSummary,
   readPostedDirectMessageTs,
-  readPersistedListId,
   readPostedMessageTs,
   writePostedDirectMessageTs,
   writePostedMessageTs
@@ -16,13 +20,13 @@ import {
 type DailyResult = {
   runId: string;
   trigger: "manual" | "scheduled";
-  listId: string;
   processed: number;
   sent: number;
   skipped: number;
   errors: number;
   deleted: number;
   skipReasons: Record<SkipReason, number>;
+  dbStatus: string;
 };
 
 type RunContext = {
@@ -37,100 +41,6 @@ const zeroedReasons = (): Record<SkipReason, number> => ({
   invalid_date_range: 0,
   inactive_user_master: 0
 });
-
-type MemberMasterRecord = {
-  itemId: string;
-  targetUser: string;
-  active: boolean;
-};
-
-const parseMemberMaster = (item: SlackListItem): MemberMasterRecord | undefined => {
-  const targetUser = toStringValue(pickListField(item, "target_user")) || toStringValue(pickListField(item, "member_key"));
-  if (!targetUser) return undefined;
-  const active = toBooleanValue(pickListField(item, "active")) ?? true;
-  return {
-    itemId: item.id,
-    targetUser,
-    active
-  };
-};
-
-const loadMemberMasterMap = async (
-  config: AppConfig,
-  memberMasterListId: string
-): Promise<Map<string, MemberMasterRecord>> => {
-  const masterItems = await slackApi.listItems(config, memberMasterListId);
-  const memberMasterMap = new Map<string, MemberMasterRecord>();
-  for (const item of masterItems.items ?? []) {
-    const parsed = parseMemberMaster(item);
-    if (!parsed) continue;
-    if (memberMasterMap.has(parsed.targetUser)) {
-      console.warn(
-        JSON.stringify({
-          level: "warn",
-          event: "duplicate_member_master_user",
-          targetUser: parsed.targetUser,
-          itemId: parsed.itemId
-        })
-      );
-      continue;
-    }
-    memberMasterMap.set(parsed.targetUser, parsed);
-  }
-  return memberMasterMap;
-};
-
-const markSkipped = (
-  result: DailyResult,
-  context: RunContext,
-  listId: string,
-  itemId: string,
-  reason: SkipReason
-): void => {
-  result.skipped += 1;
-  result.skipReasons[reason] += 1;
-  console.warn(
-    JSON.stringify({
-      level: "warn",
-      event: "skip_record",
-      run_id: context.runId,
-      trigger: context.trigger,
-      listId,
-      itemId,
-      reason
-    })
-  );
-};
-
-const resolveMasterForRecord = async (
-  config: AppConfig,
-  memberMasterListId: string,
-  memberMasterMap: Map<string, MemberMasterRecord>,
-  record: AbsenceRecord
-): Promise<MemberMasterRecord | undefined> => {
-  const existing = memberMasterMap.get(record.targetUser);
-  if (existing) return existing;
-  try {
-    await slackApi.createMemberMasterItem(config, memberMasterListId, record.targetUser, []);
-    const created: MemberMasterRecord = {
-      itemId: "auto-created",
-      targetUser: record.targetUser,
-      active: true
-    };
-    memberMasterMap.set(record.targetUser, created);
-    return created;
-  } catch (error) {
-    console.warn(
-      JSON.stringify({
-        level: "warn",
-        event: "member_master_auto_insert_failed",
-        targetUser: record.targetUser,
-        message: error instanceof Error ? error.message : String(error)
-      })
-    );
-    return undefined;
-  }
-};
 
 const toJstDate = (): { day: string; weekday: number } => {
   const now = new Date();
@@ -193,11 +103,30 @@ const groupByNotifyUser = (records: AbsenceRecord[]): Map<string, AbsenceRecord[
   return grouped;
 };
 
+const markSkipped = (
+  result: DailyResult,
+  context: RunContext,
+  itemId: string,
+  reason: SkipReason
+): void => {
+  result.skipped += 1;
+  result.skipReasons[reason] += 1;
+  console.warn(
+    JSON.stringify({
+      level: "warn",
+      event: "skip_record",
+      run_id: context.runId,
+      trigger: context.trigger,
+      itemId,
+      reason
+    })
+  );
+};
+
 const sendChannelNotifications = async (
   config: AppConfig,
   context: RunContext,
   result: DailyResult,
-  listId: string,
   day: string,
   grouped: Map<string, AbsenceRecord[]>
 ): Promise<void> => {
@@ -231,7 +160,6 @@ const sendChannelNotifications = async (
               event: "notify_fallback_failed",
               run_id: context.runId,
               trigger: context.trigger,
-              listId,
               channel,
               message: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
             })
@@ -246,7 +174,6 @@ const sendChannelNotifications = async (
           event: "notify_failed",
           run_id: context.runId,
           trigger: context.trigger,
-          listId,
           channel,
           message
         })
@@ -259,7 +186,6 @@ const sendDirectMessageNotifications = async (
   config: AppConfig,
   context: RunContext,
   result: DailyResult,
-  listId: string,
   day: string,
   groupedNotifyUsers: Map<string, AbsenceRecord[]>
 ): Promise<void> => {
@@ -291,7 +217,6 @@ const sendDirectMessageNotifications = async (
           event: "notify_user_dm_sent",
           run_id: context.runId,
           trigger: context.trigger,
-          listId,
           notifyUser
         })
       );
@@ -303,7 +228,6 @@ const sendDirectMessageNotifications = async (
           event: "notify_user_dm_failed",
           run_id: context.runId,
           trigger: context.trigger,
-          listId,
           notifyUser,
           message: error instanceof Error ? error.message : String(error)
         })
@@ -316,49 +240,12 @@ const deleteEndedAbsences = async (
   config: AppConfig,
   context: RunContext,
   result: DailyResult,
-  listId: string,
-  day: string,
-  parsed: ReturnType<typeof parseAbsence>[]
+  day: string
 ): Promise<void> => {
-  const endedRecords: AbsenceRecord[] = [];
-  for (const item of parsed) {
-    if (!item.ok) {
-      try {
-        await slackApi.deleteAbsenceItem(config, listId, item.itemId);
-        result.deleted += 1;
-        console.log(
-          JSON.stringify({
-            level: "info",
-            event: "parse_failed_absence_deleted",
-            run_id: context.runId,
-            trigger: context.trigger,
-            listId,
-            itemId: item.itemId,
-            reason: item.reason
-          })
-        );
-      } catch (error) {
-        result.errors += 1;
-        console.error(
-          JSON.stringify({
-            level: "error",
-            event: "absence_delete_failed",
-            run_id: context.runId,
-            trigger: context.trigger,
-            listId,
-            itemId: item.itemId,
-            message: error instanceof Error ? error.message : String(error)
-          })
-        );
-      }
-      continue;
-    }
-    endedRecords.push(item.record);
-  }
-
-  for (const record of filterEndedBefore(endedRecords, day)) {
+  const ids = await listAbsenceIdsEndedBefore(config, day);
+  for (const itemId of ids) {
     try {
-      await slackApi.deleteAbsenceItem(config, listId, record.itemId);
+      await deleteAbsenceById(config, itemId);
       result.deleted += 1;
       console.log(
         JSON.stringify({
@@ -366,9 +253,7 @@ const deleteEndedAbsences = async (
           event: "ended_absence_deleted",
           run_id: context.runId,
           trigger: context.trigger,
-          listId,
-          itemId: record.itemId,
-          end_date: record.endDate
+          itemId
         })
       );
     } catch (error) {
@@ -379,8 +264,7 @@ const deleteEndedAbsences = async (
           event: "absence_delete_failed",
           run_id: context.runId,
           trigger: context.trigger,
-          listId,
-          itemId: record.itemId,
+          itemId,
           message: error instanceof Error ? error.message : String(error)
         })
       );
@@ -392,49 +276,69 @@ export const runDailyNotify = async (
   config: AppConfig,
   context: RunContext
 ): Promise<DailyResult> => {
-  let resolvedListId = "";
+  const dbStatus = await checkDbSchema(config);
   const result: DailyResult = {
     runId: context.runId,
     trigger: context.trigger,
-    listId: resolvedListId,
     processed: 0,
     sent: 0,
     skipped: 0,
     errors: 0,
     deleted: 0,
-    skipReasons: zeroedReasons()
+    skipReasons: zeroedReasons(),
+    dbStatus
   };
-  const { day } = toJstDate();
-  let listId = await readPersistedListId(config);
-  if (!listId) {
-    const setupResult = await runSetup(config);
-    listId = setupResult.listId;
-  }
-  resolvedListId = listId;
-  result.listId = resolvedListId;
-  const memberMasterListId = await ensureMemberMasterList(config);
-  const memberMasterMap = await loadMemberMasterMap(config, memberMasterListId);
 
-  const listResponse = await slackApi.listItems(config, listId);
-  const parsed = (listResponse.items ?? []).map(parseAbsence);
-  result.processed = parsed.length;
+  if (dbStatus !== "ok") {
+    result.errors += 1;
+    console.error(JSON.stringify({ level: "error", event: "daily_notify_db_schema_missing" }));
+    return result;
+  }
+
+  try {
+    await assertDbSchema(config);
+  } catch (error) {
+    if (error instanceof DbSchemaMismatchError) {
+      result.errors += 1;
+      return result;
+    }
+    throw error;
+  }
+
+  const { day } = toJstDate();
+  const memberMasterMap = await loadMemberMasterActiveMap(config);
+  const records = await listAllAbsences(config);
+  result.processed = records.length;
 
   const validRecords: AbsenceRecord[] = [];
   const dmCandidateRecords: AbsenceRecord[] = [];
-  for (const item of parsed) {
-    if (!item.ok) {
-      markSkipped(result, context, resolvedListId, item.itemId, item.reason);
+  for (const record of records) {
+    if (!record.targetUser) {
+      markSkipped(result, context, record.itemId, "missing_target_user");
       continue;
     }
-    const record = item.record;
-    const master = await resolveMasterForRecord(config, memberMasterListId, memberMasterMap, record);
-    if (master && !master.active) {
-      markSkipped(result, context, resolvedListId, record.itemId, "inactive_user_master");
+    if (!record.startDate) {
+      markSkipped(result, context, record.itemId, "missing_start_date");
+      continue;
+    }
+    if (record.startDate > record.endDate) {
+      markSkipped(result, context, record.itemId, "invalid_date_range");
+      continue;
+    }
+
+    let master = memberMasterMap.get(record.targetUser);
+    if (!master) {
+      const created = await ensureMemberMasterActive(config, record.targetUser);
+      master = { targetUser: created.targetUser, active: created.active };
+      memberMasterMap.set(created.targetUser, master);
+    }
+    if (!master.active) {
+      markSkipped(result, context, record.itemId, "inactive_user_master");
       continue;
     }
     dmCandidateRecords.push(record);
     if (record.notifyChannels.length === 0) {
-      markSkipped(result, context, resolvedListId, record.itemId, "missing_notify_channels");
+      markSkipped(result, context, record.itemId, "missing_notify_channels");
       continue;
     }
     validRecords.push(record);
@@ -451,12 +355,12 @@ export const runDailyNotify = async (
             [] as AbsenceRecord[]
           ])
         );
-  await sendChannelNotifications(config, context, result, resolvedListId, day, grouped);
+  await sendChannelNotifications(config, context, result, day, grouped);
 
   const groupedNotifyUsers = groupByNotifyUser(todaysForDm);
-  await sendDirectMessageNotifications(config, context, result, resolvedListId, day, groupedNotifyUsers);
+  await sendDirectMessageNotifications(config, context, result, day, groupedNotifyUsers);
 
-  await deleteEndedAbsences(config, context, result, resolvedListId, day, parsed);
+  await deleteEndedAbsences(config, context, result, day);
 
   console.log(
     JSON.stringify({
@@ -464,33 +368,33 @@ export const runDailyNotify = async (
       event: "daily_notify_done",
       run_id: context.runId,
       trigger: context.trigger,
-      listId: resolvedListId,
       processed: result.processed,
       sent: result.sent,
       skipped: result.skipped,
       errors: result.errors,
       deleted: result.deleted,
-      skipReasons: result.skipReasons
+      skipReasons: result.skipReasons,
+      dbStatus: result.dbStatus
     })
   );
   try {
     await writeLastRunSummary(config, {
       runId: result.runId,
       trigger: result.trigger,
-      listId: result.listId,
       processed: result.processed,
       sent: result.sent,
       skipped: result.skipped,
       errors: result.errors,
       deleted: result.deleted,
-      executedAt: new Date().toISOString()
+      executedAt: new Date().toISOString(),
+      dbStatus: result.dbStatus
     });
   } catch (error) {
     console.warn(
       JSON.stringify({
         level: "warn",
         event: "write_last_run_summary_failed",
-        run_id: result.runId,
+        run_id: context.runId,
         message: error instanceof Error ? error.message : String(error)
       })
     );

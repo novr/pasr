@@ -4,7 +4,8 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --test-scheduled --port 8787",
+    "dev": "wrangler dev --test-scheduled --port 8787 --persist-to=./.wrangler/state",
+    "db:migrate:local": "wrangler d1 migrations apply pasr-db --local",
     "debug:mention-ai": "node --experimental-strip-types scripts/debug-mention-ai.ts",
     "deploy": "wrangler deploy",
     "types": "wrangler types",

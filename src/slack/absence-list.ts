@@ -1,13 +1,8 @@
 import type { AppConfig } from "../config";
-import {
-  filterOwnFutureAbsences,
-  parseAbsence,
-  type AbsenceRecord
-} from "../domain/absence";
+import type { AbsenceRecord } from "../domain/absence";
 import { formatAbsenceListLine } from "../domain/absence-registration";
 import { getJstDateParts } from "../domain/jst-date";
-import { resolveActiveListIds } from "../jobs/setup";
-import { slackApi } from "./api";
+import { deleteAbsenceById, getAbsenceById, listAbsencesByUserFuture } from "../db/absence-repository";
 import type { SlackCommandPayload } from "./command";
 import { postUserFacingMessage } from "./user-message";
 
@@ -85,15 +80,8 @@ export const showOwnAbsenceList = async (
   options?: { prefixMessage?: string; includeEdit?: boolean }
 ): Promise<void> => {
   try {
-    const { absenceListId } = await resolveActiveListIds(config);
     const { day: todayJst } = getJstDateParts();
-    const listResponse = await slackApi.listItems(config, absenceListId, { fetchContext: "absence_list" });
-    const records: AbsenceRecord[] = [];
-    for (const item of listResponse.items ?? []) {
-      const parsed = parseAbsence(item);
-      if (parsed.ok) records.push(parsed.record);
-    }
-    const own = filterOwnFutureAbsences(records, payload.userId, todayJst);
+    const own = await listAbsencesByUserFuture(config, payload.userId, todayJst);
     const prefixParts: string[] = [];
     if (options?.prefixMessage) prefixParts.push(options.prefixMessage);
     if (own.length === 0) {
@@ -101,7 +89,7 @@ export const showOwnAbsenceList = async (
     }
     const { blocks, omitted } = buildOwnAbsenceListBlocks(own, { includeEdit: options?.includeEdit });
     if (omitted > 0) {
-      prefixParts.push(`他 ${omitted} 件は省略しました。Slack List で確認してください。`);
+      prefixParts.push(`他 ${omitted} 件は省略しました。`);
     }
     const text = prefixParts.length > 0 ? prefixParts.join("\n") : "あなたの不在一覧です。";
     if (payload.responseUrl) {
@@ -170,19 +158,16 @@ export const handleAbsenceListInteraction = async (
     ok: true,
     followUp: async () => {
       try {
-        const { absenceListId } = await resolveActiveListIds(config);
-        const listResponse = await slackApi.listItems(config, absenceListId, { fetchContext: "absence_delete" });
-        const item = (listResponse.items ?? []).find((entry) => entry.id === itemId);
-        if (!item) {
+        const record = await getAbsenceById(config, itemId);
+        if (!record) {
           await postResponseUrlEphemeral(responseUrl, "対象の不在が見つかりませんでした。");
           return;
         }
-        const parsed = parseAbsence(item);
-        if (!parsed.ok || parsed.record.targetUser !== actorUserId) {
+        if (record.targetUser !== actorUserId) {
           await postResponseUrlEphemeral(responseUrl, "本人の不在のみ削除できます。");
           return;
         }
-        await slackApi.deleteAbsenceItem(config, absenceListId, itemId);
+        await deleteAbsenceById(config, itemId);
         await reloadListAfterDelete(
           config,
           actorUserId,

@@ -1,0 +1,26 @@
+import { describe, expect, it } from "vitest";
+import { ensureMemberMasterActive, getMemberMaster, upsertMemberMaster } from "./member-master-repository";
+import { createTestConfigWithImportCompleted, createMockKv } from "../test/mock-kv";
+
+describe("member-master-repository", () => {
+  it("upserts and reads member master", async () => {
+    const config = await createTestConfigWithImportCompleted(createMockKv());
+    await upsertMemberMaster(config, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: ["C1"],
+      defaultNotifyUsers: ["U2"],
+      defaultRegistrationNotify: "both"
+    });
+    const row = await getMemberMaster(config, "U1");
+    expect(row?.defaultNotifyChannels).toEqual(["C1"]);
+    expect(row?.defaultRegistrationNotify).toBe("both");
+  });
+
+  it("ensureMemberMasterActive creates minimal row", async () => {
+    const config = await createTestConfigWithImportCompleted(createMockKv());
+    const row = await ensureMemberMasterActive(config, "U9");
+    expect(row.active).toBe(true);
+    expect(row.defaultNotifyChannels).toEqual([]);
+  });
+});

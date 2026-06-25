@@ -27,7 +27,7 @@
         "command": "/pasr-admin",
         "url": "REPLACE_WITH_WORKER_URL/slack/command",
         "description": "PASR管理",
-        "usage_hint": "[run, status, migrate, prune]",
+        "usage_hint": "[run, status]",
         "should_escape": true
       }
     ]
@@ -41,12 +41,8 @@
         "chat:write",
         "chat:write.public",
         "commands",
-        "files:read",
-        "files:write",
         "im:history",
         "im:write",
-        "lists:read",
-        "lists:write",
         "users:read"
       ]
     }

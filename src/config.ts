@@ -1,20 +1,8 @@
 import type { AdminTaskMessage } from "./queue/admin-task";
 
-export type Env = {
-  PASR_STATE: KVNamespace;
-  ADMIN_TASK_QUEUE: Queue<AdminTaskMessage>;
-  AI?: Ai;
-  SLACK_BOT_TOKEN: string;
-  SLACK_SIGNING_SECRET: string;
-  RUN_ENDPOINT_TOKEN?: string;
-  DEBUG_ENDPOINTS_ENABLED?: string;
-  TZ: string;
-  SLACK_ADMIN_USER_IDS?: string;
-  SLACK_LIST_ACCESS_CHANNEL_IDS?: string;
-};
-
 export type AppConfig = {
   stateKv: KVNamespace;
+  db: D1Database;
   ai?: Ai;
   runEndpointToken: string;
   debugEndpointsEnabled: boolean;
@@ -22,7 +10,6 @@ export type AppConfig = {
   slackSigningSecret: string;
   timezone: string;
   adminUserIds: string[];
-  listAccessChannelIds: string[];
 };
 
 export const getConfig = (env: Env): AppConfig => {
@@ -38,9 +25,13 @@ export const getConfig = (env: Env): AppConfig => {
   if (!env.ADMIN_TASK_QUEUE) {
     throw new Error("Missing ADMIN_TASK_QUEUE binding");
   }
+  if (!env.PASR_DB) {
+    throw new Error("Missing PASR_DB binding");
+  }
 
   return {
     stateKv: env.PASR_STATE,
+    db: env.PASR_DB,
     ai: env.AI,
     runEndpointToken: env.RUN_ENDPOINT_TOKEN ?? "",
     debugEndpointsEnabled: env.DEBUG_ENDPOINTS_ENABLED === "true" || env.DEBUG_ENDPOINTS_ENABLED === "1",
@@ -48,10 +39,6 @@ export const getConfig = (env: Env): AppConfig => {
     slackSigningSecret: env.SLACK_SIGNING_SECRET,
     timezone: env.TZ || "Asia/Tokyo",
     adminUserIds: (env.SLACK_ADMIN_USER_IDS ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0),
-    listAccessChannelIds: (env.SLACK_LIST_ACCESS_CHANNEL_IDS ?? "")
       .split(",")
       .map((value) => value.trim())
       .filter((value) => value.length > 0)

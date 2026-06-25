@@ -1,5 +1,7 @@
-import { getConfig, type Env } from "./config";
+import { getConfig } from "./config";
+import { hasValidRunToken } from "./auth/run-token";
 import { runDailyNotify } from "./jobs/daily-notify";
+import { importFromSlackLists, ImportConflictError } from "./import/from-slack-lists";
 import { enqueueAdminTask, processAdminTaskBatch, type AdminTaskMessage } from "./queue/admin-task";
 import {
   buildQueuedAdminAck,
@@ -43,14 +45,6 @@ const isWeekdayInJst = (): boolean => {
 };
 
 const newRunId = (): string => crypto.randomUUID();
-
-const hasValidRunToken = (request: Request, expectedToken: string): boolean => {
-  if (!expectedToken) return false;
-  const auth = request.headers.get("authorization");
-  if (!auth) return false;
-  const [scheme, token] = auth.split(" ");
-  return scheme === "Bearer" && token === expectedToken;
-};
 
 type SlackEventEnvelope = {
   type: string;
@@ -135,7 +129,7 @@ export default {
 
     if (pathname === "/run" && request.method === "POST") {
       const runId = newRunId();
-      if (!hasValidRunToken(request, config.runEndpointToken)) {
+      if (!(await hasValidRunToken(request, config.runEndpointToken))) {
         console.warn(
           JSON.stringify({
             level: "warn",
@@ -150,11 +144,28 @@ export default {
       return json({ ok: true, runId: result.runId });
     }
 
+    if (pathname === "/admin/import-lists" && request.method === "POST") {
+      if (!(await hasValidRunToken(request, config.runEndpointToken))) {
+        return json({ ok: false, error: "Unauthorized" }, 401);
+      }
+      try {
+        const result = await importFromSlackLists(config);
+        return json({ ok: true, ...result });
+      } catch (error) {
+        if (error instanceof ImportConflictError) {
+          return json({ ok: false, error: error.message, details: error.details }, 409);
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(JSON.stringify({ level: "error", event: "import_lists_failed", message }));
+        return json({ ok: false, error: message }, 500);
+      }
+    }
+
     if (pathname === "/debug/mention-ai" && request.method === "POST") {
       if (!config.debugEndpointsEnabled) {
         return json({ ok: false, error: "Not Found" }, 404);
       }
-      if (!hasValidRunToken(request, config.runEndpointToken)) {
+      if (!(await hasValidRunToken(request, config.runEndpointToken))) {
         return json({ ok: false, error: "Unauthorized" }, 401);
       }
       let body: { text?: string; todayJst?: string };
@@ -361,6 +372,7 @@ export default {
 
     if (
       pathname === "/run" ||
+      pathname === "/admin/import-lists" ||
       pathname === "/health" ||
       pathname === "/debug/mention-ai" ||
       pathname === "/slack/events" ||

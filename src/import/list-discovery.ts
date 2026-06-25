@@ -1,5 +1,5 @@
 import type { AppConfig } from "../config";
-import { isSkippableSlackLookupError, slackApiGet } from "./client";
+import { isSkippableSlackLookupError, slackApiGet } from "../slack/client";
 
 export const LIST_DISCOVERY_MAX_PAGES = 10;
 
