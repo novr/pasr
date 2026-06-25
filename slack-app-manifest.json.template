@@ -47,8 +47,7 @@
         "im:write",
         "lists:read",
         "lists:write",
-        "users:read",
-        "views:write"
+        "users:read"
       ]
     }
   },
