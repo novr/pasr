@@ -1,0 +1,68 @@
+{
+  "display_information": {
+    "name": "PASR",
+    "description": "Planned absence, shared right",
+    "background_color": "#5e4db2",
+    "long_description": "PASR（Planned absence, shared right）は、チームの不在予定を登録し、平日の朝に自動で共有するアプリです。\r\n`/pasr register` で不在を登録し、`/pasr list` で一覧・編集、`/pasr settings` で通知先を管理できます。\r\n平日 JST 9:00 にチャンネル投稿や DM で日次通知を送ります。"
+  },
+  "features": {
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    },
+    "bot_user": {
+      "display_name": "PASR",
+      "always_online": false
+    },
+    "slash_commands": [
+      {
+        "command": "/pasr",
+        "url": "REPLACE_WITH_WORKER_URL/slack/command",
+        "description": "不在管理",
+        "usage_hint": "[list, update <yyyy-mm-dd>, settings]",
+        "should_escape": true
+      },
+      {
+        "command": "/pasr-admin",
+        "url": "REPLACE_WITH_WORKER_URL/slack/command",
+        "description": "PASR管理",
+        "usage_hint": "[run, status, migrate, prune]",
+        "should_escape": true
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "channels:join",
+        "channels:read",
+        "chat:write",
+        "chat:write.public",
+        "commands",
+        "files:read",
+        "files:write",
+        "im:history",
+        "im:write",
+        "lists:read",
+        "lists:write",
+        "users:read",
+        "views:write"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "REPLACE_WITH_WORKER_URL/slack/events",
+      "bot_events": ["app_home_opened", "app_mention", "message.im"]
+    },
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "REPLACE_WITH_WORKER_URL/slack/interactions"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}
