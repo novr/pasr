@@ -144,7 +144,7 @@ export const buildAbsenceRegisterModalView = (params: {
     userId: params.userId,
     channelId: params.channelId
   } satisfies AbsenceRegisterMetadata),
-  title: { type: "plain_text", text: "不在登録" },
+  title: { type: "plain_text", text: "不在予定登録" },
   submit: { type: "plain_text", text: "登録" },
   close: { type: "plain_text", text: "キャンセル" },
   blocks: [
@@ -157,7 +157,7 @@ export const buildAbsenceRegisterModalView = (params: {
       elements: [
         {
           type: "mrkdwn",
-          text: "当日の不在は、9:00 JST の日次通知前は選択した登録通知に従います。9:00 以降の登録は自動で通知します（設定済みの CH/DM）。"
+          text: "当日の不在予定は、9:00 JST の日次通知前は選択した登録通知に従います。9:00 以降の登録は自動で通知します（設定済みの CH/DM）。"
         }
       ]
     },

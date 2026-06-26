@@ -32,7 +32,7 @@ export const ABSENCE_MENTION_CONFIRM_ACTION_ID = "pasr_mention_confirm";
 export const ABSENCE_MENTION_CANCEL_ACTION_ID = "pasr_mention_cancel";
 
 const MENTION_FORM_FALLBACK_SUFFIX = "下のボタンからフォームで登録してください。";
-const MENTION_PROGRESS_MESSAGE = "不在内容を確認しています…";
+const MENTION_PROGRESS_MESSAGE = "不在予定内容を確認しています…";
 
 export type MentionRequestEnvelope = {
   event_id?: string;
@@ -61,7 +61,7 @@ const mentionRegisterBlocks = (): Array<Record<string, unknown>> => [
       {
         type: "button",
         action_id: ABSENCE_REGISTER_OPEN_ACTION_ID,
-        text: { type: "plain_text", text: "不在を登録" },
+        text: { type: "plain_text", text: "不在予定を登録" },
         style: "primary"
       }
     ]
@@ -72,7 +72,7 @@ export const postMentionRegisterButton = async (
   config: AppConfig,
   channelId: string,
   userId: string,
-  text = "不在を登録する場合は下のボタンを押してください。"
+  text = "不在予定を登録する場合は下のボタンを押してください。"
 ): Promise<void> => {
   await postUserFacingMessage(config, { channelId, userId, text, blocks: mentionRegisterBlocks() });
 };
@@ -91,7 +91,7 @@ const formatAiFailureUserMessage = (error?: Error): string => {
   if (message.includes("deprecated")) {
     return `自動読み取りは一時的に利用できません。${MENTION_FORM_FALLBACK_SUFFIX}`;
   }
-  return `不在内容を読み取れませんでした。${MENTION_FORM_FALLBACK_SUFFIX}`;
+  return `不在予定内容を読み取れませんでした。${MENTION_FORM_FALLBACK_SUFFIX}`;
 };
 
 const formatMentionValidationError = (
@@ -259,7 +259,7 @@ export const handleAppMentionWithText = async (
       config,
       channelId,
       userId,
-      `不在内容を読み取れませんでした。${MENTION_FORM_FALLBACK_SUFFIX}`
+      `不在予定内容を読み取れませんでした。${MENTION_FORM_FALLBACK_SUFFIX}`
     );
     return;
   }
@@ -301,7 +301,7 @@ export const handleAppMentionWithText = async (
   await postUserFacingMessage(config, {
     channelId,
     userId,
-    text: "不在登録の確認",
+    text: "不在予定登録の確認",
     blocks: buildConfirmBlocks({ draft, notifyLabel, confirmValue, ambiguousDateWarning })
   });
 

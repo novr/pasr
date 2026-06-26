@@ -16,7 +16,7 @@ const APP_HOME_INTRO_TEXT =
 
 const APP_HOME_USAGE_LINES = [
   "*使い方*",
-  "• `/pasr register` — 不在を登録",
+  "• `/pasr register` — 不在予定を登録",
   "• `/pasr list` — 一覧・編集・削除",
   "• `/pasr settings` — 通知設定",
   "• Messages タブから自然文（例: `明日 通院`）でも登録できます"
@@ -56,7 +56,7 @@ const buildAppHomeActionBlock = (): Record<string, unknown> => ({
     {
       type: "button",
       action_id: ABSENCE_REGISTER_OPEN_ACTION_ID,
-      text: { type: "plain_text", text: "不在を登録" },
+      text: { type: "plain_text", text: "不在予定を登録" },
       style: "primary"
     },
     {
@@ -67,7 +67,7 @@ const buildAppHomeActionBlock = (): Record<string, unknown> => ({
     {
       type: "button",
       action_id: APP_HOME_LIST_OPEN_ACTION_ID,
-      text: { type: "plain_text", text: "不在一覧" }
+      text: { type: "plain_text", text: "不在予定一覧" }
     }
   ]
 });
@@ -119,8 +119,8 @@ export const buildAppHomeBlocks = (data: AppHomeData): Array<Record<string, unkn
         type: "mrkdwn",
         text:
           data.absences.length === 0
-            ? "*今後の不在*\n登録済みの今後の不在はありません。"
-            : "*今後の不在*"
+            ? "*今後の不在予定*\n登録済みの今後の不在予定はありません。"
+            : "*今後の不在予定*"
       }
     }
   ];
@@ -132,7 +132,7 @@ export const buildAppHomeBlocks = (data: AppHomeData): Array<Record<string, unkn
     if (data.hasMoreAbsences) {
       blocks.push({
         type: "section",
-        text: { type: "mrkdwn", text: "… 「不在一覧」で確認" }
+        text: { type: "mrkdwn", text: "… 「不在予定一覧」で確認" }
       });
     }
   }

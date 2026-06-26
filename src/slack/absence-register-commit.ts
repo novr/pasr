@@ -111,7 +111,7 @@ export const commitAbsenceRegistration = async (
     );
     return {
       ok: false,
-      error: `不在の登録に失敗しました: ${message}`,
+      error: `不在予定の登録に失敗しました: ${message}`,
       errorBlockId: "start_block"
     };
   }

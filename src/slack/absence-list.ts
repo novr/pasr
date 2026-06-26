@@ -62,13 +62,13 @@ export const showOwnAbsenceList = async (
     const prefixParts: string[] = [];
     if (options?.prefixMessage) prefixParts.push(options.prefixMessage);
     if (own.length === 0) {
-      prefixParts.push("表示できる不在はありません。");
+      prefixParts.push("表示できる不在予定はありません。");
     }
     const { blocks, omitted } = buildOwnAbsenceListBlocks(own, { includeEdit: options?.includeEdit });
     if (omitted > 0) {
       prefixParts.push(`他 ${omitted} 件は省略しました。`);
     }
-    const text = prefixParts.length > 0 ? prefixParts.join("\n") : "あなたの不在一覧です。";
+    const text = prefixParts.length > 0 ? prefixParts.join("\n") : "あなたの不在予定一覧です。";
     if (payload.responseUrl) {
       await postResponseUrlEphemeral(payload.responseUrl, text, blocks.length > 0 ? blocks : undefined);
     } else if (payload.channelId) {
@@ -140,13 +140,13 @@ export const handleAbsenceListInteraction = async (
         const record = await getAbsenceById(config, itemId);
         if (!record) {
           if (responseUrl) {
-            await postResponseUrlEphemeral(responseUrl, "対象の不在が見つかりませんでした。");
+            await postResponseUrlEphemeral(responseUrl, "対象の不在予定が見つかりませんでした。");
           }
           return;
         }
         if (record.targetUser !== actorUserId) {
           if (responseUrl) {
-            await postResponseUrlEphemeral(responseUrl, "本人の不在のみ削除できます。");
+            await postResponseUrlEphemeral(responseUrl, "本人の不在予定のみ削除できます。");
           }
           return;
         }

@@ -133,7 +133,7 @@ export const buildRegistrationSuccessEphemeral = (params: {
     params.startDate === params.endDate
       ? params.startDate
       : `${params.startDate} 〜 ${params.endDate}`;
-  const lines = [`不在を登録しました（${period}）。`];
+  const lines = [`不在予定を登録しました（${period}）。`];
   if (params.selectedMode === params.resolvedMode) {
     lines.push(`登録通知: ${formatRegistrationNotifyModeLabel(params.resolvedMode)}`);
   } else {

@@ -110,7 +110,7 @@ export const buildAbsenceEditModalView = (params: {
     originalStartDate: params.record.startDate,
     ...(params.fromAppHome ? { fromAppHome: true } : {})
   } satisfies AbsenceEditMetadata),
-  title: { type: "plain_text", text: "不在編集" },
+  title: { type: "plain_text", text: "不在予定編集" },
   submit: { type: "plain_text", text: "保存" },
   close: { type: "plain_text", text: "キャンセル" },
   blocks: [
@@ -212,11 +212,11 @@ export const resolveOwnAbsenceForEdit = async (
 export const formatResolveOwnAbsenceForEditError = (reason: ResolveOwnAbsenceForEditFailure): string => {
   switch (reason) {
     case "not_found":
-      return "対象の不在が見つかりませんでした。";
+      return "対象の不在予定が見つかりませんでした。";
     case "forbidden":
-      return "本人の不在のみ編集できます。";
+      return "本人の不在予定のみ編集できます。";
     case "ended":
-      return "終了済みの不在は編集できません。";
+      return "終了済みの不在予定は編集できません。";
     default: {
       const _never: never = reason;
       return _never;
@@ -330,7 +330,7 @@ const handleEditSubmission = async (
     const message = error instanceof Error ? error.message : String(error);
     return {
       ok: false,
-      error: `不在の更新に失敗しました: ${message}`,
+      error: `不在予定の更新に失敗しました: ${message}`,
       errorBlockId: "start_block"
     };
   }

@@ -198,7 +198,7 @@ export const handleAppHomeInteraction = async (
           await notifyAppHomeUser(config, {
             channelId,
             userId,
-            text: "不在一覧を表示できませんでした。しばらく待ってから再度お試しください。"
+            text: "不在予定一覧を表示できませんでした。しばらく待ってから再度お試しください。"
           });
         }
       }

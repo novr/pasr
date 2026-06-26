@@ -211,7 +211,7 @@ describe("handleAppMentionWithText", () => {
     });
 
     const progressCalls = (postUserFacingMessageMock.mock.calls as unknown[][]).filter(
-      (call) => (call[1] as { text?: string })?.text === "不在内容を確認しています…"
+      (call) => (call[1] as { text?: string })?.text === "不在予定内容を確認しています…"
     );
     expect(progressCalls).toHaveLength(0);
     expect(postUserFacingMessageMock).toHaveBeenCalledWith(
@@ -219,7 +219,7 @@ describe("handleAppMentionWithText", () => {
       expect.objectContaining({
         channelId: "C1",
         userId: "U1",
-        text: "不在登録の確認",
+        text: "不在予定登録の確認",
         blocks: expect.any(Array)
       })
     );
@@ -256,7 +256,7 @@ describe("handleAppMentionWithText", () => {
       expect.objectContaining({
         channelId: "C1",
         userId: "U1",
-        text: "不在内容を読み取れませんでした。下のボタンからフォームで登録してください。",
+        text: "不在予定内容を読み取れませんでした。下のボタンからフォームで登録してください。",
         blocks: expect.any(Array)
       })
     );

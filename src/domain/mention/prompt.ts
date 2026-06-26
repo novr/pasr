@@ -15,7 +15,7 @@ export const buildAbsenceMentionPrompt = (
     {
       role: "system",
       content: [
-        "日本語メッセージから不在登録用フィールドを抽出する。",
+        "日本語メッセージから不在予定登録用フィールドを抽出する。",
         `今日は ${todayJst}（JST, YYYY-MM-DD）。`,
         'JSON のみ返す: {"startDate":"YYYY-MM-DD","endDate":"YYYY-MM-DD","note":"..."}。',
         "1日のみなら endDate は startDate と同じ。時刻・理由は note に入れる（日付語は note に入れない）。",
