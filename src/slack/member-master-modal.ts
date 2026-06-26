@@ -3,7 +3,7 @@ import {
   REGISTRATION_NOTIFY_SELECT_OPTIONS,
   type RegistrationNotifyMode
 } from "../domain/absence-registration";
-import { ensureMemberMasterList } from "../jobs/setup";
+import { resolveMasterContext } from "./member-master-context";
 import { slackApi } from "./api";
 
 export const MEMBER_MASTER_MODAL_CALLBACK_ID = "pasr_member_master_update";
@@ -93,20 +93,16 @@ export const openMemberMasterSettingsModal = async (
   config: AppConfig,
   params: { triggerId: string; userId: string }
 ): Promise<void> => {
-  const memberMasterListId = await ensureMemberMasterList(config);
-  const resolved = await slackApi.resolveMemberMasterRecord(config, memberMasterListId, params.userId);
-  if (!resolved.kept) {
-    throw new Error("member_master record resolution failed");
-  }
+  const master = await resolveMasterContext(config, params.userId);
   await slackApi.openModal(
     config,
     params.triggerId,
     buildMemberMasterModalView({
       userId: params.userId,
-      active: resolved.active,
-      defaultNotifyChannels: resolved.defaultNotifyChannels,
-      defaultNotifyUsers: resolved.defaultNotifyUsers,
-      defaultRegistrationNotify: resolved.defaultRegistrationNotify
+      active: master.active,
+      defaultNotifyChannels: master.defaultNotifyChannels,
+      defaultNotifyUsers: master.defaultNotifyUsers,
+      defaultRegistrationNotify: master.defaultRegistrationNotify
     })
   );
 };

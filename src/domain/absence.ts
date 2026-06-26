@@ -1,4 +1,4 @@
-import type { SlackListItem } from "../slack/api";
+import type { SlackListItem } from "../import/slack-list-read";
 import { toNoteText } from "./rich-text-plain";
 import { pickListField, toStringArray, toStringValue } from "./slack-list-value";
 

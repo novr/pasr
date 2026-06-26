@@ -1,4 +1,5 @@
 import type { AppConfig } from "../config";
+import { createMockD1 } from "./mock-d1";
 
 type KvEntry = {
   value: string;
@@ -28,12 +29,20 @@ export const createTestConfig = (
   overrides: Partial<AppConfig> = {}
 ): AppConfig => ({
   stateKv,
+  db: createMockD1(),
   runEndpointToken: "test-token",
   debugEndpointsEnabled: false,
   slackBotToken: "xoxb-test",
   slackSigningSecret: "test-secret",
   timezone: "Asia/Tokyo",
   adminUserIds: ["U_ADMIN"],
-  listAccessChannelIds: [],
   ...overrides
 });
+
+export const createTestConfigWithImportCompleted = async (
+  stateKv: KVNamespace,
+  overrides: Partial<AppConfig> = {}
+): Promise<AppConfig> => {
+  await stateKv.put("db:import:completed", "true");
+  return createTestConfig(stateKv, overrides);
+};

@@ -7,13 +7,15 @@ import {
   type RegistrationNotifyMode
 } from "../domain/absence-registration";
 import { getJstDateParts } from "../domain/jst-date";
+import { createAbsence } from "../db/absence-repository";
+import { DbSchemaMismatchError } from "../db/schema-check";
+import { getImportGateMessage } from "../db/import-gate";
 import { runRegistrationNotifyAndAck } from "../jobs/registration-notify";
-import { slackApi } from "./api";
+import { assertDbSchema } from "../db/schema-check";
 
 export type CommitAbsenceRegistrationParams = {
   userId: string;
   channelId: string;
-  absenceListId: string;
   startDate: string;
   endDate: string;
   note?: string;
@@ -50,6 +52,19 @@ export const commitAbsenceRegistration = async (
   config: AppConfig,
   params: CommitAbsenceRegistrationParams
 ): Promise<CommitAbsenceRegistrationResult> => {
+  const gateMessage = await getImportGateMessage(config);
+  if (gateMessage) {
+    return { ok: false, error: gateMessage, errorBlockId: "start_block" };
+  }
+  try {
+    await assertDbSchema(config);
+  } catch (error) {
+    if (error instanceof DbSchemaMismatchError) {
+      return { ok: false, error: "データベースの準備が完了していません。", errorBlockId: "start_block" };
+    }
+    throw error;
+  }
+
   const { day: todayJst } = getJstDateParts();
   const validationError = validateAbsenceRegistration({
     startDate: params.startDate,
@@ -76,8 +91,7 @@ export const commitAbsenceRegistration = async (
     };
   }
 
-  const record: AbsenceRecord = {
-    itemId: "",
+  const recordInput = {
     targetUser: params.userId,
     absenceType: DEFAULT_ABSENCE_TYPE,
     startDate: params.startDate,
@@ -87,11 +101,9 @@ export const commitAbsenceRegistration = async (
     note: params.note || undefined
   };
 
-  let itemId = "";
+  let record: AbsenceRecord;
   try {
-    const created = await slackApi.createAbsenceItem(config, params.absenceListId, record);
-    itemId = created.id ?? created.item?.id ?? "";
-    record.itemId = itemId;
+    record = await createAbsence(config, recordInput);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(
@@ -99,7 +111,6 @@ export const commitAbsenceRegistration = async (
         level: "error",
         event: "absence_register_failed",
         user_id: params.userId,
-        list_id: params.absenceListId,
         message
       })
     );
@@ -123,8 +134,7 @@ export const commitAbsenceRegistration = async (
       level: "info",
       event: "absence_registered",
       user_id: params.userId,
-      list_id: params.absenceListId,
-      item_id: itemId,
+      item_id: record.itemId,
       start_date: params.startDate,
       end_date: params.endDate,
       absence_type: DEFAULT_ABSENCE_TYPE,
@@ -139,8 +149,7 @@ export const commitAbsenceRegistration = async (
       await runRegistrationNotifyAndAck(config, {
         userId: params.userId,
         channelId: params.channelId,
-        itemId,
-        listId: params.absenceListId,
+        itemId: record.itemId,
         record,
         selectedMode: params.selectedMode,
         resolvedMode

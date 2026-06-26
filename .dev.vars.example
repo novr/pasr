@@ -1,5 +1,7 @@
-# Copy to .dev.vars for local `npm run dev` and integration tests.
+# Copy to .dev.vars for local `npm run dev`, `npm run types`, and integration tests.
 # Restart `npm run dev` after editing.
 
+SLACK_BOT_TOKEN=replace-with-bot-token
+SLACK_SIGNING_SECRET=replace-with-signing-secret
 RUN_ENDPOINT_TOKEN=replace-with-local-token
-DEBUG_ENDPOINTS_ENABLED=true
+DEBUG_ENDPOINTS_ENABLED=false

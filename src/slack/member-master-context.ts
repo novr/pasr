@@ -1,10 +1,8 @@
 import type { AppConfig } from "../config";
 import type { RegistrationNotifyMode } from "../domain/absence-registration";
-import { ensureMemberMasterList } from "../jobs/setup";
-import { slackApi } from "./api";
+import { getMemberMaster, ensureMemberMasterActive } from "../db/member-master-repository";
 
 export type MasterContext = {
-  memberMasterListId: string;
   active: boolean;
   defaultNotifyChannels: string[];
   defaultNotifyUsers: string[];
@@ -12,13 +10,20 @@ export type MasterContext = {
 };
 
 export const resolveMasterContext = async (config: AppConfig, userId: string): Promise<MasterContext> => {
-  const memberMasterListId = await ensureMemberMasterList(config);
-  const resolved = await slackApi.resolveMemberMasterRecord(config, memberMasterListId, userId);
+  const existing = await getMemberMaster(config, userId);
+  if (existing) {
+    return {
+      active: existing.active,
+      defaultNotifyChannels: existing.defaultNotifyChannels,
+      defaultNotifyUsers: existing.defaultNotifyUsers,
+      defaultRegistrationNotify: existing.defaultRegistrationNotify
+    };
+  }
+  const created = await ensureMemberMasterActive(config, userId);
   return {
-    memberMasterListId,
-    active: resolved.active,
-    defaultNotifyChannels: resolved.defaultNotifyChannels,
-    defaultNotifyUsers: resolved.defaultNotifyUsers,
-    defaultRegistrationNotify: resolved.defaultRegistrationNotify
+    active: created.active,
+    defaultNotifyChannels: created.defaultNotifyChannels,
+    defaultNotifyUsers: created.defaultNotifyUsers,
+    defaultRegistrationNotify: created.defaultRegistrationNotify
   };
 };

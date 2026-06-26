@@ -21,16 +21,11 @@ vi.mock("./interaction-message", () => ({
 
 vi.mock("./member-master-context", () => ({
   resolveMasterContext: vi.fn(async () => ({
-    memberMasterListId: "LMM",
     active: true,
     defaultNotifyChannels: [],
     defaultNotifyUsers: [],
     defaultRegistrationNotify: "none" as const
   }))
-}));
-
-vi.mock("../jobs/setup", () => ({
-  resolveActiveListIds: vi.fn(async () => ({ absenceListId: "L1", memberMasterListId: "LMM" }))
 }));
 
 import { handleAbsenceRegisterInteraction } from "./absence-register";
@@ -41,7 +36,6 @@ const baseConfig = createTestConfig(createMockKv(), { adminUserIds: [] });
 describe("buildAbsenceRegisterModalView", () => {
   const baseParams = {
     userId: "U1",
-    absenceListId: "L1",
     channelId: "C1",
     defaultNotifyChannels: ["C_NOTIFY"],
     defaultNotifyUsers: ["U2"],
