@@ -41,8 +41,7 @@
   },
   "vars": {
     "TZ": "Asia/Tokyo",
-    "SLACK_ADMIN_USER_IDS": "",
-    "DEBUG_ENDPOINTS_ENABLED": "false"
+    "SLACK_ADMIN_USER_IDS": ""
   },
   "observability": {
     "enabled": true,

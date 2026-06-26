@@ -16,6 +16,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: cp wrangler.jsonc.template wrangler.jsonc
+      - run: cp .dev.vars.example .dev.vars
       - run: npx wrangler types --check
       - run: npx wrangler d1 migrations apply pasr-db --local
       - run: npm run check
