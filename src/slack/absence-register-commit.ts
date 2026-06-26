@@ -9,7 +9,6 @@ import {
 import { getJstDateParts } from "../domain/jst-date";
 import { createAbsence } from "../db/absence-repository";
 import { DbSchemaMismatchError } from "../db/schema-check";
-import { getImportGateMessage } from "../db/import-gate";
 import { runRegistrationNotifyAndAck } from "../jobs/registration-notify";
 import { assertDbSchema } from "../db/schema-check";
 
@@ -52,10 +51,6 @@ export const commitAbsenceRegistration = async (
   config: AppConfig,
   params: CommitAbsenceRegistrationParams
 ): Promise<CommitAbsenceRegistrationResult> => {
-  const gateMessage = await getImportGateMessage(config);
-  if (gateMessage) {
-    return { ok: false, error: gateMessage, errorBlockId: "start_block" };
-  }
   try {
     await assertDbSchema(config);
   } catch (error) {

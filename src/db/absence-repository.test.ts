@@ -6,11 +6,11 @@ import {
   listAbsencesByUserFuture,
   listAbsenceIdsEndedBefore
 } from "./absence-repository";
-import { createTestConfigWithImportCompleted, createMockKv } from "../test/mock-kv";
+import { createTestConfig, createMockKv } from "../test/mock-kv";
 
 describe("absence-repository", () => {
   it("creates and reads absence", async () => {
-    const config = await createTestConfigWithImportCompleted(createMockKv());
+    const config = createTestConfig(createMockKv());
     const created = await createAbsence(config, {
       targetUser: "U1",
       startDate: "2026-06-24",
@@ -26,7 +26,7 @@ describe("absence-repository", () => {
   });
 
   it("lists future absences for user", async () => {
-    const config = await createTestConfigWithImportCompleted(createMockKv());
+    const config = createTestConfig(createMockKv());
     await createAbsence(config, {
       targetUser: "U1",
       startDate: "2026-06-20",
@@ -47,7 +47,7 @@ describe("absence-repository", () => {
   });
 
   it("lists ended absence ids", async () => {
-    const config = await createTestConfigWithImportCompleted(createMockKv());
+    const config = createTestConfig(createMockKv());
     const created = await createAbsence(config, {
       targetUser: "U1",
       startDate: "2026-06-01",

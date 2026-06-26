@@ -1,46 +1,10 @@
 import type { AppConfig } from "../config";
 
-const IMPORT_COMPLETED_KEY = "db:import:completed";
-const IMPORT_SUMMARY_KEY = "db:import:summary";
-
 const postTsKey = (jstDate: string, channelId: string): string =>
   `absence:post:${jstDate}:${channelId}`;
 
 const directMessageTsKey = (jstDate: string, userId: string): string =>
   `absence:dm:${jstDate}:${userId}`;
-
-const LIST_ID_KEY = "absence:config:list_id";
-const MEMBER_MASTER_LIST_ID_KEY = "member_master:config:list_id";
-
-export const readImportCompleted = async (config: AppConfig): Promise<boolean> => {
-  const value = await config.stateKv.get(IMPORT_COMPLETED_KEY);
-  return value === "true";
-};
-
-export const writeImportCompleted = async (config: AppConfig, summary: unknown): Promise<void> => {
-  await config.stateKv.put(IMPORT_COMPLETED_KEY, "true");
-  await config.stateKv.put(IMPORT_SUMMARY_KEY, JSON.stringify(summary));
-};
-
-export const readImportSummary = async (config: AppConfig): Promise<unknown | undefined> => {
-  const value = await config.stateKv.get(IMPORT_SUMMARY_KEY);
-  if (!value) return undefined;
-  try {
-    return JSON.parse(value) as unknown;
-  } catch {
-    return undefined;
-  }
-};
-
-export const readPersistedListId = async (config: AppConfig): Promise<string | undefined> => {
-  const value = await config.stateKv.get(LIST_ID_KEY);
-  return value && value.length > 0 ? value : undefined;
-};
-
-export const readPersistedMemberMasterListId = async (config: AppConfig): Promise<string | undefined> => {
-  const value = await config.stateKv.get(MEMBER_MASTER_LIST_ID_KEY);
-  return value && value.length > 0 ? value : undefined;
-};
 
 export const readPostedMessageTs = async (
   config: AppConfig,

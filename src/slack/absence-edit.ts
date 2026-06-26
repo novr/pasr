@@ -14,7 +14,6 @@ import {
 } from "../db/absence-repository";
 import { DbSchemaMismatchError } from "../db/schema-check";
 import { assertDbSchema } from "../db/schema-check";
-import { getImportGateMessage } from "../db/import-gate";
 import { slackApi } from "./api";
 import { ABSENCE_EDIT_OPEN_ACTION_ID } from "./absence-list";
 import { resolveMasterContext } from "./member-master-context";
@@ -232,10 +231,6 @@ const handleEditSubmission = async (
   config: AppConfig,
   payload: SlackInteractionPayload
 ): Promise<AbsenceEditInteractionResult> => {
-  const gateMessage = await getImportGateMessage(config);
-  if (gateMessage) {
-    return { ok: false, error: gateMessage, errorBlockId: "start_block" };
-  }
   try {
     await assertDbSchema(config);
   } catch (error) {

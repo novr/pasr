@@ -13,7 +13,7 @@ Worker は3ハンドラで構成する。
 
 | ハンドラ | 入口 | 制約 |
 |----------|------|------|
-| `fetch` | HTTP（`/health`, `/run`, `/admin/import-lists`, `/slack/*`） | Slack 起点は署名検証必須。`event_callback` と重処理は ACK 後に `waitUntil` |
+| `fetch` | HTTP（`/health`, `/run`, `/slack/*`） | Slack 起点は署名検証必須。`event_callback` と重処理は ACK 後に `waitUntil` |
 | `scheduled` | cron `0 0 * * *` UTC（JST 9:00） | JST 平日のみ `runDailyNotify`。週末は `skip_weekend_scheduled` で終了 |
 | `queue` | `ADMIN_TASK_QUEUE` consumer | `/pasr-admin run` と `/pasr list` / `update` 一覧の実処理。一時障害のみ retry |
 
@@ -67,12 +67,6 @@ Worker は3ハンドラで構成する。
   - 確認 UI・エラー・キャンセル ACK も DM では会話に残る
 - App Home（`app_home_opened`, `tab=home`）は静的 `views.publish` のみ同期。登録・設定 Modal と一覧 ephemeral は `block_actions` 即時 ACK 後 `waitUntil`（list のみ followUp）
 
-## import gate
-
-- `db:import:completed !== "true"` の間、register / edit / settings commit 前に gate → ephemeral「データ移行中です」
-- Modal / interaction は HTTP 200 ACK（503 は `/admin/*` HTTP のみ）
-- daily / list 読取は gate 外（空 D1 なら空一覧）
-
 ## データ境界
 
 **正本**: D1（`PASR_DB`）— `absences`, `member_master`
@@ -84,10 +78,6 @@ Store: `PASR_STATE` KV
 - `absence:post:{jstDate}:{channelId}` — 日次 CH 通知の `chat.update` 用 ts
 - `absence:dm:{jstDate}:{userId}` — 日次 DM の ts
 - `slack:event:dedupe:{eventId}` / `slack:command:dedupe:{triggerId}`
-- `db:import:completed` / `db:import:summary`（cutover 用。import 完了後 summary は任意削除可）
-
-**KV キー（import のみ。cutover 後は参照しない）**
-- `absence:config:list_id` / `member_master:config:list_id` — legacy Slack List ID
 
 **D1 / domain**
 - DB `id` ↔ `AbsenceRecord.itemId`（rename しない）
@@ -100,7 +90,7 @@ Store: `PASR_STATE` KV
 
 - 組織ごとに Slack App / Cloudflare 環境を分離
 - Secret（`SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `RUN_ENDPOINT_TOKEN`）は Cloudflare のみ。レスポンス・ログへ出力しない
-- `/run` と `/admin/import-lists` は Bearer token 必須（`crypto.subtle.timingSafeEqual`）。認証失敗は `401` と最小エラーボディ
+- `/run` は Bearer token 必須（`crypto.subtle.timingSafeEqual`）。認証失敗は `401` と最小エラーボディ
 - vars: `TZ=Asia/Tokyo`, `SLACK_ADMIN_USER_IDS`
 - 実行ログ必須キー: `run_id`, `processed`, `sent`, `skipped`, `errors`
 - request スコープのグローバル保持と未管理 Promise を禁止
@@ -114,7 +104,7 @@ Store: `PASR_STATE` KV
 ## テスト不変条件
 
 - deploy 前: `npm run check && npm test`
-- domain / queue / dedupe / transient / db / import 変更時は `npm test`
+- domain / queue / dedupe / transient / db 変更時は `npm test`
 - テスト・npm scripts 変更時は README「開発・テスト」を同時更新
 - 単体テストは I/O モック前提。`@cloudflare/vitest-pool-workers` 統合テストは導入しない
 - mention AI 結合テストは `src/integration/*.integration.test.ts` に分離し、`PASR_RUN_INTEGRATION=1` 時のみ `npm run test:integration` で実行（CI 対象外）

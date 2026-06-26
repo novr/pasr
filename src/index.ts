@@ -1,7 +1,6 @@
 import { getConfig } from "./config";
 import { hasValidRunToken } from "./auth/run-token";
 import { runDailyNotify } from "./jobs/daily-notify";
-import { importFromSlackLists, ImportConflictError } from "./import/from-slack-lists";
 import { enqueueAdminTask, processAdminTaskBatch, type AdminTaskMessage } from "./queue/admin-task";
 import {
   buildQueuedAdminAck,
@@ -142,23 +141,6 @@ export default {
       }
       const result = await runDailyNotify(config, { runId, trigger: "manual" });
       return json({ ok: true, runId: result.runId });
-    }
-
-    if (pathname === "/admin/import-lists" && request.method === "POST") {
-      if (!(await hasValidRunToken(request, config.runEndpointToken))) {
-        return json({ ok: false, error: "Unauthorized" }, 401);
-      }
-      try {
-        const result = await importFromSlackLists(config);
-        return json({ ok: true, ...result });
-      } catch (error) {
-        if (error instanceof ImportConflictError) {
-          return json({ ok: false, error: error.message, details: error.details }, 409);
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(JSON.stringify({ level: "error", event: "import_lists_failed", message }));
-        return json({ ok: false, error: message }, 500);
-      }
     }
 
     if (pathname === "/debug/mention-ai" && request.method === "POST") {
@@ -372,7 +354,6 @@ export default {
 
     if (
       pathname === "/run" ||
-      pathname === "/admin/import-lists" ||
       pathname === "/health" ||
       pathname === "/debug/mention-ai" ||
       pathname === "/slack/events" ||

@@ -15,13 +15,6 @@ export class SlackApiError extends Error {
   }
 }
 
-export const isSkippableSlackLookupError = (error: unknown): boolean => {
-  if (!(error instanceof SlackApiError)) return false;
-  return ["unknown_method", "missing_scope", "not_visible", "access_denied", "method_deprecated"].includes(
-    error.slackError
-  );
-};
-
 const parseSlackResponse = async <T>(method: string, res: Response): Promise<T> => {
   const json = (await res.json()) as SlackResponse<T>;
   if (!res.ok) {
@@ -45,23 +38,6 @@ export const slackApiPost = async <T>(
       "Content-Type": "application/json; charset=utf-8"
     },
     body: JSON.stringify(payload)
-  });
-  return parseSlackResponse<T>(method, res);
-};
-
-export const slackApiGet = async <T>(
-  config: AppConfig,
-  method: string,
-  params: Record<string, string | number>
-): Promise<T> => {
-  const url = new URL(`https://slack.com/api/${method}`);
-  for (const [key, value] of Object.entries(params)) {
-    url.searchParams.set(key, String(value));
-  }
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${config.slackBotToken}`
-    }
   });
   return parseSlackResponse<T>(method, res);
 };

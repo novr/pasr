@@ -7,7 +7,6 @@ import { isTransientError } from "../errors/transient";
 import { runDailyNotify } from "../jobs/daily-notify";
 import { isValidJstDateString, getJstDateParts } from "../domain/jst-date";
 import { checkDbSchema } from "../db/schema-check";
-import { getImportGateMessage } from "../db/import-gate";
 import { upsertMemberMaster } from "../db/member-master-repository";
 import { DbSchemaMismatchError, assertDbSchema } from "../db/schema-check";
 import {
@@ -24,7 +23,7 @@ import { handleAbsenceMentionInteraction, isMentionAction } from "./absence-ment
 import { handleAppHomeInteraction } from "./app-home";
 import { MEMBER_MASTER_MODAL_CALLBACK_ID, openMemberMasterSettingsModal } from "./member-master-modal";
 import { slackApi } from "./api";
-import { readImportCompleted, readLastRunSummary } from "../state/kv";
+import { readLastRunSummary } from "../state/kv";
 
 export const COMMAND_ACK_UNAUTHORIZED = "Received. Processing...";
 export const COMMAND_ACK_DUPLICATE =
@@ -429,18 +428,15 @@ const getAdminImmediateText = async (
   if (action === "status") {
     const summary = await readLastRunSummary(config);
     const dbSchema = await checkDbSchema(config);
-    const importCompleted = await readImportCompleted(config);
     const dbLine = `db: ${dbSchema === "ok" ? "ok" : "schema_missing"}`;
-    const importLine = `import: ${importCompleted ? "completed" : "pending"}`;
     return summary
       ? [
           `last run: processed=${summary.processed} sent=${summary.sent} skipped=${summary.skipped} deleted=${summary.deleted ?? 0} errors=${summary.errors}`,
           `run_id: ${summary.runId}`,
           dbLine,
-          importLine,
           `executed_at: ${summary.executedAt}`
         ].join("\n")
-      : [`No run history yet.`, dbLine, importLine].join("\n");
+      : [`No run history yet.`, dbLine].join("\n");
   }
   return undefined;
 };
@@ -608,10 +604,6 @@ export const handleSlackInteraction = async (
   const defaultUsers = parseSelectedUsers(usersValue);
   const active = parseActiveValue(activeValue);
   const defaultRegistrationNotify = parseRegistrationNotifyMode(parseStaticSelectValue(registrationNotifyValue));
-  const gateMessage = await getImportGateMessage(config);
-  if (gateMessage) {
-    return { ok: false, error: gateMessage, errorBlockId: "active_block" };
-  }
   try {
     await assertDbSchema(config);
   } catch (error) {

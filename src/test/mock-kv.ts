@@ -38,11 +38,3 @@ export const createTestConfig = (
   adminUserIds: ["U_ADMIN"],
   ...overrides
 });
-
-export const createTestConfigWithImportCompleted = async (
-  stateKv: KVNamespace,
-  overrides: Partial<AppConfig> = {}
-): Promise<AppConfig> => {
-  await stateKv.put("db:import:completed", "true");
-  return createTestConfig(stateKv, overrides);
-};
