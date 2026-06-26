@@ -73,16 +73,24 @@ export const getAbsenceById = async (config: AppConfig, id: string): Promise<Abs
 export const listAbsencesByUserFuture = async (
   config: AppConfig,
   userId: string,
-  todayJst: string
+  todayJst: string,
+  options?: { limit?: number }
 ): Promise<AbsenceRecord[]> => {
-  const result = await getDb(config)
-    .prepare(
-      `SELECT * FROM absences
+  const limit = options?.limit;
+  const sql =
+    limit !== undefined
+      ? `SELECT * FROM absences
        WHERE target_user = ? AND end_date >= ?
-       ORDER BY start_date ASC, id ASC`
-    )
-    .bind(userId, todayJst)
-    .all<AbsenceRow>();
+       ORDER BY start_date ASC, id ASC
+       LIMIT ?`
+      : `SELECT * FROM absences
+       WHERE target_user = ? AND end_date >= ?
+       ORDER BY start_date ASC, id ASC`;
+  const statement = getDb(config).prepare(sql);
+  const result =
+    limit !== undefined
+      ? await statement.bind(userId, todayJst, limit).all<AbsenceRow>()
+      : await statement.bind(userId, todayJst).all<AbsenceRow>();
   return (result.results ?? []).map(rowToAbsenceRecord);
 };
 

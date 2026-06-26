@@ -65,7 +65,7 @@ Worker は3ハンドラで構成する。
   - フローは `app_mention` 本文付きと同じ（infer / AI → 確認 UI → 登録）
   - DM 応答は `chat.postMessage`（ephemeral 不可）。チャンネルは引き続き ephemeral
   - 確認 UI・エラー・キャンセル ACK も DM では会話に残る
-- App Home（`app_home_opened`, `tab=home`）は静的 `views.publish` のみ同期。登録・設定 Modal と一覧 ephemeral は `block_actions` 即時 ACK 後 `waitUntil`（list のみ followUp）
+- App Home（`app_home_opened`, `tab=home`）: 本人 `member_master` + 今後の `absences` を D1 読取し `views.publish`（最大5件プレビュー）。D1 失敗時は静的フォールバック（ユーザー向け詳細エラーなし）。Home 起点の削除・編集成功時のみ `views.publish` で refresh（`waitUntil`）。登録・設定保存後は refresh しない。`resolveMasterContext` は Home 表示時には呼ばない。登録・設定 Modal と一覧 ephemeral は `block_actions` 即時 ACK 後 `waitUntil`（list のみ followUp）
 
 ## データ境界
 

@@ -1,17 +1,17 @@
 import type { AppConfig } from "../config";
 import {
   APP_HOME_LIST_OPEN_ACTION_ID,
-  APP_HOME_SETTINGS_OPEN_ACTION_ID,
-  ABSENCE_REGISTER_OPEN_ACTION_ID
+  APP_HOME_SETTINGS_OPEN_ACTION_ID
 } from "./action-ids";
 import { showOwnAbsenceList } from "./absence-list";
-import { slackApi } from "./api";
 import { resolveAppHomeDmChannelId } from "./app-home-channel";
+import { publishAppHome } from "./app-home-publish";
 import { openMemberMasterSettingsModal } from "./member-master-modal";
 import { postUserFacingMessage } from "./user-message";
 import type { SlackEventEnvelope } from "./events";
 
 export { isAppHomeBlockActions } from "./app-home-context";
+export { buildAppHomeBlocks, buildAppHomeStaticFallbackBlocks } from "./app-home-blocks";
 export {
   APP_HOME_LIST_OPEN_ACTION_ID,
   APP_HOME_SETTINGS_OPEN_ACTION_ID
@@ -61,67 +61,6 @@ const notifyAppHomeUser = async (
       })
     );
   }
-};
-
-export const buildAppHomeBlocks = (): Array<Record<string, unknown>> => [
-  {
-    type: "header",
-    text: { type: "plain_text", text: "PASR" }
-  },
-  {
-    type: "section",
-    text: {
-      type: "mrkdwn",
-      text: "チームの不在予定を登録し、平日 JST 9:00 に自動で共有するアプリです。"
-    }
-  },
-  {
-    type: "actions",
-    block_id: "pasr_home_actions",
-    elements: [
-      {
-        type: "button",
-        action_id: ABSENCE_REGISTER_OPEN_ACTION_ID,
-        text: { type: "plain_text", text: "不在を登録" },
-        style: "primary"
-      },
-      {
-        type: "button",
-        action_id: APP_HOME_SETTINGS_OPEN_ACTION_ID,
-        text: { type: "plain_text", text: "通知設定" }
-      },
-      {
-        type: "button",
-        action_id: APP_HOME_LIST_OPEN_ACTION_ID,
-        text: { type: "plain_text", text: "不在一覧" }
-      }
-    ]
-  },
-  { type: "divider" },
-  {
-    type: "section",
-    text: {
-      type: "mrkdwn",
-      text: [
-        "*使い方*",
-        "• `/pasr register` — 不在を登録",
-        "• `/pasr list` — 一覧・編集・削除",
-        "• `/pasr settings` — 通知設定",
-        "• Messages タブから自然文（例: `明日 通院`）でも登録できます"
-      ].join("\n")
-    }
-  }
-];
-
-export const publishAppHome = async (config: AppConfig, userId: string): Promise<void> => {
-  await slackApi.publishHomeView(config, userId, buildAppHomeBlocks());
-  console.log(
-    JSON.stringify({
-      level: "info",
-      event: "app_home_published",
-      user_id: userId
-    })
-  );
 };
 
 export const handleAppHomeOpened = async (

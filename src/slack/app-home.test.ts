@@ -5,15 +5,12 @@ import {
   APP_HOME_LIST_OPEN_ACTION_ID,
   APP_HOME_SETTINGS_OPEN_ACTION_ID
 } from "./action-ids";
-import {
-  buildAppHomeBlocks,
-  handleAppHomeInteraction,
-  handleAppHomeOpened
-} from "./app-home";
+import { buildAppHomeStaticFallbackBlocks } from "./app-home-blocks";
+import { handleAppHomeInteraction, handleAppHomeOpened } from "./app-home";
 import { isAppHomeBlockActions } from "./app-home-context";
 
-const { publishHomeViewMock, openDirectMessageMock } = vi.hoisted(() => ({
-  publishHomeViewMock: vi.fn(async () => ({})),
+const { publishAppHomeMock, openDirectMessageMock } = vi.hoisted(() => ({
+  publishAppHomeMock: vi.fn(async () => undefined),
   openDirectMessageMock: vi.fn(async () => "D1")
 }));
 
@@ -29,9 +26,12 @@ const { postUserFacingMessageMock } = vi.hoisted(() => ({
   postUserFacingMessageMock: vi.fn(async () => undefined)
 }));
 
+vi.mock("./app-home-publish", () => ({
+  publishAppHome: publishAppHomeMock
+}));
+
 vi.mock("./api", () => ({
   slackApi: {
-    publishHomeView: publishHomeViewMock,
     openDirectMessage: openDirectMessageMock
   }
 }));
@@ -63,9 +63,9 @@ const collectActionIds = (blocks: Array<Record<string, unknown>>): string[] => {
   return ids;
 };
 
-describe("buildAppHomeBlocks", () => {
+describe("buildAppHomeStaticFallbackBlocks", () => {
   it("includes register, settings, and list action ids", () => {
-    const actionIds = collectActionIds(buildAppHomeBlocks());
+    const actionIds = collectActionIds(buildAppHomeStaticFallbackBlocks());
     expect(actionIds).toEqual([
       ABSENCE_REGISTER_OPEN_ACTION_ID,
       APP_HOME_SETTINGS_OPEN_ACTION_ID,
@@ -104,14 +104,7 @@ describe("handleAppHomeOpened", () => {
       event: { type: "app_home_opened", user: "U1", tab: "home" }
     });
 
-    expect(publishHomeViewMock).toHaveBeenCalledWith(
-      baseConfig,
-      "U1",
-      expect.arrayContaining([
-        expect.objectContaining({ type: "header" }),
-        expect.objectContaining({ type: "actions" })
-      ])
-    );
+    expect(publishAppHomeMock).toHaveBeenCalledWith(baseConfig, "U1");
   });
 
   it("ignores non-home tabs", async () => {
@@ -119,11 +112,11 @@ describe("handleAppHomeOpened", () => {
       event: { type: "app_home_opened", user: "U1", tab: "messages" }
     });
 
-    expect(publishHomeViewMock).not.toHaveBeenCalled();
+    expect(publishAppHomeMock).not.toHaveBeenCalled();
   });
 
   it("notifies user when publish fails", async () => {
-    publishHomeViewMock.mockRejectedValueOnce(new Error("publish failed"));
+    publishAppHomeMock.mockRejectedValueOnce(new Error("publish failed"));
 
     await handleAppHomeOpened(baseConfig, {
       event_id: "E2",

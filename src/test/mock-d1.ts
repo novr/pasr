@@ -68,9 +68,15 @@ export const createMockD1 = (): D1Database => {
     if (sql.includes("FROM absences WHERE target_user = ? AND end_date >= ?")) {
       const userId = String(p[0]);
       const today = String(p[1]);
-      const results = [...absences.values()]
+      let results = [...absences.values()]
         .filter((row) => row.target_user === userId && row.end_date >= today)
         .sort((a, b) => a.start_date.localeCompare(b.start_date) || a.id.localeCompare(b.id));
+      if (sql.includes("LIMIT ?") && p.length >= 3) {
+        const limit = Number(p[2]);
+        if (Number.isFinite(limit) && limit >= 0) {
+          results = results.slice(0, limit);
+        }
+      }
       return { results, run: { success: true, meta: {} } };
     }
     if (sql.startsWith("SELECT * FROM absences WHERE start_date <= ? AND end_date >= ?")) {

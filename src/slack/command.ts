@@ -563,7 +563,7 @@ export const handleSlackInteraction = async (
         errorBlockId: editResult.errorBlockId
       };
     }
-    return { ok: true };
+    return { ok: true, followUp: editResult.followUp };
   }
 
   if (payload.type !== "view_submission") {
