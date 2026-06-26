@@ -1,20 +1,31 @@
 import type { AppConfig } from "../config";
-import type { AbsenceRecord } from "../domain/absence";
-import { formatAbsenceListLine } from "../domain/absence-registration";
 import { getJstDateParts } from "../domain/jst-date";
 import { deleteAbsenceById, getAbsenceById, listAbsencesByUserFuture } from "../db/absence-repository";
+import {
+  ABSENCE_DELETE_ACTION_ID,
+  ABSENCE_EDIT_OPEN_ACTION_ID,
+  ABSENCE_LIST_MAX_ROWS,
+  buildOwnAbsenceListBlocks
+} from "./absence-list-blocks";
+import { refreshAppHomeAfterMutation } from "./app-home-publish";
+import { isAppHomeBlockActions } from "./app-home-context";
 import type { SlackCommandPayload } from "./command";
 import { postUserFacingMessage } from "./user-message";
 
-export const ABSENCE_LIST_MAX_ROWS = 25;
-export const ABSENCE_DELETE_ACTION_ID = "pasr_absence_delete";
-export const ABSENCE_EDIT_OPEN_ACTION_ID = "pasr_absence_edit_open";
+export {
+  ABSENCE_DELETE_ACTION_ID,
+  ABSENCE_EDIT_OPEN_ACTION_ID,
+  ABSENCE_LIST_MAX_ROWS,
+  buildOwnAbsenceListBlocks
+} from "./absence-list-blocks";
 
 type ListInteractionPayload = {
   type: string;
   user?: { id?: string };
   channel?: { id?: string };
   response_url?: string;
+  container?: { type?: string };
+  view?: { type?: string };
   actions?: Array<{ action_id?: string; value?: string }>;
 };
 
@@ -38,40 +49,6 @@ const postResponseUrlEphemeral = async (
   if (!response.ok) {
     throw new Error(`response_url post failed: ${response.status}`);
   }
-};
-
-export const buildOwnAbsenceListBlocks = (
-  records: AbsenceRecord[],
-  options?: { includeEdit?: boolean }
-): { blocks: Array<Record<string, unknown>>; omitted: number } => {
-  const includeEdit = options?.includeEdit ?? true;
-  const omitted = Math.max(0, records.length - ABSENCE_LIST_MAX_ROWS);
-  const visible = records.slice(0, ABSENCE_LIST_MAX_ROWS);
-  const blocks: Array<Record<string, unknown>> = [];
-  for (const record of visible) {
-    blocks.push({
-      type: "section",
-      text: { type: "mrkdwn", text: formatAbsenceListLine(record) }
-    });
-    const elements: Array<Record<string, unknown>> = [];
-    if (includeEdit) {
-      elements.push({
-        type: "button",
-        action_id: ABSENCE_EDIT_OPEN_ACTION_ID,
-        text: { type: "plain_text", text: "編集" },
-        value: record.itemId
-      });
-    }
-    elements.push({
-      type: "button",
-      action_id: ABSENCE_DELETE_ACTION_ID,
-      text: { type: "plain_text", text: "削除" },
-      style: "danger",
-      value: record.itemId
-    });
-    blocks.push({ type: "actions", elements });
-  }
-  return { blocks, omitted };
 };
 
 export const showOwnAbsenceList = async (
@@ -152,7 +129,9 @@ export const handleAbsenceListInteraction = async (
   const itemId = action.value ?? "";
   const actorUserId = payload.user?.id ?? "";
   const responseUrl = payload.response_url ?? "";
-  if (!itemId || !actorUserId || !responseUrl) return { ok: true };
+  const fromAppHome = isAppHomeBlockActions(payload);
+  if (!itemId || !actorUserId) return { ok: true };
+  if (!fromAppHome && !responseUrl) return { ok: true };
 
   return {
     ok: true,
@@ -160,14 +139,22 @@ export const handleAbsenceListInteraction = async (
       try {
         const record = await getAbsenceById(config, itemId);
         if (!record) {
-          await postResponseUrlEphemeral(responseUrl, "対象の不在が見つかりませんでした。");
+          if (responseUrl) {
+            await postResponseUrlEphemeral(responseUrl, "対象の不在が見つかりませんでした。");
+          }
           return;
         }
         if (record.targetUser !== actorUserId) {
-          await postResponseUrlEphemeral(responseUrl, "本人の不在のみ削除できます。");
+          if (responseUrl) {
+            await postResponseUrlEphemeral(responseUrl, "本人の不在のみ削除できます。");
+          }
           return;
         }
         await deleteAbsenceById(config, itemId);
+        if (fromAppHome) {
+          await refreshAppHomeAfterMutation(config, actorUserId);
+          return;
+        }
         await reloadListAfterDelete(
           config,
           actorUserId,
@@ -184,10 +171,12 @@ export const handleAbsenceListInteraction = async (
             message: error instanceof Error ? error.message : String(error)
           })
         );
-        await postResponseUrlEphemeral(
-          responseUrl,
-          `削除に失敗しました: ${error instanceof Error ? error.message : String(error)}`
-        );
+        if (responseUrl) {
+          await postResponseUrlEphemeral(
+            responseUrl,
+            `削除に失敗しました: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
       }
     }
   };

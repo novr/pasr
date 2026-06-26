@@ -15,7 +15,9 @@ import {
 import { DbSchemaMismatchError } from "../db/schema-check";
 import { assertDbSchema } from "../db/schema-check";
 import { slackApi } from "./api";
-import { ABSENCE_EDIT_OPEN_ACTION_ID } from "./absence-list";
+import { ABSENCE_EDIT_OPEN_ACTION_ID } from "./absence-list-blocks";
+import { isAppHomeBlockActions } from "./app-home-context";
+import { refreshAppHomeAfterMutation } from "./app-home-publish";
 import { resolveMasterContext } from "./member-master-context";
 
 export const ABSENCE_EDIT_MODAL_CALLBACK_ID = "pasr_absence_edit";
@@ -24,26 +26,30 @@ type AbsenceEditMetadata = {
   userId: string;
   itemId: string;
   originalStartDate: string;
+  fromAppHome?: boolean;
 };
 
 type SlackInteractionPayload = {
   type: string;
   trigger_id?: string;
   user?: { id?: string };
-  actions?: Array<{ action_id?: string; value?: string }>;
+  container?: { type?: string };
   view?: {
+    type?: string;
     callback_id?: string;
     private_metadata?: string;
     state?: {
       values?: Record<string, Record<string, unknown>>;
     };
   };
+  actions?: Array<{ action_id?: string; value?: string }>;
 };
 
 export type AbsenceEditInteractionResult = {
   ok: boolean;
   error?: string;
   errorBlockId?: string;
+  followUp?: () => Promise<void>;
 };
 
 const parseSelectedChannels = (value: unknown): string[] => {
@@ -94,13 +100,15 @@ const formatEditValidationError = (error: AbsenceEditValidationError): string =>
 export const buildAbsenceEditModalView = (params: {
   userId: string;
   record: AbsenceRecord;
+  fromAppHome?: boolean;
 }): Record<string, unknown> => ({
   type: "modal",
   callback_id: ABSENCE_EDIT_MODAL_CALLBACK_ID,
   private_metadata: JSON.stringify({
     userId: params.userId,
     itemId: params.record.itemId,
-    originalStartDate: params.record.startDate
+    originalStartDate: params.record.startDate,
+    ...(params.fromAppHome ? { fromAppHome: true } : {})
   } satisfies AbsenceEditMetadata),
   title: { type: "plain_text", text: "不在編集" },
   submit: { type: "plain_text", text: "保存" },
@@ -170,14 +178,15 @@ export const buildAbsenceEditModalView = (params: {
 
 export const openAbsenceEditModal = async (
   config: AppConfig,
-  params: { triggerId: string; userId: string; record: AbsenceRecord }
+  params: { triggerId: string; userId: string; record: AbsenceRecord; fromAppHome?: boolean }
 ): Promise<void> => {
   await slackApi.openModal(
     config,
     params.triggerId,
     buildAbsenceEditModalView({
       userId: params.userId,
-      record: params.record
+      record: params.record,
+      fromAppHome: params.fromAppHome
     })
   );
 };
@@ -309,7 +318,14 @@ const handleEditSubmission = async (
         item_id: resolved.record.itemId
       })
     );
-    return { ok: true };
+    return {
+      ok: true,
+      followUp: metadata.fromAppHome
+        ? async () => {
+            await refreshAppHomeAfterMutation(config, metadata.userId);
+          }
+        : undefined
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
@@ -334,10 +350,12 @@ export const handleAbsenceEditInteraction = async (
     try {
       const resolved = await resolveOwnAbsenceForEdit(config, userId, itemId);
       if (!resolved.ok) return { ok: true };
+      const fromAppHome = isAppHomeBlockActions(payload);
       await openAbsenceEditModal(config, {
         triggerId,
         userId,
-        record: resolved.record
+        record: resolved.record,
+        fromAppHome
       });
     } catch (error) {
       console.warn(
