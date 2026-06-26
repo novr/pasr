@@ -43,7 +43,9 @@
         "commands",
         "im:history",
         "im:write",
-        "users:read"
+        "users:read",
+        "usergroups:read",
+        "usergroups:write"
       ]
     }
   },

@@ -36,5 +36,6 @@ export const createTestConfig = (
   slackSigningSecret: "test-secret",
   timezone: "Asia/Tokyo",
   adminUserIds: ["U_ADMIN"],
+  pasrUsersUsergroupId: "",
   ...overrides
 });

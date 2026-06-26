@@ -10,6 +10,7 @@ export type AppConfig = {
   slackSigningSecret: string;
   timezone: string;
   adminUserIds: string[];
+  pasrUsersUsergroupId: string;
 };
 
 export const getConfig = (env: Env): AppConfig => {
@@ -41,6 +42,7 @@ export const getConfig = (env: Env): AppConfig => {
     adminUserIds: (env.SLACK_ADMIN_USER_IDS ?? "")
       .split(",")
       .map((value) => value.trim())
-      .filter((value) => value.length > 0)
+      .filter((value) => value.length > 0),
+    pasrUsersUsergroupId: (env.SLACK_PASR_USERS_USERGROUP_ID ?? "").trim()
   };
 };

@@ -1,6 +1,7 @@
 import type { AppConfig } from "../config";
 import type { RegistrationNotifyMode } from "../domain/absence-registration";
 import { getMemberMaster, ensureMemberMasterActive } from "../db/member-master-repository";
+import { addUserToPasrUsergroup } from "./usergroup";
 
 export type MasterContext = {
   active: boolean;
@@ -20,6 +21,7 @@ export const resolveMasterContext = async (config: AppConfig, userId: string): P
     };
   }
   const created = await ensureMemberMasterActive(config, userId);
+  await addUserToPasrUsergroup(config, userId);
   return {
     active: created.active,
     defaultNotifyChannels: created.defaultNotifyChannels,

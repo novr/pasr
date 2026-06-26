@@ -41,7 +41,8 @@
   },
   "vars": {
     "TZ": "Asia/Tokyo",
-    "SLACK_ADMIN_USER_IDS": ""
+    "SLACK_ADMIN_USER_IDS": "",
+    "SLACK_PASR_USERS_USERGROUP_ID": ""
   },
   "observability": {
     "enabled": true,
