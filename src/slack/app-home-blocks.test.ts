@@ -102,7 +102,7 @@ describe("buildAppHomeBlocks", () => {
     const overflow = blocks.find(
       (block) =>
         block.type === "section" &&
-        (block.text as { text?: string } | undefined)?.text?.includes("不在一覧")
+        (block.text as { text?: string } | undefined)?.text?.includes("不在予定一覧")
     );
     expect(overflow).toBeDefined();
     expect((overflow?.text as { text?: string }).text).toContain("…");

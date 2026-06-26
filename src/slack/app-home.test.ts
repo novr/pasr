@@ -258,7 +258,7 @@ describe("handleAppHomeInteraction", () => {
       expect.objectContaining({
         channelId: "D1",
         userId: "U1",
-        text: expect.stringContaining("不在一覧")
+        text: expect.stringContaining("不在予定一覧")
       })
     );
   });

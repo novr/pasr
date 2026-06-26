@@ -211,10 +211,10 @@ const buildHelpText = (): string =>
   [
     "/pasr help - ユーザ向けコマンドの使い方表示",
     "/pasr settings - 自分の通知設定を表示・編集",
-    "/pasr list - 自分の不在一覧（編集・削除）",
+    "/pasr list - 自分の不在予定一覧（編集・削除）",
     "/pasr update - /pasr list と同じ",
-    "/pasr update YYYY-MM-DD - 開始日指定で不在を編集",
-    "/pasr register - 自分の不在を登録"
+    "/pasr update YYYY-MM-DD - 開始日指定で不在予定を編集",
+    "/pasr register - 自分の不在予定を登録"
   ].join("\n");
 
 const buildAdminHelpText = (): string =>
@@ -307,7 +307,7 @@ const handleSelfImmediateText = async (
     case "register":
       return {
         mode: "deferred",
-        ackText: "不在登録フォームを開きます…",
+        ackText: "不在予定登録フォームを開きます…",
         run: async () => {
           await openAbsenceRegisterModal(config, {
             triggerId: payload.triggerId,
@@ -344,8 +344,8 @@ const handleSelfImmediateText = async (
           }
           const listPrefix =
             matches.length === 0
-              ? "指定された開始日の不在が見つかりませんでした。"
-              : "同じ開始日の不在が複数あります。一覧から編集してください。";
+              ? "指定された開始日の不在予定が見つかりませんでした。"
+              : "同じ開始日の不在予定が複数あります。一覧から編集してください。";
           await showOwnAbsenceList(config, payload, { prefixMessage: listPrefix, includeEdit: true });
         }
       };
