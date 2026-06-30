@@ -54,7 +54,7 @@ describe("slash command parsers", () => {
 
   it("parseSlackCommandAction defaults to help for empty text", () => {
     expect(parseSlackCommandAction("")).toBe("help");
-    expect(parseSlackCommandAction("migrate extra")).toBe("migrate");
+    expect(parseSlackCommandAction("run extra")).toBe("run");
   });
 
   it("buildQueuedAdminAck returns action-specific messages", () => {
