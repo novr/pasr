@@ -89,10 +89,11 @@ Store: `PASR_STATE` KV
 ## 設定・セキュリティ
 
 - 組織ごとに Slack App / Cloudflare 環境を分離
-- **`wrangler.jsonc` は gitignore 済みの環境固有ファイル**。既存ファイルがある環境で `cp wrangler.jsonc.template wrangler.jsonc` 等により上書きしない（KV / D1 ID、vars 等が消える）。初回作成時のみ template からコピー。template 変更の取り込みは差分を手動マージする
+- **`wrangler.jsonc` は git 管理**（bindings / `TZ` / cron）。組織固有 ID の差し替えは clone 後に実施
+- Dashboard Variables: `SLACK_ADMIN_USER_IDS`（必須）、`SLACK_PASR_USERS_USERGROUP_ID`（任意）。jsonc `vars` に載せない
 - Secret（`SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `RUN_ENDPOINT_TOKEN`）は Cloudflare のみ。レスポンス・ログへ出力しない
 - `/run` は Bearer token 必須（`crypto.subtle.timingSafeEqual`）。認証失敗は `401` と最小エラーボディ
-- vars: `TZ=Asia/Tokyo`, `SLACK_ADMIN_USER_IDS`
+- `wrangler.jsonc` vars: `TZ=Asia/Tokyo` のみ
 - 実行ログ必須キー: `run_id`, `processed`, `sent`, `skipped`, `errors`
 - request スコープのグローバル保持と未管理 Promise を禁止
 
@@ -100,7 +101,7 @@ Store: `PASR_STATE` KV
 
 - Cloudflare Workers（`nodejs_compat`）、D1、KV、Queues
 - TypeScript（`experimentalDecorators` 無効）
-- ローカル設定正本は **`wrangler.jsonc`**（template ではない）。binding / vars 変更時は手元の `wrangler.jsonc` を更新し `npm run types` で `Env` 同期（`worker-configuration.d.ts` は手書きしない）。types 再生成でも template から `wrangler.jsonc` を cp しない
+- 設定正本は **`wrangler.jsonc`**（bindings 含む）。binding / vars 変更時は `npm run types` で `Env` 同期（`worker-configuration.d.ts` は手書きしない）
 
 ## テスト不変条件
 
