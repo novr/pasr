@@ -7,14 +7,14 @@
   "kv_namespaces": [
     {
       "binding": "PASR_STATE",
-      "id": "REPLACE_WITH_KV_NAMESPACE_ID"
+      "id": "b6e4efaa193247319242851b850467c6"
     }
   ],
   "d1_databases": [
     {
       "binding": "PASR_DB",
       "database_name": "pasr-db",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "9c4029ae-a5e2-411c-988e-16a3d324c651",
       "migrations_dir": "migrations"
     }
   ],
@@ -40,9 +40,7 @@
     "remote": true
   },
   "vars": {
-    "TZ": "Asia/Tokyo",
-    "SLACK_ADMIN_USER_IDS": "",
-    "SLACK_PASR_USERS_USERGROUP_ID": ""
+    "TZ": "Asia/Tokyo"
   },
   "observability": {
     "enabled": true,
