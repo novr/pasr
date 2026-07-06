@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AbsenceRecord } from "../domain/absence";
+import * as jstDate from "../domain/jst-date";
 import { createAbsence, listAbsencesByUserFuture } from "../db/absence-repository";
 import { upsertMemberMaster } from "../db/member-master-repository";
 import { createTestConfig, createMockKv } from "../test/mock-kv";
@@ -7,6 +8,7 @@ import { loadAppHomeData } from "./app-home-data";
 
 describe("loadAppHomeData", () => {
   it("loads master and future absences with hasMore flag", async () => {
+    vi.spyOn(jstDate, "getJstDateParts").mockReturnValue({ day: "2026-06-01", hour: 10 });
     const config = createTestConfig(createMockKv());
     await upsertMemberMaster(config, {
       targetUser: "U1",
