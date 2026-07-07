@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMockKv, createTestConfig } from "../test/mock-kv";
+import { createMockD1 } from "../test/mock-d1";
 import { createAbsence } from "../db/absence-repository";
 import { upsertMemberMaster } from "../db/member-master-repository";
+import { readLastRunSummary } from "../state/kv";
 import { runDailyNotify } from "./daily-notify";
 
 const { postChannelMessageMock, updateChannelMessageMock, openDirectMessageMock } = vi.hoisted(() => ({
@@ -108,5 +110,162 @@ describe("runDailyNotify", () => {
 
     expect(result.errors).toBe(1);
     expect(result.sent).toBe(1);
+  });
+
+  it("skips empty channel notifications when notify_when_empty is off", async () => {
+    const kv = createMockKv();
+    const config = createTestConfig(kv);
+    await upsertMemberMaster(config, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-06-25",
+      endDate: "2026-06-25",
+      notifyChannels: ["C_EMPTY_OFF", "C_EMPTY_ON"],
+      notifyUsers: [],
+      absenceType: "absence"
+    });
+    const { upsertChannelNotifySetting } = await import("../db/channel-notify-repository");
+    await upsertChannelNotifySetting(config, "C_EMPTY_OFF", false, "U_ADMIN");
+
+    const result = await runDailyNotify(config, { runId: "run_empty_off", trigger: "manual" });
+
+    expect(result.todayAbsenceCount).toBe(0);
+    expect(postChannelMessageMock).toHaveBeenCalledTimes(1);
+    expect(postChannelMessageMock).toHaveBeenCalledWith(expect.anything(), "C_EMPTY_ON", expect.anything());
+    expect(result.sent).toBe(1);
+  });
+
+  it("skips empty channels when org default notify_when_empty is off", async () => {
+    const kv = createMockKv();
+    const config = createTestConfig(kv, { notifyEmptyDefault: false });
+    await upsertMemberMaster(config, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-06-25",
+      endDate: "2026-06-25",
+      notifyChannels: ["C_ORG_OFF"],
+      notifyUsers: [],
+      absenceType: "absence"
+    });
+
+    const result = await runDailyNotify(config, { runId: "run_org_off", trigger: "manual" });
+
+    expect(result.todayAbsenceCount).toBe(0);
+    expect(postChannelMessageMock).not.toHaveBeenCalled();
+    expect(result.sent).toBe(0);
+  });
+
+  it("uses org default empty on when channel_notify_settings table is missing", async () => {
+    const kv = createMockKv();
+    const config = createTestConfig(kv, {
+      db: createMockD1({ includeChannelNotifySettings: false })
+    });
+    await upsertMemberMaster(config, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-06-25",
+      endDate: "2026-06-25",
+      notifyChannels: ["C_PRE_MIGRATE"],
+      notifyUsers: [],
+      absenceType: "absence"
+    });
+
+    const result = await runDailyNotify(config, { runId: "run_pre_migrate", trigger: "manual" });
+
+    expect(result.errors).toBe(0);
+    expect(postChannelMessageMock).toHaveBeenCalledWith(expect.anything(), "C_PRE_MIGRATE", expect.anything());
+    expect(result.sent).toBe(1);
+  });
+
+  it("records ops failures in last summary errors", async () => {
+    const kv = createMockKv();
+    const config = createTestConfig(kv, { opsChannelId: "C_OPS" });
+    await upsertMemberMaster(config, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-06-24",
+      endDate: "2026-06-24",
+      notifyChannels: ["C1"],
+      notifyUsers: [],
+      absenceType: "absence"
+    });
+    postChannelMessageMock.mockImplementation(async (...args: unknown[]) => {
+      if (args[1] === "C_OPS") throw new Error("not_in_channel");
+      return { ok: true, ts: "123.456" };
+    });
+
+    const result = await runDailyNotify(config, { runId: "run_ops_fail", trigger: "scheduled" });
+    const summary = await readLastRunSummary(config);
+
+    expect(result.errors).toBe(1);
+    expect(summary?.errors).toBe(1);
+  });
+
+  it("posts ops report only for scheduled trigger", async () => {
+    const kvManual = createMockKv();
+    const configManual = createTestConfig(kvManual, { opsChannelId: "C_OPS" });
+    await upsertMemberMaster(configManual, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    await createAbsence(configManual, {
+      targetUser: "U1",
+      startDate: "2026-06-24",
+      endDate: "2026-06-24",
+      notifyChannels: ["C1"],
+      notifyUsers: [],
+      absenceType: "absence"
+    });
+
+    await runDailyNotify(configManual, { runId: "run_manual", trigger: "manual" });
+    expect(postChannelMessageMock).not.toHaveBeenCalledWith(expect.anything(), "C_OPS", expect.anything());
+
+    postChannelMessageMock.mockClear();
+    const kvScheduled = createMockKv();
+    const configScheduled = createTestConfig(kvScheduled, { opsChannelId: "C_OPS" });
+    await upsertMemberMaster(configScheduled, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    await createAbsence(configScheduled, {
+      targetUser: "U1",
+      startDate: "2026-06-24",
+      endDate: "2026-06-24",
+      notifyChannels: ["C1"],
+      notifyUsers: [],
+      absenceType: "absence"
+    });
+    await runDailyNotify(configScheduled, { runId: "run_scheduled", trigger: "scheduled" });
+    expect(postChannelMessageMock).toHaveBeenCalledWith(expect.anything(), "C_OPS", expect.anything());
   });
 });

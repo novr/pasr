@@ -27,7 +27,7 @@
         "command": "/pasr-admin",
         "url": "REPLACE_WITH_WORKER_URL/slack/command",
         "description": "PASR管理",
-        "usage_hint": "[run, status]",
+        "usage_hint": "[run, status, channel-config]",
         "should_escape": true
       }
     ]

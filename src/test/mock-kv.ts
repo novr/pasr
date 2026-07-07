@@ -37,5 +37,8 @@ export const createTestConfig = (
   timezone: "Asia/Tokyo",
   adminUserIds: ["U_ADMIN"],
   pasrUsersUsergroupId: "",
+  notifyEmptyDefault: true,
+  opsChannelId: "",
+  noticeChannels: [],
   ...overrides
 });

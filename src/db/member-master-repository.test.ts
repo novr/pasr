@@ -17,6 +17,12 @@ describe("member-master-repository", () => {
     expect(row?.defaultRegistrationNotify).toBe("both");
   });
 
+  it("ensureMemberMasterActive seeds notice channels from config", async () => {
+    const config = createTestConfig(createMockKv(), { noticeChannels: ["C_NOTICE", "C_NOTICE2"] });
+    const row = await ensureMemberMasterActive(config, "U_NOTICE");
+    expect(row.defaultNotifyChannels).toEqual(["C_NOTICE", "C_NOTICE2"]);
+  });
+
   it("ensureMemberMasterActive creates minimal row", async () => {
     const config = createTestConfig(createMockKv());
     const row = await ensureMemberMasterActive(config, "U9");

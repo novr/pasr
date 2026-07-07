@@ -23,6 +23,8 @@ Worker は3ハンドラで構成する。
 - 失敗はレコード単位で隔離し、全体処理は継続する
 - `Notify Users` は absence レコードの値のみ使用（`member_master` で補完しない）
 - `absence.notify_channels` / `absence.notify_users` は daily 実行時に master default で補完しない
+- `channel_notify_settings` は CH 別 0件時通知の上書きのみ（absence データは不変）。未 migrate 時 daily は org デフォルト（empty=on）で継続
+- `SLACK_PASR_OPS_CHANNEL` への ops レポートは `trigger === "scheduled"` のときのみ。失敗は隔離
 - `scheduled` の週末スキップを回避する強制フラグは導入しない
 
 ## app_mention 日付解釈
@@ -46,8 +48,8 @@ Worker は3ハンドラで構成する。
 **`/pasr`** — 全ユーザー可。`list` / `update`（一覧）は Queue 非同期。`settings` / `register` / `update`（Modal 起動）は HTTP で即時 ACK し、実処理は `waitUntil`（`trigger_id` 期限内に Modal 起動）。Queue 系も dedupe / enqueue は `waitUntil`。重複時は `response_url` で通知。
 
 **`/pasr-admin`** — `SLACK_ADMIN_USER_IDS` allowlist 必須。非該当は即時 ACK のみ（`Received. Processing...`）、実処理なし。
-- `help` / `status`: 即時応答
-- `run`: 即時 ACK 後 Queue 経由で非同期実行
+- `help` / `status` / `channel-config`: 即時応答（`channel-config` は queue 不可）。`status` は `channel_notify_settings` の migrate 状態も表示
+- `run`: 即時 ACK 後 Queue 経由で非同期実行（ops レポートは投稿しない）
 
 ## Interactions 不変条件
 
@@ -69,7 +71,7 @@ Worker は3ハンドラで構成する。
 
 ## データ境界
 
-**正本**: D1（`PASR_DB`）— `absences`, `member_master`
+**正本**: D1（`PASR_DB`）— `absences`, `member_master`, `channel_notify_settings`（migration `0002`）
 
 Store: `PASR_STATE` KV
 
@@ -90,7 +92,7 @@ Store: `PASR_STATE` KV
 
 - 組織ごとに Slack App / Cloudflare 環境を分離
 - **`wrangler.jsonc` は git 管理**（bindings / `TZ` / cron）。組織固有 ID の差し替えは clone 後に実施
-- Dashboard Variables: `SLACK_ADMIN_USER_IDS`（必須）、`SLACK_PASR_USERS_USERGROUP_ID`（任意）。jsonc `vars` に載せない
+- Dashboard Variables: `SLACK_ADMIN_USER_IDS`（必須）、`SLACK_PASR_USERS_USERGROUP_ID` / `PASR_NOTIFY_EMPTY_DEFAULT` / `SLACK_PASR_OPS_CHANNEL` / `SLACK_PASR_NOTICE_CH`（任意）。jsonc `vars` に載せない
 - Secret（`SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `RUN_ENDPOINT_TOKEN`）は Cloudflare のみ。レスポンス・ログへ出力しない
 - `/run` は Bearer token 必須（`crypto.subtle.timingSafeEqual`）。認証失敗は `401` と最小エラーボディ
 - `wrangler.jsonc` vars: `TZ=Asia/Tokyo` のみ

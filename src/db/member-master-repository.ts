@@ -71,7 +71,7 @@ export const ensureMemberMasterActive = async (
   const created: MemberMasterRecord = {
     targetUser,
     active: true,
-    defaultNotifyChannels: [],
+    defaultNotifyChannels: config.noticeChannels.length > 0 ? [...config.noticeChannels] : [],
     defaultNotifyUsers: [],
     defaultRegistrationNotify: "none"
   };

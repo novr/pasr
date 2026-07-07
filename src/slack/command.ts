@@ -6,7 +6,7 @@ import {
 import { isTransientError } from "../errors/transient";
 import { runDailyNotify } from "../jobs/daily-notify";
 import { isValidJstDateString, getJstDateParts } from "../domain/jst-date";
-import { checkDbSchema } from "../db/schema-check";
+import { checkDbSchema, checkChannelNotifySettingsSchema } from "../db/schema-check";
 import { upsertMemberMaster } from "../db/member-master-repository";
 import { DbSchemaMismatchError, assertDbSchema } from "../db/schema-check";
 import {
@@ -24,6 +24,7 @@ import { handleAppHomeInteraction } from "./app-home";
 import { MEMBER_MASTER_MODAL_CALLBACK_ID, openMemberMasterSettingsModal } from "./member-master-modal";
 import { slackApi } from "./api";
 import { readLastRunSummary } from "../state/kv";
+import { handleChannelConfigCommand } from "./channel-config";
 
 export const COMMAND_ACK_UNAUTHORIZED = "Received. Processing...";
 export const COMMAND_ACK_DUPLICATE =
@@ -221,13 +222,15 @@ const buildAdminHelpText = (): string =>
   [
     "/pasr-admin help - 管理者向けコマンドの使い方表示",
     "/pasr-admin run - 通知処理を手動実行",
-    "/pasr-admin status - 直近実行の要約表示"
+    "/pasr-admin status - 直近実行の要約表示",
+    "/pasr-admin channel-config empty on|off|default - この CH の 0件時通知を上書き",
+    "/pasr-admin channel-config list - CH 別 0件時通知の上書き一覧"
   ].join("\n");
 
 type CommandKind = "self" | "admin" | "unsupported";
 
 const SELF_ACTIONS = ["help", "list", "settings", "update", "register"] as const;
-const ADMIN_ACTIONS = ["help", "run", "status"] as const;
+const ADMIN_ACTIONS = ["help", "run", "status", "channel-config"] as const;
 
 export const getCommandKind = (command: string): CommandKind => {
   if (command === "/pasr") return "self";
@@ -428,15 +431,21 @@ const getAdminImmediateText = async (
   if (action === "status") {
     const summary = await readLastRunSummary(config);
     const dbSchema = await checkDbSchema(config);
+    const channelNotifySchema = await checkChannelNotifySettingsSchema(config);
     const dbLine = `db: ${dbSchema === "ok" ? "ok" : "schema_missing"}`;
+    const channelNotifyLine = `channel_notify_settings: ${channelNotifySchema === "ok" ? "ok" : "schema_missing"}`;
     return summary
       ? [
           `last run: processed=${summary.processed} sent=${summary.sent} skipped=${summary.skipped} deleted=${summary.deleted ?? 0} errors=${summary.errors}`,
           `run_id: ${summary.runId}`,
           dbLine,
+          channelNotifyLine,
           `executed_at: ${summary.executedAt}`
         ].join("\n")
-      : [`No run history yet.`, dbLine].join("\n");
+      : [`No run history yet.`, dbLine, channelNotifyLine].join("\n");
+  }
+  if (action === "channel-config") {
+    return handleChannelConfigCommand(config, payload);
   }
   return undefined;
 };
