@@ -6,8 +6,10 @@ import {
   listAbsenceIdsEndedBefore,
   listAllAbsences
 } from "../db/absence-repository";
+import { loadChannelNotifySettingsMap, resolveNotifyWhenEmpty } from "../db/channel-notify-repository";
 import { ensureMemberMasterActive, loadMemberMasterActiveMap } from "../db/member-master-repository";
 import { assertDbSchema, checkDbSchema, DbSchemaMismatchError } from "../db/schema-check";
+import { postOpsReport } from "./ops-report";
 import { slackApi } from "../slack/api";
 import {
   writeLastRunSummary,
@@ -25,8 +27,14 @@ type DailyResult = {
   skipped: number;
   errors: number;
   deleted: number;
+  todayAbsenceCount: number;
   skipReasons: Record<SkipReason, number>;
   dbStatus: string;
+};
+
+type ChannelNotifyContext = {
+  settingsMap: Map<string, boolean>;
+  notifyEmptyDefault: boolean;
 };
 
 type RunContext = {
@@ -128,9 +136,16 @@ const sendChannelNotifications = async (
   context: RunContext,
   result: DailyResult,
   day: string,
-  grouped: Map<string, AbsenceRecord[]>
+  grouped: Map<string, AbsenceRecord[]>,
+  notifyContext: ChannelNotifyContext
 ): Promise<void> => {
   for (const [channel, records] of grouped.entries()) {
+    if (
+      records.length === 0 &&
+      !resolveNotifyWhenEmpty(channel, notifyContext.settingsMap, notifyContext.notifyEmptyDefault)
+    ) {
+      continue;
+    }
     const text = buildMessage(day, records);
     const existingTs = await readPostedMessageTs(config, day, channel);
     try {
@@ -285,6 +300,7 @@ export const runDailyNotify = async (
     skipped: 0,
     errors: 0,
     deleted: 0,
+    todayAbsenceCount: 0,
     skipReasons: zeroedReasons(),
     dbStatus
   };
@@ -306,6 +322,11 @@ export const runDailyNotify = async (
   }
 
   const { day } = toJstDate();
+  const channelSettingsMap = await loadChannelNotifySettingsMap(config);
+  const notifyContext: ChannelNotifyContext = {
+    settingsMap: channelSettingsMap,
+    notifyEmptyDefault: config.notifyEmptyDefault
+  };
   const memberMasterMap = await loadMemberMasterActiveMap(config);
   const records = await listAllAbsences(config);
   result.processed = records.length;
@@ -345,6 +366,7 @@ export const runDailyNotify = async (
   }
 
   const todays = filterToday(validRecords, day);
+  result.todayAbsenceCount = todays.length;
   const todaysForDm = filterToday(dmCandidateRecords, day);
   const grouped =
     todays.length > 0
@@ -355,12 +377,26 @@ export const runDailyNotify = async (
             [] as AbsenceRecord[]
           ])
         );
-  await sendChannelNotifications(config, context, result, day, grouped);
+  await sendChannelNotifications(config, context, result, day, grouped, notifyContext);
 
   const groupedNotifyUsers = groupByNotifyUser(todaysForDm);
   await sendDirectMessageNotifications(config, context, result, day, groupedNotifyUsers);
 
   await deleteEndedAbsences(config, context, result, day);
+
+  const opsResult = await postOpsReport(config, {
+    runId: result.runId,
+    trigger: result.trigger,
+    day,
+    todayAbsenceCount: result.todayAbsenceCount,
+    processed: result.processed,
+    sent: result.sent,
+    skipped: result.skipped,
+    errors: result.errors,
+    deleted: result.deleted,
+    skipReasons: result.skipReasons
+  });
+  result.errors += opsResult.errors;
 
   console.log(
     JSON.stringify({
@@ -399,5 +435,6 @@ export const runDailyNotify = async (
       })
     );
   }
+
   return result;
 };

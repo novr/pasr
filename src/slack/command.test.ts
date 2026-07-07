@@ -18,7 +18,10 @@ const config: AppConfig = {
   slackSigningSecret: "secret",
   timezone: "Asia/Tokyo",
   adminUserIds: ["U_ADMIN"],
-  pasrUsersUsergroupId: ""
+  pasrUsersUsergroupId: "",
+  notifyEmptyDefault: true,
+  opsChannelId: "",
+  noticeChannels: []
 };
 
 describe("slash command parsers", () => {

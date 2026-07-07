@@ -2,6 +2,9 @@ import type { AppConfig } from "../config";
 import { getDb } from "./client";
 
 export type DbSchemaStatus = "ok" | "schema_missing";
+export type ChannelNotifySettingsSchemaStatus = "ok" | "schema_missing";
+
+const CHANNEL_NOTIFY_SETTINGS_TABLE = "channel_notify_settings";
 
 export const checkDbSchema = async (config: AppConfig): Promise<DbSchemaStatus> => {
   const db = getDb(config);
@@ -16,6 +19,19 @@ export const checkDbSchema = async (config: AppConfig): Promise<DbSchemaStatus> 
     return "schema_missing";
   }
   return "ok";
+};
+
+export const checkChannelNotifySettingsSchema = async (
+  config: AppConfig
+): Promise<ChannelNotifySettingsSchemaStatus> => {
+  const row = await getDb(config)
+    .prepare(
+      `SELECT name FROM sqlite_master
+       WHERE type = 'table' AND name = ?`
+    )
+    .bind(CHANNEL_NOTIFY_SETTINGS_TABLE)
+    .first<{ name: string }>();
+  return row?.name === CHANNEL_NOTIFY_SETTINGS_TABLE ? "ok" : "schema_missing";
 };
 
 export class DbSchemaMismatchError extends Error {

@@ -32,10 +32,23 @@ type MasterStore = {
   updated_at: string;
 };
 
-export const createMockD1 = (): D1Database => {
+type ChannelNotifyStore = {
+  channel_id: string;
+  notify_when_empty: number;
+  updated_at: string;
+  updated_by: string;
+};
+
+export type MockD1Options = {
+  includeChannelNotifySettings?: boolean;
+};
+
+export const createMockD1 = (options: MockD1Options = {}): D1Database => {
+  const includeChannelNotifySettings = options.includeChannelNotifySettings !== false;
   const absences = new Map<string, AbsenceStore>();
   const memberMaster = new Map<string, MasterStore>();
-  let tablesInitialized = true;
+  const channelNotifySettings = new Map<string, ChannelNotifyStore>();
+  const tablesInitialized = true;
 
   const execute = (statement: BoundStatement): { results: unknown[]; run: RunResult } => {
     const sql = normalizeSql(statement.sql);
@@ -43,13 +56,27 @@ export const createMockD1 = (): D1Database => {
 
     if (sql.includes("FROM sqlite_master")) {
       const tables = [];
-      if (tablesInitialized && absences) tables.push({ name: "absences" });
-      if (tablesInitialized && memberMaster) tables.push({ name: "member_master" });
+      if (tablesInitialized) tables.push({ name: "absences" });
+      if (tablesInitialized) tables.push({ name: "member_master" });
+      if (includeChannelNotifySettings && tablesInitialized) {
+        tables.push({ name: "channel_notify_settings" });
+      }
+      if (sql.includes("name = ?")) {
+        const name = String(p[0]);
+        return {
+          results: tables.filter((table) => table.name === name),
+          run: { success: true, meta: {} }
+        };
+      }
       return { results: tables, run: { success: true, meta: {} } };
     }
 
     if (sql.startsWith("SELECT COUNT(*) AS count FROM absences")) {
       return { results: [{ count: absences.size }], run: { success: true, meta: {} } };
+    }
+    if (sql.startsWith("SELECT COUNT(*) AS count FROM member_master WHERE active = 1")) {
+      const count = [...memberMaster.values()].filter((row) => row.active === 1).length;
+      return { results: [{ count }], run: { success: true, meta: {} } };
     }
     if (sql.startsWith("SELECT COUNT(*) AS count FROM member_master")) {
       return { results: [{ count: memberMaster.size }], run: { success: true, meta: {} } };
@@ -98,6 +125,23 @@ export const createMockD1 = (): D1Database => {
     }
     if (sql.startsWith("SELECT target_user, active FROM member_master")) {
       return { results: [...memberMaster.values()].map((row) => ({ target_user: row.target_user, active: row.active })), run: { success: true, meta: {} } };
+    }
+    if (sql.startsWith("SELECT channel_id, notify_when_empty FROM channel_notify_settings")) {
+      return {
+        results: [...channelNotifySettings.values()].map((row) => ({
+          channel_id: row.channel_id,
+          notify_when_empty: row.notify_when_empty
+        })),
+        run: { success: true, meta: {} }
+      };
+    }
+    if (sql.startsWith("SELECT * FROM channel_notify_settings WHERE channel_id = ?")) {
+      const row = channelNotifySettings.get(String(p[0]));
+      return { results: row ? [row] : [], run: { success: true, meta: {} } };
+    }
+    if (sql.startsWith("SELECT * FROM channel_notify_settings ORDER BY channel_id")) {
+      const results = [...channelNotifySettings.values()].sort((a, b) => a.channel_id.localeCompare(b.channel_id));
+      return { results, run: { success: true, meta: {} } };
     }
 
     if (sql.startsWith("INSERT INTO absences") || sql.startsWith("INSERT OR IGNORE INTO absences")) {
@@ -174,6 +218,22 @@ export const createMockD1 = (): D1Database => {
         updated_at: String(p[5])
       });
       return { results: [], run: { success: true, meta: { changes: 1 } } };
+    }
+
+    if (sql.includes("INSERT INTO channel_notify_settings")) {
+      const channelId = String(p[0]);
+      channelNotifySettings.set(channelId, {
+        channel_id: channelId,
+        notify_when_empty: Number(p[1]),
+        updated_at: String(p[2]),
+        updated_by: String(p[3])
+      });
+      return { results: [], run: { success: true, meta: { changes: 1 } } };
+    }
+
+    if (sql.startsWith("DELETE FROM channel_notify_settings WHERE channel_id = ?")) {
+      const deleted = channelNotifySettings.delete(String(p[0]));
+      return { results: [], run: { success: true, meta: { changes: deleted ? 1 : 0 } } };
     }
 
     throw new Error(`mock-d1 unsupported sql: ${sql}`);
