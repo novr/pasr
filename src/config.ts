@@ -1,10 +1,4 @@
 
-type DashboardEnv = Env & {
-  PASR_NOTIFY_EMPTY_DEFAULT?: string;
-  SLACK_PASR_OPS_CHANNEL?: string;
-  SLACK_PASR_NOTICE_CH?: string;
-};
-
 const parseBooleanEnv = (value: string | undefined, defaultValue: boolean): boolean => {
   if (value === undefined || value.trim().length === 0) return defaultValue;
   const normalized = value.trim().toLowerCase();
@@ -36,7 +30,6 @@ export type AppConfig = {
 };
 
 export const getConfig = (env: Env): AppConfig => {
-  const dashboardEnv = env as DashboardEnv;
   if (!env.SLACK_BOT_TOKEN) {
     throw new Error("Missing SLACK_BOT_TOKEN");
   }
@@ -64,8 +57,8 @@ export const getConfig = (env: Env): AppConfig => {
     timezone: env.TZ || "Asia/Tokyo",
     adminUserIds: parseCommaSeparatedIds(env.SLACK_ADMIN_USER_IDS),
     pasrUsersUsergroupId: (env.SLACK_PASR_USERS_USERGROUP_ID ?? "").trim(),
-    notifyEmptyDefault: parseBooleanEnv(dashboardEnv.PASR_NOTIFY_EMPTY_DEFAULT, true),
-    opsChannelId: (dashboardEnv.SLACK_PASR_OPS_CHANNEL ?? "").trim(),
-    noticeChannels: parseCommaSeparatedIds(dashboardEnv.SLACK_PASR_NOTICE_CH)
+    notifyEmptyDefault: parseBooleanEnv(env.PASR_NOTIFY_EMPTY_DEFAULT, true),
+    opsChannelId: (env.SLACK_PASR_OPS_CHANNEL ?? "").trim(),
+    noticeChannels: parseCommaSeparatedIds(env.SLACK_PASR_NOTICE_CH)
   };
 };
