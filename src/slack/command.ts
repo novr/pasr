@@ -429,6 +429,8 @@ export const getSlashCommandImmediateText = async (
   return undefined;
 };
 
+const formatRunSent = (sent: number): string => `sent=${sent} (CH+DM)`;
+
 const getAdminImmediateText = async (
   config: AppConfig,
   payload: SlackCommandPayload,
@@ -446,7 +448,7 @@ const getAdminImmediateText = async (
     const channelNotifyLine = `channel_notify_settings: ${channelNotifySchema === "ok" ? "ok" : "schema_missing"}`;
     return summary
       ? [
-          `last run: processed=${summary.processed} sent=${summary.sent} skipped=${summary.skipped} deleted=${summary.deleted ?? 0} errors=${summary.errors}`,
+          `last run: processed=${summary.processed} ${formatRunSent(summary.sent)} skipped=${summary.skipped} deleted=${summary.deleted ?? 0} errors=${summary.errors}`,
           `run_id: ${summary.runId}`,
           dbLine,
           channelNotifyLine,
@@ -515,7 +517,7 @@ export const runSlackCommandAsync = async (
 
       const status = result.errors > 0 ? "一部エラーあり" : "完了";
       const resultText = [
-        `run ${status}: processed=${result.processed} sent=${result.sent} skipped=${result.skipped} deleted=${result.deleted} errors=${result.errors}`,
+        `run ${status}: processed=${result.processed} ${formatRunSent(result.sent)} skipped=${result.skipped} deleted=${result.deleted} errors=${result.errors}`,
         `run_id: ${runId}`
       ].join("\n");
       await postEphemeralResponse(config, payload, resultText);

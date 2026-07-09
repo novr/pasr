@@ -313,7 +313,7 @@ export const runDailyNotify = async (
   }
 
   const { day } = toJstDate();
-  const channelSettingsMap = await loadChannelNotifySettingsMap(config);
+  const channelSettingsMap = await loadChannelNotifySettingsMap(config, { runId: context.runId });
   const notifyContext: ChannelNotifyContext = {
     settingsMap: channelSettingsMap,
     notifyEmptyDefault: config.notifyEmptyDefault

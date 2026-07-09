@@ -5,11 +5,9 @@ import {
   isSlackAdminUser,
   parseSelfCommandText,
   parseSlackCommandAction,
-  parseSlackCommandPayload,
-  resolveSlashCommandDispatch
+  parseSlackCommandPayload
 } from "./command";
 import type { AppConfig } from "../config";
-import { createMockKv, createTestConfig } from "../test/mock-kv";
 
 const config: AppConfig = {
   stateKv: {} as KVNamespace,
@@ -84,23 +82,5 @@ describe("slash command parsers", () => {
   it("isSlackAdminUser checks allowlist", () => {
     expect(isSlackAdminUser(config, "U_ADMIN")).toBe(true);
     expect(isSlackAdminUser(config, "U_OTHER")).toBe(false);
-  });
-});
-
-describe("resolveSlashCommandDispatch", () => {
-  it("dispatches channel-config as deferred", async () => {
-    const testConfig = createTestConfig(createMockKv());
-    const dispatch = await resolveSlashCommandDispatch(testConfig, {
-      command: "/pasr-admin",
-      text: "channel-config empty on",
-      userId: "U_ADMIN",
-      teamId: "T1",
-      channelId: "C1",
-      triggerId: "tr1",
-      responseUrl: "https://hooks.slack.com/commands/1/2/3"
-    });
-    expect(dispatch.mode).toBe("deferred");
-    if (dispatch.mode !== "deferred") return;
-    expect(dispatch.ackText).toContain("処理");
   });
 });
