@@ -389,6 +389,16 @@ export const resolveSlashCommandDispatch = async (
   const commandKind = getCommandKind(payload.command);
   const action = parseSlackCommandAction(payload.text);
   if (commandKind === "admin") {
+    if (action === "channel-config") {
+      return {
+        mode: "deferred",
+        ackText: "処理しています…",
+        run: async () => {
+          const resultText = await handleChannelConfigCommand(config, payload);
+          await notifySlashCommandEphemeral(config, payload, resultText);
+        }
+      };
+    }
     const adminText = await getAdminImmediateText(config, payload, action);
     if (adminText !== undefined) return { mode: "text", text: adminText };
     return { mode: "queue" };
@@ -419,6 +429,8 @@ export const getSlashCommandImmediateText = async (
   return undefined;
 };
 
+const formatRunSent = (sent: number): string => `sent=${sent} (CH+DM)`;
+
 const getAdminImmediateText = async (
   config: AppConfig,
   payload: SlackCommandPayload,
@@ -436,16 +448,13 @@ const getAdminImmediateText = async (
     const channelNotifyLine = `channel_notify_settings: ${channelNotifySchema === "ok" ? "ok" : "schema_missing"}`;
     return summary
       ? [
-          `last run: processed=${summary.processed} sent=${summary.sent} skipped=${summary.skipped} deleted=${summary.deleted ?? 0} errors=${summary.errors}`,
+          `last run: processed=${summary.processed} ${formatRunSent(summary.sent)} skipped=${summary.skipped} deleted=${summary.deleted ?? 0} errors=${summary.errors}`,
           `run_id: ${summary.runId}`,
           dbLine,
           channelNotifyLine,
           `executed_at: ${summary.executedAt}`
         ].join("\n")
       : [`No run history yet.`, dbLine, channelNotifyLine].join("\n");
-  }
-  if (action === "channel-config") {
-    return handleChannelConfigCommand(config, payload);
   }
   return undefined;
 };
@@ -508,7 +517,7 @@ export const runSlackCommandAsync = async (
 
       const status = result.errors > 0 ? "一部エラーあり" : "完了";
       const resultText = [
-        `run ${status}: processed=${result.processed} sent=${result.sent} skipped=${result.skipped} deleted=${result.deleted} errors=${result.errors}`,
+        `run ${status}: processed=${result.processed} ${formatRunSent(result.sent)} skipped=${result.skipped} deleted=${result.deleted} errors=${result.errors}`,
         `run_id: ${runId}`
       ].join("\n");
       await postEphemeralResponse(config, payload, resultText);

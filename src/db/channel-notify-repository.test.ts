@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createMockKv, createTestConfig } from "../test/mock-kv";
+import { createMockD1 } from "../test/mock-d1";
 import {
   deleteChannelNotifySetting,
   loadChannelNotifySettingsMap,
@@ -23,5 +24,18 @@ describe("channel-notify-repository", () => {
     const map = await loadChannelNotifySettingsMap(config);
     expect(map.size).toBe(0);
     expect(resolveNotifyWhenEmpty("C1", map, false)).toBe(false);
+  });
+
+  it("includes run_id in missing-table warn context", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const config = createTestConfig(createMockKv(), {
+      db: createMockD1({ includeChannelNotifySettings: false })
+    });
+    await loadChannelNotifySettingsMap(config, { runId: "run_warn_test" });
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('"event":"channel_notify_settings_table_missing"')
+    );
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"run_id":"run_warn_test"'));
+    warnSpy.mockRestore();
   });
 });

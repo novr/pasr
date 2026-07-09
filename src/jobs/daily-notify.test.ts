@@ -195,6 +195,61 @@ describe("runDailyNotify", () => {
     expect(result.sent).toBe(1);
   });
 
+  it("notifies override-only channels when no valid absence records exist on empty days", async () => {
+    const kv = createMockKv();
+    const config = createTestConfig(kv);
+    await upsertMemberMaster(config, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-06-25",
+      endDate: "2026-06-25",
+      notifyChannels: [],
+      notifyUsers: [],
+      absenceType: "absence"
+    });
+    const { upsertChannelNotifySetting } = await import("../db/channel-notify-repository");
+    await upsertChannelNotifySetting(config, "C_OVERRIDE_ONLY", true, "U_ADMIN");
+
+    const result = await runDailyNotify(config, { runId: "run_override_only", trigger: "manual" });
+
+    expect(result.todayAbsenceCount).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.skipReasons.missing_notify_channels).toBe(1);
+    expect(postChannelMessageMock).toHaveBeenCalledWith(expect.anything(), "C_OVERRIDE_ONLY", expect.anything());
+    expect(result.sent).toBe(1);
+  });
+
+  it("counts DM deliveries in result.sent", async () => {
+    const kv = createMockKv();
+    const config = createTestConfig(kv);
+    await upsertMemberMaster(config, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-06-24",
+      endDate: "2026-06-24",
+      notifyChannels: ["C1"],
+      notifyUsers: ["U2"],
+      absenceType: "absence"
+    });
+
+    const result = await runDailyNotify(config, { runId: "run_dm_sent", trigger: "manual" });
+
+    expect(result.sent).toBe(2);
+    expect(openDirectMessageMock).toHaveBeenCalledWith(expect.anything(), "U2");
+  });
+
   it("records ops failures in last summary errors", async () => {
     const kv = createMockKv();
     const config = createTestConfig(kv, { opsChannelId: "C_OPS" });

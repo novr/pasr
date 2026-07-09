@@ -8,7 +8,7 @@ import {
 } from "../db/absence-repository";
 import { loadChannelNotifySettingsMap, resolveNotifyWhenEmpty } from "../db/channel-notify-repository";
 import { ensureMemberMasterActive, loadMemberMasterActiveMap } from "../db/member-master-repository";
-import { assertDbSchema, checkDbSchema, DbSchemaMismatchError } from "../db/schema-check";
+import { checkDbSchema } from "../db/schema-check";
 import { postOpsReport } from "./ops-report";
 import { slackApi } from "../slack/api";
 import {
@@ -226,6 +226,7 @@ const sendDirectMessageNotifications = async (
         if (!posted.ts) throw new Error("chat.postMessage response missing ts");
         await writePostedDirectMessageTs(config, day, notifyUser, posted.ts);
       }
+      result.sent += 1;
       console.log(
         JSON.stringify({
           level: "info",
@@ -311,18 +312,8 @@ export const runDailyNotify = async (
     return result;
   }
 
-  try {
-    await assertDbSchema(config);
-  } catch (error) {
-    if (error instanceof DbSchemaMismatchError) {
-      result.errors += 1;
-      return result;
-    }
-    throw error;
-  }
-
   const { day } = toJstDate();
-  const channelSettingsMap = await loadChannelNotifySettingsMap(config);
+  const channelSettingsMap = await loadChannelNotifySettingsMap(config, { runId: context.runId });
   const notifyContext: ChannelNotifyContext = {
     settingsMap: channelSettingsMap,
     notifyEmptyDefault: config.notifyEmptyDefault
@@ -372,10 +363,12 @@ export const runDailyNotify = async (
     todays.length > 0
       ? groupByChannel(todays)
       : new Map(
-          [...new Set(validRecords.flatMap((record) => record.notifyChannels))].map((channel) => [
-            channel,
-            [] as AbsenceRecord[]
-          ])
+          [
+            ...new Set([
+              ...validRecords.flatMap((record) => record.notifyChannels),
+              ...channelSettingsMap.keys()
+            ])
+          ].map((channel) => [channel, [] as AbsenceRecord[]])
         );
   await sendChannelNotifications(config, context, result, day, grouped, notifyContext);
 
