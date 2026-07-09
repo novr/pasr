@@ -48,7 +48,8 @@ Worker は3ハンドラで構成する。
 **`/pasr`** — 全ユーザー可。`list` / `update`（一覧）は Queue 非同期。`settings` / `register` / `update`（Modal 起動）は HTTP で即時 ACK し、実処理は `waitUntil`（`trigger_id` 期限内に Modal 起動）。Queue 系も dedupe / enqueue は `waitUntil`。重複時は `response_url` で通知。
 
 **`/pasr-admin`** — `SLACK_ADMIN_USER_IDS` allowlist 必須。非該当は即時 ACK のみ（`Received. Processing...`）、実処理なし。
-- `help` / `status` / `channel-config`: 即時応答（`channel-config` は queue 不可）。`status` は `channel_notify_settings` の migrate 状態も表示
+- `help` / `status`: 即時応答（HTTP レスポンス本文）。`status` は `channel_notify_settings` の migrate 状態も表示
+- `channel-config`: 即時 ACK（`処理しています…`）後 `waitUntil` で D1 処理し ephemeral で結果通知（queue 不可。Slack 3 秒制限回避）
 - `run`: 即時 ACK 後 Queue 経由で非同期実行（ops レポートは投稿しない）
 
 ## Interactions 不変条件
