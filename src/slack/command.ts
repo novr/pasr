@@ -389,6 +389,16 @@ export const resolveSlashCommandDispatch = async (
   const commandKind = getCommandKind(payload.command);
   const action = parseSlackCommandAction(payload.text);
   if (commandKind === "admin") {
+    if (action === "channel-config") {
+      return {
+        mode: "deferred",
+        ackText: "処理しています…",
+        run: async () => {
+          const resultText = await handleChannelConfigCommand(config, payload);
+          await notifySlashCommandEphemeral(config, payload, resultText);
+        }
+      };
+    }
     const adminText = await getAdminImmediateText(config, payload, action);
     if (adminText !== undefined) return { mode: "text", text: adminText };
     return { mode: "queue" };
@@ -443,9 +453,6 @@ const getAdminImmediateText = async (
           `executed_at: ${summary.executedAt}`
         ].join("\n")
       : [`No run history yet.`, dbLine, channelNotifyLine].join("\n");
-  }
-  if (action === "channel-config") {
-    return handleChannelConfigCommand(config, payload);
   }
   return undefined;
 };

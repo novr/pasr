@@ -23,6 +23,7 @@ export const assertChannelNotifySettingsTable = async (config: AppConfig): Promi
 export const loadChannelNotifySettingsMap = async (config: AppConfig): Promise<Map<string, boolean>> => {
   const map = new Map<string, boolean>();
   if (!(await hasChannelNotifySettingsTable(config))) {
+    console.warn(JSON.stringify({ level: "warn", event: "channel_notify_settings_table_missing" }));
     return map;
   }
   const result = await getDb(config)

@@ -51,7 +51,7 @@ export const getConfig = (env: Env): AppConfig => {
     db: env.PASR_DB,
     ai: env.AI,
     runEndpointToken: env.RUN_ENDPOINT_TOKEN ?? "",
-    debugEndpointsEnabled: env.DEBUG_ENDPOINTS_ENABLED === "true" || env.DEBUG_ENDPOINTS_ENABLED === "1",
+    debugEndpointsEnabled: parseBooleanEnv(env.DEBUG_ENDPOINTS_ENABLED, false),
     slackBotToken: env.SLACK_BOT_TOKEN,
     slackSigningSecret: env.SLACK_SIGNING_SECRET,
     timezone: env.TZ || "Asia/Tokyo",
