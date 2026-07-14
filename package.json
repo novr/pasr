@@ -7,7 +7,7 @@
     "dev": "wrangler dev --test-scheduled --port 8787 --persist-to=./.wrangler/state",
     "db:migrate:local": "wrangler d1 migrations apply pasr-db --local",
     "debug:mention-ai": "node --experimental-strip-types scripts/debug-mention-ai.ts",
-    "deploy": "wrangler deploy",
+    "deploy": "wrangler deploy --keep-vars",
     "types": "wrangler types",
     "check": "tsc --noEmit",
     "test": "vitest run",
