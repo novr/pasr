@@ -4,6 +4,7 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-06-19",
   "compatibility_flags": ["nodejs_compat"],
+  "keep_vars": true,
   "kv_namespaces": [
     {
       "binding": "PASR_STATE",
