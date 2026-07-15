@@ -46,7 +46,8 @@
         "users:read",
         "usergroups:read",
         "usergroups:write"
-      ]
+      ],
+      "user": ["users.profile:write"]
     }
   },
   "settings": {

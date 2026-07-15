@@ -10,6 +10,7 @@ import { loadChannelNotifySettingsMap, resolveNotifyWhenEmpty } from "../db/chan
 import { ensureMemberMasterActive, loadMemberMasterActiveMap } from "../db/member-master-repository";
 import { checkDbSchema } from "../db/schema-check";
 import { postOpsReport } from "./ops-report";
+import { syncTodayAbsenceStatus } from "./status-sync";
 import { slackApi } from "../slack/api";
 import {
   writeLastRunSummary,
@@ -375,6 +376,14 @@ export const runDailyNotify = async (
   const groupedNotifyUsers = groupByNotifyUser(todaysForDm);
   await sendDirectMessageNotifications(config, context, result, day, groupedNotifyUsers);
 
+  const statusSyncResult = await syncTodayAbsenceStatus(
+    config,
+    context,
+    dmCandidateRecords,
+    day
+  );
+  result.errors += statusSyncResult.statusErrors;
+
   await deleteEndedAbsences(config, context, result, day);
 
   const opsResult = await postOpsReport(config, {
@@ -387,7 +396,14 @@ export const runDailyNotify = async (
     skipped: result.skipped,
     errors: result.errors,
     deleted: result.deleted,
-    skipReasons: result.skipReasons
+    skipReasons: result.skipReasons,
+    ...(statusSyncResult.active
+      ? {
+          statusSet: statusSyncResult.statusSet,
+          statusSkipped: statusSyncResult.statusSkipped,
+          statusErrors: statusSyncResult.statusErrors
+        }
+      : {})
   });
   result.errors += opsResult.errors;
 

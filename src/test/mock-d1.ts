@@ -39,15 +39,25 @@ type ChannelNotifyStore = {
   updated_by: string;
 };
 
+type SlackUserOAuthStore = {
+  user_id: string;
+  access_token_enc: string;
+  scope: string;
+  updated_at: string;
+};
+
 export type MockD1Options = {
   includeChannelNotifySettings?: boolean;
+  includeSlackUserOAuth?: boolean;
 };
 
 export const createMockD1 = (options: MockD1Options = {}): D1Database => {
   const includeChannelNotifySettings = options.includeChannelNotifySettings !== false;
+  const includeSlackUserOAuth = options.includeSlackUserOAuth !== false;
   const absences = new Map<string, AbsenceStore>();
   const memberMaster = new Map<string, MasterStore>();
   const channelNotifySettings = new Map<string, ChannelNotifyStore>();
+  const slackUserOAuth = new Map<string, SlackUserOAuthStore>();
   const tablesInitialized = true;
 
   const execute = (statement: BoundStatement): { results: unknown[]; run: RunResult } => {
@@ -60,6 +70,9 @@ export const createMockD1 = (options: MockD1Options = {}): D1Database => {
       if (tablesInitialized) tables.push({ name: "member_master" });
       if (includeChannelNotifySettings && tablesInitialized) {
         tables.push({ name: "channel_notify_settings" });
+      }
+      if (includeSlackUserOAuth && tablesInitialized) {
+        tables.push({ name: "slack_user_oauth" });
       }
       if (sql.includes("name = ?")) {
         const name = String(p[0]);
@@ -142,6 +155,39 @@ export const createMockD1 = (options: MockD1Options = {}): D1Database => {
     if (sql.startsWith("SELECT * FROM channel_notify_settings ORDER BY channel_id")) {
       const results = [...channelNotifySettings.values()].sort((a, b) => a.channel_id.localeCompare(b.channel_id));
       return { results, run: { success: true, meta: {} } };
+    }
+
+    if (sql.startsWith("SELECT user_id FROM slack_user_oauth WHERE user_id = ?")) {
+      const row = slackUserOAuth.get(String(p[0]));
+      return { results: row ? [{ user_id: row.user_id }] : [], run: { success: true, meta: {} } };
+    }
+    if (sql.includes("FROM slack_user_oauth WHERE user_id IN")) {
+      const userIds = p.map(String);
+      const results = userIds
+        .map((userId) => slackUserOAuth.get(userId))
+        .filter((row): row is SlackUserOAuthStore => row !== undefined);
+      return { results, run: { success: true, meta: {} } };
+    }
+    if (sql.startsWith("SELECT user_id, access_token_enc, scope, updated_at FROM slack_user_oauth")) {
+      const userIds = p.map(String);
+      const results = userIds
+        .map((userId) => slackUserOAuth.get(userId))
+        .filter((row): row is SlackUserOAuthStore => row !== undefined);
+      return { results, run: { success: true, meta: {} } };
+    }
+    if (sql.includes("INSERT INTO slack_user_oauth")) {
+      const userId = String(p[0]);
+      slackUserOAuth.set(userId, {
+        user_id: userId,
+        access_token_enc: String(p[1]),
+        scope: String(p[2]),
+        updated_at: String(p[3])
+      });
+      return { results: [], run: { success: true, meta: { changes: 1 } } };
+    }
+    if (sql.startsWith("DELETE FROM slack_user_oauth WHERE user_id = ?")) {
+      const deleted = slackUserOAuth.delete(String(p[0]));
+      return { results: [], run: { success: true, meta: { changes: deleted ? 1 : 0 } } };
     }
 
     if (sql.startsWith("INSERT INTO absences") || sql.startsWith("INSERT OR IGNORE INTO absences")) {

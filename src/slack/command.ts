@@ -21,10 +21,11 @@ import { showOwnAbsenceList, handleAbsenceListInteraction } from "./absence-list
 import { openAbsenceRegisterModal, handleAbsenceRegisterInteraction } from "./absence-register";
 import { handleAbsenceMentionInteraction, isMentionAction } from "./absence-mention";
 import { handleAppHomeInteraction } from "./app-home";
+import { handleChannelConfigCommand } from "./channel-config";
 import { MEMBER_MASTER_MODAL_CALLBACK_ID, openMemberMasterSettingsModal } from "./member-master-modal";
 import { slackApi } from "./api";
 import { readLastRunSummary } from "../state/kv";
-import { handleChannelConfigCommand } from "./channel-config";
+import { postStatusOAuthEphemeral, handleStatusOAuthDisconnectAction } from "./status-oauth-ui";
 
 export const COMMAND_ACK_UNAUTHORIZED = "Received. Processing...";
 export const COMMAND_ACK_DUPLICATE =
@@ -289,7 +290,8 @@ const parseStaticSelectValue = (value: unknown): string => {
 const handleSelfImmediateText = async (
   config: AppConfig,
   payload: SlackCommandPayload,
-  parse: SelfCommandParse
+  parse: SelfCommandParse,
+  options?: { publicBaseUrl?: string }
 ): Promise<SlashCommandDispatch> => {
   switch (parse.kind) {
     case "help":
@@ -305,6 +307,13 @@ const handleSelfImmediateText = async (
             triggerId: payload.triggerId,
             userId: payload.userId
           });
+          if (payload.channelId && options?.publicBaseUrl) {
+            await postStatusOAuthEphemeral(config, {
+              channelId: payload.channelId,
+              userId: payload.userId,
+              publicBaseUrl: options.publicBaseUrl
+            });
+          }
         }
       };
     case "register":
@@ -384,7 +393,8 @@ const handleSelfImmediateText = async (
 
 export const resolveSlashCommandDispatch = async (
   config: AppConfig,
-  payload: SlackCommandPayload
+  payload: SlackCommandPayload,
+  options?: { publicBaseUrl?: string }
 ): Promise<SlashCommandDispatch> => {
   const commandKind = getCommandKind(payload.command);
   const action = parseSlackCommandAction(payload.text);
@@ -409,7 +419,7 @@ export const resolveSlashCommandDispatch = async (
       return { mode: "text", text: `unsupported action: ${parse.action}\n${buildHelpText()}` };
     }
     try {
-      return await handleSelfImmediateText(config, payload, parse);
+      return await handleSelfImmediateText(config, payload, parse, options);
     } catch (error) {
       return {
         mode: "text",
@@ -546,6 +556,19 @@ export const handleSlackInteraction = async (
   config: AppConfig,
   payload: SlackInteractionPayload
 ): Promise<SlackInteractionResult> => {
+  if (payload.type === "block_actions") {
+    const actionId = payload.actions?.[0]?.action_id ?? "";
+    const disconnectResult = await handleStatusOAuthDisconnectAction(config, {
+      actionId,
+      userId: payload.user?.id ?? "",
+      channelId: payload.channel?.id,
+      responseUrl: payload.response_url
+    });
+    if (disconnectResult.handled) {
+      return { ok: true, followUp: disconnectResult.followUp };
+    }
+  }
+
   const homeResult = await handleAppHomeInteraction(config, payload);
   if (homeResult.handled) {
     return { ok: homeResult.ok, followUp: homeResult.followUp };

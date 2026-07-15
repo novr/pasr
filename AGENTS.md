@@ -25,6 +25,7 @@ Worker は3ハンドラで構成する。
 - `absence.notify_channels` / `absence.notify_users` は daily 実行時に master default で補完しない
 - `channel_notify_settings` は CH 別 0件時通知の上書きのみ（absence データは不変）。未 migrate 時 daily は org デフォルト（empty=on）で継続
 - `SLACK_PASR_OPS_CHANNEL` への ops レポートは `trigger === "scheduled"` のときのみ。失敗は隔離
+- **Status 同期**（OAuth 有効時）: `scheduled` daily のみ `users.profile.set`。`status_expiration` は当日 JST 23:59:59 固定。対象は `filterToday(dmCandidateRecords)` ベース（CH 未設定不在者を含む）。`note` は `itemId` 昇順先頭 + `truncateStatusText`（100字）。登録直後同期・当日キャンセル時クリアはスコープ外
 - `scheduled` の週末スキップを回避する強制フラグは導入しない
 
 ## app_mention 日付解釈
@@ -68,11 +69,12 @@ Worker は3ハンドラで構成する。
   - フローは `app_mention` 本文付きと同じ（infer / AI → 確認 UI → 登録）
   - DM 応答は `chat.postMessage`（ephemeral 不可）。チャンネルは引き続き ephemeral
   - 確認 UI・エラー・キャンセル ACK も DM では会話に残る
+- **Status OAuth**: `/pasr settings` deferred と App Home から連携案内。`GET /slack/oauth/start` → callback で本人照合（state KV）。User Token は D1 暗号化保存。ログ・レスポンスへ出力しない。disconnect は本人のみ（`pasr_status_oauth_disconnect`）
 - App Home（`app_home_opened`, `tab=home`）: 本人 `member_master` + 今後の `absences` を D1 読取し `views.publish`（最大5件プレビュー）。D1 失敗時は静的フォールバック（ユーザー向け詳細エラーなし）。Home 起点の削除・編集成功時のみ `views.publish` で refresh（`waitUntil`）。登録・設定保存後は refresh しない。`resolveMasterContext` は Home 表示時には呼ばない。登録・設定 Modal と一覧 ephemeral は `block_actions` 即時 ACK 後 `waitUntil`（list のみ followUp）
 
 ## データ境界
 
-**正本**: D1（`PASR_DB`）— `absences`, `member_master`, `channel_notify_settings`（migration `0002`）
+**正本**: D1（`PASR_DB`）— `absences`, `member_master`, `channel_notify_settings`（migration `0002`）, `slack_user_oauth`（migration `0003`）
 
 Store: `PASR_STATE` KV
 
@@ -81,6 +83,8 @@ Store: `PASR_STATE` KV
 - `absence:post:{jstDate}:{channelId}` — 日次 CH 通知の `chat.update` 用 ts
 - `absence:dm:{jstDate}:{userId}` — 日次 DM の ts
 - `slack:event:dedupe:{eventId}` / `slack:command:dedupe:{triggerId}`
+- `slack:oauth:state:{nonce}` — OAuth CSRF（短期 TTL）
+- `pasr:worker_origin:{userId}` — App Home OAuth 用 Worker origin キャッシュ（7日 TTL、`PASR_PUBLIC_BASE_URL` 未設定時）
 
 **D1 / domain**
 - DB `id` ↔ `AbsenceRecord.itemId`（rename しない）
@@ -93,8 +97,8 @@ Store: `PASR_STATE` KV
 
 - 組織ごとに Slack App / Cloudflare 環境を分離
 - **`wrangler.jsonc` は git 管理**（bindings / `TZ` / cron）。組織固有 ID の差し替えは clone 後に実施
-- Dashboard Variables: `SLACK_ADMIN_USER_IDS`（必須）、`SLACK_PASR_USERS_USERGROUP_ID` / `PASR_NOTIFY_EMPTY_DEFAULT` / `SLACK_PASR_OPS_CHANNEL` / `SLACK_PASR_NOTICE_CH`（任意）。jsonc `vars` に載せない
-- Secret（`SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `RUN_ENDPOINT_TOKEN`）は Cloudflare のみ。レスポンス・ログへ出力しない
+- Dashboard Variables: `SLACK_ADMIN_USER_IDS`（必須）、`SLACK_PASR_USERS_USERGROUP_ID` / `PASR_NOTIFY_EMPTY_DEFAULT` / `SLACK_PASR_OPS_CHANNEL` / `SLACK_PASR_NOTICE_CH` / `PASR_STATUS_DEFAULT_TEXT` / `PASR_STATUS_EMOJI` / `PASR_PUBLIC_BASE_URL`（任意）。jsonc `vars` に載せない
+- Secret（`SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `RUN_ENDPOINT_TOKEN`, および任意の `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` / `SLACK_OAUTH_ENCRYPTION_KEY`）は Cloudflare のみ。レスポンス・ログへ出力しない
 - `/run` は Bearer token 必須（`crypto.subtle.timingSafeEqual`）。認証失敗は `401` と最小エラーボディ
 - `wrangler.jsonc` vars: `TZ=Asia/Tokyo` のみ
 - 実行ログ必須キー: `run_id`, `processed`, `sent`, `skipped`, `errors`

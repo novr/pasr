@@ -8,21 +8,9 @@ import {
   parseSlackCommandPayload
 } from "./command";
 import type { AppConfig } from "../config";
+import { createTestConfig, createMockKv } from "../test/mock-kv";
 
-const config: AppConfig = {
-  stateKv: {} as KVNamespace,
-  db: {} as D1Database,
-  runEndpointToken: "",
-  debugEndpointsEnabled: false,
-  slackBotToken: "xoxb-test",
-  slackSigningSecret: "secret",
-  timezone: "Asia/Tokyo",
-  adminUserIds: ["U_ADMIN"],
-  pasrUsersUsergroupId: "",
-  notifyEmptyDefault: true,
-  opsChannelId: "",
-  noticeChannels: []
-};
+const config: AppConfig = createTestConfig(createMockKv());
 
 describe("slash command parsers", () => {
   it("parseSlackCommandPayload returns payload when required fields exist", () => {
