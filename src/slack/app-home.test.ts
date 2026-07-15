@@ -104,7 +104,21 @@ describe("handleAppHomeOpened", () => {
       event: { type: "app_home_opened", user: "U1", tab: "home" }
     });
 
-    expect(publishAppHomeMock).toHaveBeenCalledWith(baseConfig, "U1");
+    expect(publishAppHomeMock).toHaveBeenCalledWith(baseConfig, "U1", "");
+  });
+
+  it("forwards publicBaseUrl to publishAppHome", async () => {
+    await handleAppHomeOpened(
+      baseConfig,
+      {
+        event_id: "E1",
+        team_id: "T1",
+        event: { type: "app_home_opened", user: "U1", tab: "home" }
+      },
+      "https://worker.example"
+    );
+
+    expect(publishAppHomeMock).toHaveBeenCalledWith(baseConfig, "U1", "https://worker.example");
   });
 
   it("ignores non-home tabs", async () => {

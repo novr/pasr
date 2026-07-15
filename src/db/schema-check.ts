@@ -3,8 +3,10 @@ import { getDb } from "./client";
 
 export type DbSchemaStatus = "ok" | "schema_missing";
 export type ChannelNotifySettingsSchemaStatus = "ok" | "schema_missing";
+export type SlackUserOAuthSchemaStatus = "ok" | "schema_missing";
 
 const CHANNEL_NOTIFY_SETTINGS_TABLE = "channel_notify_settings";
+const SLACK_USER_OAUTH_TABLE = "slack_user_oauth";
 
 export const checkDbSchema = async (config: AppConfig): Promise<DbSchemaStatus> => {
   const db = getDb(config);
@@ -32,6 +34,19 @@ export const checkChannelNotifySettingsSchema = async (
     .bind(CHANNEL_NOTIFY_SETTINGS_TABLE)
     .first<{ name: string }>();
   return row?.name === CHANNEL_NOTIFY_SETTINGS_TABLE ? "ok" : "schema_missing";
+};
+
+export const checkSlackUserOAuthSchema = async (
+  config: AppConfig
+): Promise<SlackUserOAuthSchemaStatus> => {
+  const row = await getDb(config)
+    .prepare(
+      `SELECT name FROM sqlite_master
+       WHERE type = 'table' AND name = ?`
+    )
+    .bind(SLACK_USER_OAUTH_TABLE)
+    .first<{ name: string }>();
+  return row?.name === SLACK_USER_OAUTH_TABLE ? "ok" : "schema_missing";
 };
 
 export class DbSchemaMismatchError extends Error {

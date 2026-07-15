@@ -1,15 +1,16 @@
 import { formatRegistrationNotifyModeLabel } from "../domain/absence-registration";
 import type { MemberMasterRecord } from "../db/member-master-repository";
 import {
+  ABSENCE_REGISTER_OPEN_ACTION_ID,
   APP_HOME_LIST_OPEN_ACTION_ID,
-  APP_HOME_SETTINGS_OPEN_ACTION_ID,
-  ABSENCE_REGISTER_OPEN_ACTION_ID
+  APP_HOME_SETTINGS_OPEN_ACTION_ID
 } from "./action-ids";
 import { buildOwnAbsenceListBlocks } from "./absence-list-blocks";
 import {
   APP_HOME_ABSENCE_PREVIEW_MAX,
   type AppHomeData
 } from "./app-home-data";
+import { buildAppHomeStatusOAuthBlock } from "./status-oauth-ui";
 
 const APP_HOME_INTRO_TEXT =
   "チームの不在予定を登録し、平日 JST 9:00 に自動で共有するアプリです。";
@@ -112,6 +113,15 @@ export const buildAppHomeBlocks = (data: AppHomeData): Array<Record<string, unkn
       type: "section",
       text: { type: "mrkdwn", text: formatAppHomeSettingsSummary(data.master) }
     },
+    ...(data.statusOAuth
+      ? [
+          { type: "divider" },
+          buildAppHomeStatusOAuthBlock({
+            linked: data.statusOAuth.linked,
+            startUrl: data.statusOAuth.startUrl
+          })
+        ]
+      : []),
     { type: "divider" },
     {
       type: "section",

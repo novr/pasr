@@ -40,6 +40,35 @@ describe("buildOpsReportText", () => {
     expect(text).toContain("active 12 / 全 14");
     expect(text).toContain("missing_notify_channels=1");
   });
+
+  it("includes status line when provided", () => {
+    const text = buildOpsReportText(
+      {
+        runId: "run_1",
+        trigger: "scheduled",
+        day: "2026-06-24",
+        todayAbsenceCount: 1,
+        processed: 1,
+        sent: 1,
+        skipped: 0,
+        errors: 0,
+        deleted: 0,
+        skipReasons: {
+          missing_target_user: 0,
+          missing_start_date: 0,
+          missing_notify_channels: 0,
+          invalid_date_range: 0,
+          inactive_user_master: 0
+        },
+        statusSet: 2,
+        statusSkipped: 1,
+        statusErrors: 0
+      },
+      5,
+      4
+    );
+    expect(text).toContain("status: set=2 skipped=1 errors=0");
+  });
 });
 
 describe("postOpsReport", () => {

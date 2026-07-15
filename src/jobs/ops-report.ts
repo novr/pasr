@@ -14,6 +14,9 @@ export type OpsReportInput = {
   errors: number;
   deleted: number;
   skipReasons: Record<SkipReason, number>;
+  statusSet?: number;
+  statusSkipped?: number;
+  statusErrors?: number;
 };
 
 const formatSkipReasons = (skipReasons: Record<SkipReason, number>): string => {
@@ -28,14 +31,24 @@ export const buildOpsReportText = (
   memberTotal: number,
   memberActive: number
 ): string => {
-  return [
+  const lines = [
     `PASR 日次レポート（${input.day} JST）`,
     `• 本日の不在: ${input.todayAbsenceCount}件`,
     `• 利用者: active ${memberActive} / 全 ${memberTotal}`,
     `• run: sent=${input.sent} skipped=${input.skipped} errors=${input.errors} deleted=${input.deleted}`,
-    `• skip: ${formatSkipReasons(input.skipReasons)}`,
-    `run_id: ${input.runId}`
-  ].join("\n");
+    `• skip: ${formatSkipReasons(input.skipReasons)}`
+  ];
+  if (
+    input.statusSet !== undefined ||
+    input.statusSkipped !== undefined ||
+    input.statusErrors !== undefined
+  ) {
+    lines.push(
+      `• status: set=${input.statusSet ?? 0} skipped=${input.statusSkipped ?? 0} errors=${input.statusErrors ?? 0}`
+    );
+  }
+  lines.push(`run_id: ${input.runId}`);
+  return lines.join("\n");
 };
 
 export const postOpsReport = async (

@@ -6,6 +6,7 @@ import {
 import { showOwnAbsenceList } from "./absence-list";
 import { resolveAppHomeDmChannelId } from "./app-home-channel";
 import { publishAppHome } from "./app-home-publish";
+import { rememberWorkerOriginForUser } from "../state/worker-origin";
 import { openMemberMasterSettingsModal } from "./member-master-modal";
 import { postUserFacingMessage } from "./user-message";
 import type { SlackEventEnvelope } from "./events";
@@ -65,7 +66,8 @@ const notifyAppHomeUser = async (
 
 export const handleAppHomeOpened = async (
   config: AppConfig,
-  envelope: SlackEventEnvelope
+  envelope: SlackEventEnvelope,
+  publicBaseUrl = config.publicBaseUrl
 ): Promise<void> => {
   const event = envelope.event;
   if (event?.type !== "app_home_opened") return;
@@ -89,7 +91,10 @@ export const handleAppHomeOpened = async (
   );
 
   try {
-    await publishAppHome(config, userId);
+    if (publicBaseUrl.length > 0) {
+      await rememberWorkerOriginForUser(config.stateKv, userId, publicBaseUrl);
+    }
+    await publishAppHome(config, userId, publicBaseUrl);
   } catch (error) {
     console.warn(
       JSON.stringify({

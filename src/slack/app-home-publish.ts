@@ -2,11 +2,17 @@ import type { AppConfig } from "../config";
 import { slackApi } from "./api";
 import { buildAppHomeBlocks, buildAppHomeStaticFallbackBlocks } from "./app-home-blocks";
 import { loadAppHomeData } from "./app-home-data";
+import { resolvePublicBaseUrlForUser } from "../state/worker-origin";
 
-export const publishAppHome = async (config: AppConfig, userId: string): Promise<void> => {
+export const publishAppHome = async (
+  config: AppConfig,
+  userId: string,
+  publicBaseUrl = ""
+): Promise<void> => {
   let blocks: Array<Record<string, unknown>>;
+  const effectiveBaseUrl = await resolvePublicBaseUrlForUser(config, userId, publicBaseUrl);
   try {
-    const data = await loadAppHomeData(config, userId);
+    const data = await loadAppHomeData(config, userId, effectiveBaseUrl);
     blocks = buildAppHomeBlocks(data);
   } catch (error) {
     console.warn(
@@ -32,10 +38,11 @@ export const publishAppHome = async (config: AppConfig, userId: string): Promise
 
 export const refreshAppHomeAfterMutation = async (
   config: AppConfig,
-  userId: string
+  userId: string,
+  publicBaseUrl = ""
 ): Promise<void> => {
   try {
-    await publishAppHome(config, userId);
+    await publishAppHome(config, userId, publicBaseUrl);
   } catch (error) {
     console.warn(
       JSON.stringify({

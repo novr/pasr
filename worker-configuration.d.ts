@@ -16,6 +16,12 @@ interface __BaseEnv_Env {
 	PASR_NOTIFY_EMPTY_DEFAULT: string;
 	SLACK_PASR_OPS_CHANNEL: string;
 	SLACK_PASR_NOTICE_CH: string;
+	SLACK_CLIENT_ID: string;
+	SLACK_CLIENT_SECRET: string;
+	SLACK_OAUTH_ENCRYPTION_KEY: string;
+	PASR_PUBLIC_BASE_URL: string;
+	PASR_STATUS_DEFAULT_TEXT: string;
+	PASR_STATUS_EMOJI: string;
 }
 declare namespace Cloudflare {
 	interface GlobalProps {
@@ -28,7 +34,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "TZ" | "SLACK_BOT_TOKEN" | "SLACK_SIGNING_SECRET" | "RUN_ENDPOINT_TOKEN" | "DEBUG_ENDPOINTS_ENABLED" | "SLACK_ADMIN_USER_IDS" | "SLACK_PASR_USERS_USERGROUP_ID" | "PASR_NOTIFY_EMPTY_DEFAULT" | "SLACK_PASR_OPS_CHANNEL" | "SLACK_PASR_NOTICE_CH">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "TZ" | "SLACK_BOT_TOKEN" | "SLACK_SIGNING_SECRET" | "RUN_ENDPOINT_TOKEN" | "DEBUG_ENDPOINTS_ENABLED" | "SLACK_ADMIN_USER_IDS" | "SLACK_PASR_USERS_USERGROUP_ID" | "PASR_NOTIFY_EMPTY_DEFAULT" | "SLACK_PASR_OPS_CHANNEL" | "SLACK_PASR_NOTICE_CH" | "SLACK_CLIENT_ID" | "SLACK_CLIENT_SECRET" | "SLACK_OAUTH_ENCRYPTION_KEY" | "PASR_PUBLIC_BASE_URL" | "PASR_STATUS_DEFAULT_TEXT" | "PASR_STATUS_EMOJI">> {}
 }
 
 // Begin runtime types

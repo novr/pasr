@@ -1,4 +1,5 @@
-import { getConfig } from "./config";
+import { getConfig, resolvePublicBaseUrl } from "./config";
+import { handleOAuthCallback, handleOAuthStart } from "./slack/oauth";
 import { hasValidRunToken } from "./auth/run-token";
 import { runDailyNotify } from "./jobs/daily-notify";
 import { enqueueAdminTask, processAdminTaskBatch, type AdminTaskMessage } from "./queue/admin-task";
@@ -73,7 +74,8 @@ const parseSlackEnvelope = (rawBody: string): SlackEventEnvelope | undefined => 
 
 const handleSlackEventCallback = async (
   config: ReturnType<typeof getConfig>,
-  envelope: SlackEventEnvelope
+  envelope: SlackEventEnvelope,
+  publicBaseUrl: string
 ): Promise<void> => {
   const eventId = envelope.event_id ?? "";
   if (eventId) {
@@ -113,7 +115,7 @@ const handleSlackEventCallback = async (
   }
 
   if (envelope.event?.type === "app_home_opened" && envelope.event.tab === "home") {
-    await handleAppHomeOpened(config, envelope);
+    await handleAppHomeOpened(config, envelope, publicBaseUrl);
   }
 };
 
@@ -186,7 +188,8 @@ export default {
         return json({ challenge: envelope.challenge });
       }
       if (envelope.type === "event_callback") {
-        ctx.waitUntil(handleSlackEventCallback(config, envelope));
+        const publicBaseUrl = resolvePublicBaseUrl(request, config);
+        ctx.waitUntil(handleSlackEventCallback(config, envelope, publicBaseUrl));
         return json({ ok: true });
       }
       return json({ ok: true });
@@ -223,7 +226,8 @@ export default {
         return text(COMMAND_ACK_UNAUTHORIZED);
       }
       const commandLog = slashCommandLogFields(payload);
-      const dispatch = await resolveSlashCommandDispatch(config, payload);
+      const publicBaseUrl = resolvePublicBaseUrl(request, config);
+      const dispatch = await resolveSlashCommandDispatch(config, payload, { publicBaseUrl });
       if (dispatch.mode === "text") {
         console.log(
           JSON.stringify({
@@ -352,13 +356,23 @@ export default {
       return json({ response_action: "clear" });
     }
 
+    if (pathname === "/slack/oauth/start" && request.method === "GET") {
+      return handleOAuthStart(request, config);
+    }
+
+    if (pathname === "/slack/oauth/callback" && request.method === "GET") {
+      return handleOAuthCallback(request, config);
+    }
+
     if (
       pathname === "/run" ||
       pathname === "/health" ||
       pathname === "/debug/mention-ai" ||
       pathname === "/slack/events" ||
       pathname === "/slack/command" ||
-      pathname === "/slack/interactions"
+      pathname === "/slack/interactions" ||
+      pathname === "/slack/oauth/start" ||
+      pathname === "/slack/oauth/callback"
     ) {
       return json({ ok: false, error: "Method Not Allowed" }, 405);
     }
