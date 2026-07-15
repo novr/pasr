@@ -397,9 +397,13 @@ export const runDailyNotify = async (
     errors: result.errors,
     deleted: result.deleted,
     skipReasons: result.skipReasons,
-    statusSet: statusSyncResult.statusSet,
-    statusSkipped: statusSyncResult.statusSkipped,
-    statusErrors: statusSyncResult.statusErrors
+    ...(statusSyncResult.active
+      ? {
+          statusSet: statusSyncResult.statusSet,
+          statusSkipped: statusSyncResult.statusSkipped,
+          statusErrors: statusSyncResult.statusErrors
+        }
+      : {})
   });
   result.errors += opsResult.errors;
 

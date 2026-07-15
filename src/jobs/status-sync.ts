@@ -17,6 +17,7 @@ import { SlackApiError } from "../slack/client";
 import { setUserProfileStatus } from "../slack/user-api";
 
 export type StatusSyncResult = {
+  active: boolean;
   statusSet: number;
   statusSkipped: number;
   statusErrors: number;
@@ -42,7 +43,12 @@ export const syncTodayAbsenceStatus = async (
   dmCandidateRecords: AbsenceRecord[],
   dayJst: string
 ): Promise<StatusSyncResult> => {
-  const empty: StatusSyncResult = { statusSet: 0, statusSkipped: 0, statusErrors: 0 };
+  const empty: StatusSyncResult = {
+    active: false,
+    statusSet: 0,
+    statusSkipped: 0,
+    statusErrors: 0
+  };
   if (context.trigger !== "scheduled") return empty;
   if (!isStatusOAuthEnabled(config)) return empty;
   const schema = await checkSlackUserOAuthSchema(config);
@@ -62,7 +68,7 @@ export const syncTodayAbsenceStatus = async (
         status_errors: 0
       })
     );
-    return empty;
+    return { active: true, statusSet: 0, statusSkipped: 0, statusErrors: 0 };
   }
 
   const userIds = selections.map((entry) => entry.targetUser);
@@ -155,5 +161,5 @@ export const syncTodayAbsenceStatus = async (
     })
   );
 
-  return { statusSet, statusSkipped, statusErrors };
+  return { active: true, statusSet, statusSkipped, statusErrors };
 };

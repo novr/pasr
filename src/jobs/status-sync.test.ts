@@ -35,7 +35,12 @@ describe("syncTodayAbsenceStatus", () => {
 
   it("skips manual trigger", async () => {
     const result = await syncTodayAbsenceStatus(config, { runId: "r1", trigger: "manual" }, [], "2026-06-24");
-    expect(result).toEqual({ statusSet: 0, statusSkipped: 0, statusErrors: 0 });
+    expect(result).toEqual({
+      active: false,
+      statusSet: 0,
+      statusSkipped: 0,
+      statusErrors: 0
+    });
     expect(setUserProfileStatusMock).not.toHaveBeenCalled();
   });
 
@@ -63,6 +68,7 @@ describe("syncTodayAbsenceStatus", () => {
       "2026-06-24"
     );
     expect(result.statusSet).toBe(1);
+    expect(result.active).toBe(true);
     expect(setUserProfileStatusMock).toHaveBeenCalledWith(
       "xoxp-u1",
       expect.objectContaining({

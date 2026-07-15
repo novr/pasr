@@ -69,6 +69,32 @@ describe("buildOpsReportText", () => {
     );
     expect(text).toContain("status: set=2 skipped=1 errors=0");
   });
+
+  it("omits status line when status fields are not provided", () => {
+    const text = buildOpsReportText(
+      {
+        runId: "run_1",
+        trigger: "scheduled",
+        day: "2026-06-24",
+        todayAbsenceCount: 0,
+        processed: 0,
+        sent: 0,
+        skipped: 0,
+        errors: 0,
+        deleted: 0,
+        skipReasons: {
+          missing_target_user: 0,
+          missing_start_date: 0,
+          missing_notify_channels: 0,
+          invalid_date_range: 0,
+          inactive_user_master: 0
+        }
+      },
+      1,
+      1
+    );
+    expect(text).not.toContain("status:");
+  });
 });
 
 describe("postOpsReport", () => {
