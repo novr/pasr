@@ -42,6 +42,36 @@ describe("oauth handlers", () => {
     expect(location).toContain("user_scope=users.profile%3Awrite");
   });
 
+  it("saves token on successful callback", async () => {
+    const nonce = await issueOAuthState(config.stateKv, "U_LINKED");
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          authed_user: {
+            id: "U_LINKED",
+            access_token: "xoxp-linked",
+            scope: "users.profile:write"
+          }
+        }),
+        { status: 200 }
+      )
+    );
+    const res = await handleOAuthCallback(
+      new Request(`https://worker.example/slack/oauth/callback?code=abc&state=${nonce}`),
+      config
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("連携完了");
+
+    const { getSlackUserOAuth, decryptSlackUserAccessToken } = await import(
+      "../db/slack-user-oauth-repository"
+    );
+    const row = await getSlackUserOAuth(config, "U_LINKED");
+    expect(row).not.toBeNull();
+    expect(await decryptSlackUserAccessToken(config, row!)).toBe("xoxp-linked");
+  });
+
   it("rejects callback when authed user mismatches", async () => {
     const nonce = await issueOAuthState(config.stateKv, "U_EXPECTED");
     vi.mocked(fetch).mockResolvedValueOnce(
