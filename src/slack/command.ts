@@ -6,7 +6,7 @@ import {
 import { isTransientError } from "../errors/transient";
 import { runDailyNotify } from "../jobs/daily-notify";
 import { isValidJstDateString, getJstDateParts } from "../domain/jst-date";
-import { checkDbSchema, checkChannelNotifySettingsSchema } from "../db/schema-check";
+import { checkDbSchema, checkChannelNotifySettingsSchema, checkSlackUserOAuthSchema } from "../db/schema-check";
 import { upsertMemberMaster } from "../db/member-master-repository";
 import { DbSchemaMismatchError, assertDbSchema } from "../db/schema-check";
 import {
@@ -22,6 +22,42 @@ import { openAbsenceRegisterModal, handleAbsenceRegisterInteraction } from "./ab
 import { handleAbsenceMentionInteraction, isMentionAction } from "./absence-mention";
 import { handleAppHomeInteraction } from "./app-home";
 import { handleChannelConfigCommand } from "./channel-config";
+import { handleUsersCommand, handleAdminUsersPageInteraction } from "./admin-users";
+import { handleAbsencesCommand, handleAdminAbsencesPageInteraction } from "./admin-absences";
+import type { AdminEphemeralReply } from "./admin-format";
+
+type DeferredAdminAction = "channel-config" | "users" | "absences";
+
+const handleDeferredAdminCommand = async (
+  config: AppConfig,
+  payload: SlackCommandPayload,
+  action: DeferredAdminAction
+): Promise<string | AdminEphemeralReply> => {
+  switch (action) {
+    case "channel-config":
+      return handleChannelConfigCommand(config, payload);
+    case "users":
+      return handleUsersCommand(config, payload);
+    case "absences":
+      return handleAbsencesCommand(config, payload);
+    default: {
+      const _never: never = action;
+      return _never;
+    }
+  }
+};
+
+const deliverDeferredAdminResult = async (
+  config: AppConfig,
+  payload: SlackCommandPayload,
+  result: string | AdminEphemeralReply
+): Promise<void> => {
+  if (typeof result === "string") {
+    await notifySlashCommandEphemeral(config, payload, result);
+    return;
+  }
+  await notifySlashCommandEphemeral(config, payload, result.text, result.blocks);
+};
 import { MEMBER_MASTER_MODAL_CALLBACK_ID, openMemberMasterSettingsModal } from "./member-master-modal";
 import { slackApi } from "./api";
 import { readLastRunSummary } from "../state/kv";
@@ -204,9 +240,10 @@ const postEphemeralResponse = async (
 export const notifySlashCommandEphemeral = async (
   config: AppConfig,
   payload: SlackCommandPayload,
-  text: string
+  text: string,
+  blocks?: Array<Record<string, unknown>>
 ): Promise<void> => {
-  await postEphemeralResponse(config, payload, text);
+  await postEphemeralResponse(config, payload, text, blocks);
 };
 
 const buildHelpText = (): string =>
@@ -224,6 +261,8 @@ const buildAdminHelpText = (): string =>
     "/pasr-admin help - 管理者向けコマンドの使い方表示",
     "/pasr-admin run - 通知処理を手動実行",
     "/pasr-admin status - 直近実行の要約表示",
+    "/pasr-admin users - 登録ユーザー一覧（ページ番号・ボタンでページ送り）",
+    "/pasr-admin absences - 本日の不在一覧（today / ページ番号省略可）",
     "/pasr-admin channel-config empty on|off|default - この CH の 0件時通知を上書き",
     "/pasr-admin channel-config list - CH 別 0件時通知の上書き一覧"
   ].join("\n");
@@ -231,7 +270,7 @@ const buildAdminHelpText = (): string =>
 type CommandKind = "self" | "admin" | "unsupported";
 
 const SELF_ACTIONS = ["help", "list", "settings", "update", "register"] as const;
-const ADMIN_ACTIONS = ["help", "run", "status", "channel-config"] as const;
+const ADMIN_ACTIONS = ["help", "run", "status", "users", "absences", "channel-config"] as const;
 
 export const getCommandKind = (command: string): CommandKind => {
   if (command === "/pasr") return "self";
@@ -399,13 +438,14 @@ export const resolveSlashCommandDispatch = async (
   const commandKind = getCommandKind(payload.command);
   const action = parseSlackCommandAction(payload.text);
   if (commandKind === "admin") {
-    if (action === "channel-config") {
+    if (action === "channel-config" || action === "users" || action === "absences") {
+      const deferredAction = action;
       return {
         mode: "deferred",
         ackText: "処理しています…",
         run: async () => {
-          const resultText = await handleChannelConfigCommand(config, payload);
-          await notifySlashCommandEphemeral(config, payload, resultText);
+          const result = await handleDeferredAdminCommand(config, payload, deferredAction);
+          await deliverDeferredAdminResult(config, payload, result);
         }
       };
     }
@@ -454,17 +494,20 @@ const getAdminImmediateText = async (
     const summary = await readLastRunSummary(config);
     const dbSchema = await checkDbSchema(config);
     const channelNotifySchema = await checkChannelNotifySettingsSchema(config);
+    const oauthSchema = await checkSlackUserOAuthSchema(config);
     const dbLine = `db: ${dbSchema === "ok" ? "ok" : "schema_missing"}`;
     const channelNotifyLine = `channel_notify_settings: ${channelNotifySchema === "ok" ? "ok" : "schema_missing"}`;
+    const oauthLine = `slack_user_oauth: ${oauthSchema === "ok" ? "ok" : "schema_missing"}`;
     return summary
       ? [
           `last run: processed=${summary.processed} ${formatRunSent(summary.sent)} skipped=${summary.skipped} deleted=${summary.deleted ?? 0} errors=${summary.errors}`,
           `run_id: ${summary.runId}`,
           dbLine,
           channelNotifyLine,
+          oauthLine,
           `executed_at: ${summary.executedAt}`
         ].join("\n")
-      : [`No run history yet.`, dbLine, channelNotifyLine].join("\n");
+      : [`No run history yet.`, dbLine, channelNotifyLine, oauthLine].join("\n");
   }
   return undefined;
 };
@@ -558,6 +601,27 @@ export const handleSlackInteraction = async (
 ): Promise<SlackInteractionResult> => {
   if (payload.type === "block_actions") {
     const actionId = payload.actions?.[0]?.action_id ?? "";
+    const userId = payload.user?.id ?? "";
+    const usersPageResult = await handleAdminUsersPageInteraction(config, {
+      actionId,
+      userId,
+      pageValue: payload.actions?.[0]?.value ?? "",
+      responseUrl: payload.response_url,
+      channelId: payload.channel?.id
+    });
+    if (usersPageResult.handled) {
+      return { ok: true, followUp: usersPageResult.followUp };
+    }
+    const absencesPageResult = await handleAdminAbsencesPageInteraction(config, {
+      actionId,
+      userId,
+      pageValue: payload.actions?.[0]?.value ?? "",
+      responseUrl: payload.response_url,
+      channelId: payload.channel?.id
+    });
+    if (absencesPageResult.handled) {
+      return { ok: true, followUp: absencesPageResult.followUp };
+    }
     const disconnectResult = await handleStatusOAuthDisconnectAction(config, {
       actionId,
       userId: payload.user?.id ?? "",

@@ -1,0 +1,1 @@
+export const ADMIN_EPHEMERAL_LIST_MAX = 25;

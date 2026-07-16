@@ -103,8 +103,21 @@ export const listAllAbsences = async (config: AppConfig): Promise<AbsenceRecord[
 
 export const listAbsencesActiveOnDate = async (
   config: AppConfig,
-  todayJst: string
+  todayJst: string,
+  options?: { limit: number; offset: number }
 ): Promise<AbsenceRecord[]> => {
+  if (options) {
+    const result = await getDb(config)
+      .prepare(
+        `SELECT * FROM absences
+         WHERE start_date <= ? AND end_date >= ?
+         ORDER BY start_date ASC, id ASC
+         LIMIT ? OFFSET ?`
+      )
+      .bind(todayJst, todayJst, options.limit, options.offset)
+      .all<AbsenceRow>();
+    return (result.results ?? []).map(rowToAbsenceRecord);
+  }
   const result = await getDb(config)
     .prepare(
       `SELECT * FROM absences
@@ -114,6 +127,20 @@ export const listAbsencesActiveOnDate = async (
     .bind(todayJst, todayJst)
     .all<AbsenceRow>();
   return (result.results ?? []).map(rowToAbsenceRecord);
+};
+
+export const countAbsencesActiveOnDate = async (
+  config: AppConfig,
+  todayJst: string
+): Promise<number> => {
+  const row = await getDb(config)
+    .prepare(
+      `SELECT COUNT(*) AS count FROM absences
+       WHERE start_date <= ? AND end_date >= ?`
+    )
+    .bind(todayJst, todayJst)
+    .first<{ count: number }>();
+  return row?.count ?? 0;
 };
 
 export const listAbsenceIdsEndedBefore = async (
