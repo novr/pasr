@@ -3,8 +3,10 @@ import { ADMIN_EPHEMERAL_LIST_MAX } from "./admin-constants";
 import {
   ADMIN_EPHEMERAL_TEXT_MAX,
   buildAdminEphemeralBlocks,
+  buildAdminEphemeralPostBody,
   formatAdminEphemeralMessage,
-  formatEntityList
+  formatEntityList,
+  normalizeAdminEphemeralReply
 } from "./admin-format";
 
 describe("formatEntityList", () => {
@@ -33,17 +35,51 @@ describe("formatAdminEphemeralMessage", () => {
   });
 });
 
+describe("normalizeAdminEphemeralReply", () => {
+  it("prepends section when blocks contain actions only", () => {
+    const reply = normalizeAdminEphemeralReply({
+      text: "list body",
+      blocks: [{ type: "actions", elements: [] }]
+    });
+    expect(reply.blocks?.[0]).toEqual({
+      type: "section",
+      text: { type: "mrkdwn", text: "list body" }
+    });
+    expect(reply.blocks?.[1]?.type).toBe("actions");
+  });
+
+  it("leaves replies with section unchanged", () => {
+    const blocks = [
+      { type: "section", text: { type: "mrkdwn", text: "ok" } },
+      { type: "actions", elements: [] }
+    ];
+    const reply = normalizeAdminEphemeralReply({ text: "ok", blocks });
+    expect(reply.blocks).toEqual(blocks);
+  });
+});
+
+describe("buildAdminEphemeralPostBody", () => {
+  it("includes section mrkdwn when posting actions-only blocks", () => {
+    const body = buildAdminEphemeralPostBody({
+      text: "list body",
+      blocks: [{ type: "actions", elements: [] }]
+    });
+    const blocks = body.blocks as Array<{ type: string; text?: { type: string; text: string } }>;
+    expect(blocks[0].type).toBe("section");
+    expect(blocks[0].text).toEqual({ type: "mrkdwn", text: "list body" });
+  });
+});
+
 describe("buildAdminEphemeralBlocks", () => {
   it("includes section text when pagination is needed", () => {
     const body = "header\n• <@U1> active";
-    const blocks = buildAdminEphemeralBlocks(
-      body,
-      "pasr_admin_users_page",
-      "pasr_admin_users_pagination",
-      1,
-      2,
-      ADMIN_EPHEMERAL_LIST_MAX + 1
-    );
+    const blocks = buildAdminEphemeralBlocks(body, {
+      actionId: "pasr_admin_users_page",
+      blockId: "pasr_admin_users_pagination",
+      page: 1,
+      totalPages: 2,
+      totalCount: ADMIN_EPHEMERAL_LIST_MAX + 1
+    });
     expect(blocks).toBeDefined();
     const section = blocks?.[0] as { type?: string; text?: { text?: string } };
     expect(section.type).toBe("section");
@@ -53,7 +89,13 @@ describe("buildAdminEphemeralBlocks", () => {
 
   it("returns undefined for single page", () => {
     expect(
-      buildAdminEphemeralBlocks("body", "action", "block", 1, 1, 1)
+      buildAdminEphemeralBlocks("body", {
+        actionId: "action",
+        blockId: "block",
+        page: 1,
+        totalPages: 1,
+        totalCount: 1
+      })
     ).toBeUndefined();
   });
 });

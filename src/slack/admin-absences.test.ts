@@ -158,4 +158,40 @@ describe("handleAdminAbsencesPageInteraction", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
+
+  it("posts section mrkdwn before pagination actions", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2099-06-15T00:30:00+09:00"));
+    const config = createTestConfig(createMockKv());
+    for (let i = 0; i < ADMIN_EPHEMERAL_LIST_MAX + 1; i++) {
+      await createAbsence(config, {
+        itemId: `A${i}`,
+        targetUser: `U${i}`,
+        startDate: "2099-06-15",
+        endDate: "2099-06-15",
+        notifyChannels: [],
+        notifyUsers: []
+      });
+    }
+    const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await handleAdminAbsencesPageInteraction(config, {
+      actionId: ADMIN_ABSENCES_PAGE_ACTION_ID,
+      userId: "U_ADMIN",
+      pageValue: "1",
+      responseUrl: "https://hooks.slack.com/actions/T/1/2"
+    });
+    await result.followUp?.();
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+    const [, requestInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(requestInit.body as string) as {
+      blocks?: Array<{ type: string; text?: { type: string } }>;
+    };
+    expect(body.blocks?.[0]?.type).toBe("section");
+    expect(body.blocks?.[0]?.text?.type).toBe("mrkdwn");
+    expect(body.blocks?.[1]?.type).toBe("actions");
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
 });

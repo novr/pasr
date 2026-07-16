@@ -59,14 +59,13 @@ export const buildAbsencesTodayReply = async (
   const header = `${headerBase} — ページ ${currentPage}/${totalPages}`;
   const lines = records.map((record) => formatAbsenceLine(record));
   const text = formatAdminEphemeralMessage(header, lines, 0);
-  const blocks = buildAdminEphemeralBlocks(
-    text,
-    ADMIN_ABSENCES_PAGE_ACTION_ID,
-    "pasr_admin_absences_pagination",
-    currentPage,
+  const blocks = buildAdminEphemeralBlocks(text, {
+    actionId: ADMIN_ABSENCES_PAGE_ACTION_ID,
+    blockId: "pasr_admin_absences_pagination",
+    page: currentPage,
     totalPages,
     totalCount
-  );
+  });
   return blocks ? { text, blocks } : { text };
 };
 
@@ -100,7 +99,7 @@ export const handleAdminAbsencesPageInteraction = async (
     handled: true,
     followUp: async () => {
       const reply = await buildAbsencesTodayReply(config, page);
-      await deliverAdminEphemeralReply(config, params, reply);
+      await deliverAdminEphemeralReply(config, { ...params, replaceOriginal: true }, reply);
     }
   };
 };

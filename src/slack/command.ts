@@ -25,6 +25,7 @@ import { handleChannelConfigCommand } from "./channel-config";
 import { handleUsersCommand, handleAdminUsersPageInteraction } from "./admin-users";
 import { handleAbsencesCommand, handleAdminAbsencesPageInteraction } from "./admin-absences";
 import type { AdminEphemeralReply } from "./admin-format";
+import { deliverAdminEphemeralReply } from "./admin-format";
 import {
   adminCommandParseAction,
   type AdminCommandParse,
@@ -33,7 +34,6 @@ import {
   parseAdminCommandText
 } from "./admin-command-parse";
 import { MEMBER_MASTER_MODAL_CALLBACK_ID, openMemberMasterSettingsModal } from "./member-master-modal";
-import { slackApi } from "./api";
 import { readLastRunSummary } from "../state/kv";
 import { postStatusOAuthEphemeral, handleStatusOAuthDisconnectAction } from "./status-oauth-ui";
 
@@ -61,11 +61,15 @@ const deliverDeferredAdminResult = async (
   payload: SlackCommandPayload,
   result: string | AdminEphemeralReply
 ): Promise<void> => {
-  if (typeof result === "string") {
-    await notifySlashCommandEphemeral(config, payload, result);
-    return;
-  }
-  await notifySlashCommandEphemeral(config, payload, result.text, result.blocks);
+  await deliverAdminEphemeralReply(
+    config,
+    {
+      userId: payload.userId,
+      responseUrl: payload.responseUrl,
+      channelId: payload.channelId
+    },
+    result
+  );
 };
 
 export const COMMAND_ACK_UNAUTHORIZED = "Received. Processing...";
@@ -184,71 +188,22 @@ export const parseSlackCommandPayload = (rawBody: string): SlackCommandPayload |
 export const isSlackAdminUser = (config: AppConfig, userId: string): boolean =>
   config.adminUserIds.includes(userId);
 
-const postEphemeralResponse = async (
-  config: AppConfig,
-  payload: SlackCommandPayload,
-  text: string,
-  blocks?: Array<Record<string, unknown>>
-): Promise<void> => {
-  if (payload.responseUrl) {
-    try {
-      const body: Record<string, unknown> = { response_type: "ephemeral", text };
-      if (blocks) body.blocks = blocks;
-      const response = await fetch(payload.responseUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json; charset=utf-8" },
-        body: JSON.stringify(body)
-      });
-      if (response.ok) return;
-      console.warn(
-        JSON.stringify({
-          level: "warn",
-          event: "slash_command_response_failed",
-          trigger_id: payload.triggerId,
-          user_id: payload.userId,
-          team_id: payload.teamId,
-          status: response.status
-        })
-      );
-    } catch (error) {
-      console.warn(
-        JSON.stringify({
-          level: "warn",
-          event: "slash_command_response_failed",
-          trigger_id: payload.triggerId,
-          user_id: payload.userId,
-          team_id: payload.teamId,
-          message: error instanceof Error ? error.message : String(error)
-        })
-      );
-    }
-  }
-
-  if (!payload.channelId) return;
-  try {
-    await slackApi.postEphemeral(config, payload.channelId, payload.userId, text, blocks);
-  } catch (error) {
-    console.warn(
-      JSON.stringify({
-        level: "warn",
-        event: "slash_command_ephemeral_failed",
-        trigger_id: payload.triggerId,
-        user_id: payload.userId,
-        team_id: payload.teamId,
-        channel_id: payload.channelId,
-        message: error instanceof Error ? error.message : String(error)
-      })
-    );
-  }
-};
-
 export const notifySlashCommandEphemeral = async (
   config: AppConfig,
   payload: SlackCommandPayload,
   text: string,
   blocks?: Array<Record<string, unknown>>
 ): Promise<void> => {
-  await postEphemeralResponse(config, payload, text, blocks);
+  const reply: AdminEphemeralReply | string = blocks ? { text, blocks } : text;
+  await deliverAdminEphemeralReply(
+    config,
+    {
+      userId: payload.userId,
+      responseUrl: payload.responseUrl,
+      channelId: payload.channelId
+    },
+    reply
+  );
 };
 
 const buildHelpText = (): string =>
@@ -592,7 +547,7 @@ export const runSlackCommandAsync = async (
       `run ${status}: processed=${result.processed} ${formatRunSent(result.sent)} skipped=${result.skipped} deleted=${result.deleted} errors=${result.errors}`,
       `run_id: ${runId}`
     ].join("\n");
-    await postEphemeralResponse(config, payload, resultText);
+    await notifySlashCommandEphemeral(config, payload, resultText);
   } catch (error) {
     if (isTransientError(error)) throw error;
     const errorMessage = error instanceof Error ? error.message : String(error);

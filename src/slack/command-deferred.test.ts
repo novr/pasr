@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMockKv, createTestConfig } from "../test/mock-kv";
+import type { AdminEphemeralReply } from "./admin-format";
 
 const { handleChannelConfigCommandMock, handleUsersCommandMock, handleAbsencesCommandMock } = vi.hoisted(() => ({
-  handleChannelConfigCommandMock: vi.fn(async () => "config updated"),
-  handleUsersCommandMock: vi.fn(async () => "users listed"),
-  handleAbsencesCommandMock: vi.fn(async () => "absences listed")
+  handleChannelConfigCommandMock: vi.fn(async (): Promise<string> => "config updated"),
+  handleUsersCommandMock: vi.fn(async (): Promise<string | AdminEphemeralReply> => "users listed"),
+  handleAbsencesCommandMock: vi.fn(async (): Promise<string> => "absences listed")
 }));
 
 vi.mock("./channel-config", () => ({
@@ -146,5 +147,53 @@ describe("admin deferred handlers", () => {
     expect(dispatch.mode).toBe("text");
     if (dispatch.mode !== "text") return;
     expect(dispatch.text).toContain("使い方");
+  });
+
+  it("deferred slash posts section mrkdwn for paginated admin reply", async () => {
+    handleUsersCommandMock.mockResolvedValue({
+      text: "users page 1",
+      blocks: [
+        { type: "section", text: { type: "mrkdwn", text: "users page 1" } },
+        { type: "actions", block_id: "pasr_admin_users_pagination", elements: [] }
+      ]
+    });
+    const config = createTestConfig(createMockKv());
+    const dispatch = await resolveSlashCommandDispatch(config, {
+      ...adminPayload,
+      text: "users"
+    });
+    if (dispatch.mode !== "deferred") return;
+    await dispatch.run();
+
+    const [, requestInit] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(requestInit.body as string) as {
+      replace_original?: boolean;
+      blocks?: Array<{ type: string; text?: { type: string } }>;
+    };
+    expect(body.replace_original).toBeUndefined();
+    expect(body.blocks?.[0]?.type).toBe("section");
+    expect(body.blocks?.[0]?.text?.type).toBe("mrkdwn");
+    expect(body.blocks?.[1]?.type).toBe("actions");
+  });
+
+  it("deferred slash prepends section when reply has actions only", async () => {
+    handleUsersCommandMock.mockResolvedValue({
+      text: "users page 1",
+      blocks: [{ type: "actions", elements: [] }]
+    });
+    const config = createTestConfig(createMockKv());
+    const dispatch = await resolveSlashCommandDispatch(config, {
+      ...adminPayload,
+      text: "users"
+    });
+    if (dispatch.mode !== "deferred") return;
+    await dispatch.run();
+
+    const [, requestInit] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(requestInit.body as string) as {
+      blocks?: Array<{ type: string; text?: { type: string; text: string } }>;
+    };
+    expect(body.blocks?.[0]?.type).toBe("section");
+    expect(body.blocks?.[0]?.text).toEqual({ type: "mrkdwn", text: "users page 1" });
   });
 });

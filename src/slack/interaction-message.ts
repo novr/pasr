@@ -1,4 +1,5 @@
 import type { AdminEphemeralReply } from "./admin-format";
+import { postAdminEphemeralToResponseUrl } from "./admin-format";
 
 export const consumeInteractionMessage = async (responseUrl: string | undefined): Promise<void> => {
   if (!responseUrl) {
@@ -51,36 +52,5 @@ export const replaceInteractionEphemeral = async (
     );
     return;
   }
-  try {
-    const body: Record<string, unknown> = {
-      replace_original: true,
-      response_type: "ephemeral",
-      text: reply.text
-    };
-    if (reply.blocks) {
-      body.blocks = reply.blocks;
-    }
-    const response = await fetch(responseUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json; charset=utf-8" },
-      body: JSON.stringify(body)
-    });
-    if (!response.ok) {
-      console.warn(
-        JSON.stringify({
-          level: "warn",
-          event: "interaction_replace_failed",
-          status: response.status
-        })
-      );
-    }
-  } catch (error) {
-    console.warn(
-      JSON.stringify({
-        level: "warn",
-        event: "interaction_replace_failed",
-        message: error instanceof Error ? error.message : String(error)
-      })
-    );
-  }
+  await postAdminEphemeralToResponseUrl(responseUrl, reply, { replaceOriginal: true });
 };
