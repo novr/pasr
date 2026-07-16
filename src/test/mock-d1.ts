@@ -119,11 +119,28 @@ export const createMockD1 = (options: MockD1Options = {}): D1Database => {
       }
       return { results, run: { success: true, meta: {} } };
     }
+    if (sql.startsWith("SELECT COUNT(*) AS count FROM absences WHERE start_date <= ? AND end_date >= ?")) {
+      const today = String(p[0]);
+      const count = [...absences.values()].filter(
+        (row) => row.start_date <= today && row.end_date >= today
+      ).length;
+      return { results: [{ count }], run: { success: true, meta: {} } };
+    }
     if (sql.startsWith("SELECT * FROM absences WHERE start_date <= ? AND end_date >= ?")) {
       const today = String(p[0]);
-      const results = [...absences.values()]
+      let results = [...absences.values()]
         .filter((row) => row.start_date <= today && row.end_date >= today)
         .sort((a, b) => a.start_date.localeCompare(b.start_date) || a.id.localeCompare(b.id));
+      if (sql.includes("LIMIT ? OFFSET ?") && p.length >= 4) {
+        const limit = Number(p[2]);
+        const offset = Number(p[3]);
+        if (Number.isFinite(offset) && offset > 0) {
+          results = results.slice(offset);
+        }
+        if (Number.isFinite(limit) && limit >= 0) {
+          results = results.slice(0, limit);
+        }
+      }
       return { results, run: { success: true, meta: {} } };
     }
     if (sql.startsWith("SELECT * FROM absences ORDER BY")) {
@@ -138,6 +155,20 @@ export const createMockD1 = (options: MockD1Options = {}): D1Database => {
     }
     if (sql.startsWith("SELECT target_user, active FROM member_master")) {
       return { results: [...memberMaster.values()].map((row) => ({ target_user: row.target_user, active: row.active })), run: { success: true, meta: {} } };
+    }
+    if (sql.startsWith("SELECT * FROM member_master ORDER BY active DESC")) {
+      const limit = p.length > 0 ? Number(p[0]) : undefined;
+      const offset = p.length > 1 ? Number(p[1]) : 0;
+      let results = [...memberMaster.values()].sort(
+        (a, b) => b.active - a.active || a.target_user.localeCompare(b.target_user)
+      );
+      if (Number.isFinite(offset) && offset > 0) {
+        results = results.slice(offset);
+      }
+      if (limit !== undefined && Number.isFinite(limit) && limit >= 0) {
+        results = results.slice(0, limit);
+      }
+      return { results, run: { success: true, meta: {} } };
     }
     if (sql.startsWith("SELECT channel_id, notify_when_empty FROM channel_notify_settings")) {
       return {

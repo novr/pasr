@@ -103,6 +103,31 @@ export const loadMemberMasterActiveMap = async (
   return map;
 };
 
+export const listMemberMasterRecords = async (
+  config: AppConfig,
+  options: { limit: number; offset?: number }
+): Promise<MemberMasterRecord[]> => {
+  const offset = options.offset ?? 0;
+  const result = await getDb(config)
+    .prepare(
+      `SELECT * FROM member_master
+       ORDER BY active DESC, target_user ASC
+       LIMIT ? OFFSET ?`
+    )
+    .bind(options.limit, offset)
+    .all<MemberMasterRow>();
+  return (result.results ?? []).map((row) => {
+    const mapped = rowToMemberMaster(row);
+    return {
+      targetUser: mapped.targetUser,
+      active: mapped.active,
+      defaultNotifyChannels: mapped.defaultNotifyChannels,
+      defaultNotifyUsers: mapped.defaultNotifyUsers,
+      defaultRegistrationNotify: mapped.defaultRegistrationNotify
+    };
+  });
+};
+
 export const countMemberMaster = async (config: AppConfig): Promise<number> => {
   const row = await getDb(config)
     .prepare("SELECT COUNT(*) AS count FROM member_master")

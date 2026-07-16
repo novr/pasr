@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ensureMemberMasterActive, getMemberMaster, upsertMemberMaster } from "./member-master-repository";
+import { ensureMemberMasterActive, getMemberMaster, listMemberMasterRecords, upsertMemberMaster } from "./member-master-repository";
 import { createTestConfig, createMockKv } from "../test/mock-kv";
 
 describe("member-master-repository", () => {
@@ -28,5 +28,25 @@ describe("member-master-repository", () => {
     const row = await ensureMemberMasterActive(config, "U9");
     expect(row.active).toBe(true);
     expect(row.defaultNotifyChannels).toEqual([]);
+  });
+
+  it("listMemberMasterRecords orders active first", async () => {
+    const config = createTestConfig(createMockKv());
+    await upsertMemberMaster(config, {
+      targetUser: "U_B",
+      active: false,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    await upsertMemberMaster(config, {
+      targetUser: "U_A",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    const rows = await listMemberMasterRecords(config, { limit: 10 });
+    expect(rows.map((row) => row.targetUser)).toEqual(["U_A", "U_B"]);
   });
 });

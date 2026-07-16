@@ -5,7 +5,8 @@ import {
   isSlackAdminUser,
   parseSelfCommandText,
   parseSlackCommandAction,
-  parseSlackCommandPayload
+  parseSlackCommandPayload,
+  resolveSlashCommandDispatch
 } from "./command";
 import type { AppConfig } from "../config";
 import { createTestConfig, createMockKv } from "../test/mock-kv";
@@ -70,5 +71,20 @@ describe("slash command parsers", () => {
   it("isSlackAdminUser checks allowlist", () => {
     expect(isSlackAdminUser(config, "U_ADMIN")).toBe(true);
     expect(isSlackAdminUser(config, "U_OTHER")).toBe(false);
+  });
+
+  it("status includes slack_user_oauth schema line", async () => {
+    const dispatch = await resolveSlashCommandDispatch(config, {
+      command: "/pasr-admin",
+      text: "status",
+      userId: "U_ADMIN",
+      teamId: "T1",
+      channelId: "C1",
+      triggerId: "tr1",
+      responseUrl: ""
+    });
+    expect(dispatch.mode).toBe("text");
+    if (dispatch.mode !== "text") return;
+    expect(dispatch.text).toContain("slack_user_oauth: ok");
   });
 });

@@ -49,12 +49,14 @@ Worker は3ハンドラで構成する。
 **`/pasr`** — 全ユーザー可。`list` / `update`（一覧）は Queue 非同期。`settings` / `register` / `update`（Modal 起動）は HTTP で即時 ACK し、実処理は `waitUntil`（`trigger_id` 期限内に Modal 起動）。Queue 系も dedupe / enqueue は `waitUntil`。重複時は `response_url` で通知。
 
 **`/pasr-admin`** — `SLACK_ADMIN_USER_IDS` allowlist 必須。非該当は即時 ACK のみ（`Received. Processing...`）、実処理なし。
-- `help` / `status`: 即時応答（HTTP レスポンス本文）。`status` は `channel_notify_settings` の migrate 状態も表示
+- `help` / `status`: 即時応答（HTTP レスポンス本文）。`status` は `channel_notify_settings` / `slack_user_oauth` の migrate 状態も表示
+- `users` / `absences`: 即時 ACK（`処理しています…`）後 `waitUntil` で D1 読取し ephemeral で結果通知（queue 不可。読取専用。トークン等は出力しない）。25 件超はページ番号またはボタンでページ送り
 - `channel-config`: 即時 ACK（`処理しています…`）後 `waitUntil` で D1 処理し ephemeral で結果通知（queue 不可。Slack 3 秒制限回避）
 - `run`: 即時 ACK 後 Queue 経由で非同期実行（ops レポートは投稿しない）
 
 ## Interactions 不変条件
 
+- `pasr_admin_users_page` / `pasr_admin_absences_page`: `SLACK_ADMIN_USER_IDS` のみ。admin 一覧 ephemeral のページ送り（`block_actions` 即時 ACK 後 `waitUntil` + `response_url` replace）
 - `view_submission` は D1 書き込みまで同期 ACK。登録通知・一覧削除再描画は `waitUntil`
 - register / list-edit は `action_id`・`callback_id` で分岐
 - 不在の編集・削除は本人レコードのみ。編集時の登録通知再送なし
