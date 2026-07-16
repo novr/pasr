@@ -1,363 +1,52 @@
-# PASR Slack不在予定通知 App
+# PASR
 
-**PASR** — Planned absence, shared right.
+Slack 上の不在予定を登録し、平日 JST 9:00 に日次通知する Cloudflare Workers + D1 アプリケーション。
 
-Slack Bot UI から不在予定を登録し、Cloudflare Workers + D1 で平日の日次通知を実行します。
+挙動の不変条件は [`AGENTS.md`](AGENTS.md) を参照。本文はセットアップ・開発・デプロイ・運用の手順のみを記載する。
 
-## 運用の前提
-- 判定時刻は JST（`Asia/Tokyo`）固定。
-- 失敗はレコード単位で隔離し、全体処理は継続。
-- 手動実行 endpoint `/run` は Bearer 認証必須。
-- `scheduled` 実行は内部トリガーのため HTTP 認証対象外。
+## 初回セットアップ
 
-## 必須設定（Secrets / Vars / Binding）
+D1 / KV の ID は環境ごとに異なる。Slack App は manifest 反映後に **Reinstall to Workspace** が必要。
 
-### 1) 依存関係
-- `npm install`
-- 開発時のテスト手順は「開発・テスト」を参照
+1. `npm install`
+2. 初回のみ `npx wrangler d1 create pasr-db` および `npx wrangler kv namespace create PASR_STATE` — 返却 ID を [`wrangler.jsonc`](wrangler.jsonc) に設定
+3. `npm run db:migrate:local`（本番: `npx wrangler d1 migrations apply pasr-db --remote`）
+4. Secrets: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `RUN_ENDPOINT_TOKEN`（`npx wrangler secret put`）
+5. [`slack-app-manifest.json.template`](slack-app-manifest.json.template) を Slack App Manifest に反映。`REPLACE_WITH_WORKER_URL` を Worker URL に置換し **Reinstall**
+6. Dashboard Variables に `SLACK_ADMIN_USER_IDS`（必須）を設定。ローカルは [`cp .dev.vars.example .dev.vars`](.dev.vars.example)
+7. 初回 deploy 前: `npx wrangler queues create pasr-admin-tasks`
 
-### 2) Wrangler 設定（`wrangler.jsonc`）
-- リポジトリに同梱（D1/KV/Queue/AI bindings、`vars.TZ`、cron 等）
-- 組織ごとに Worker 環境を分離する場合は `database_id` / KV `id` 等を差し替える
-- binding 名（`PASR_DB`, `PASR_STATE` 等）はコードと一致させる（Dashboard Bindings とも同名）
+`wrangler.jsonc` の `vars` は `TZ` のみ。その他の平文設定は Dashboard または `.dev.vars`。`keep_vars: true` により deploy 時も Dashboard Variables を保持する。
 
-### 2b) Slack App Manifest
-- [`slack-app-manifest.json.template`](slack-app-manifest.json.template) を api.slack.com → **App Manifest** に反映
-- `REPLACE_WITH_WORKER_URL` をデプロイ先 Worker のベース URL に置換（`app_home_opened` event を含む。`views.open` / `views.publish` 用の追加 scope は不要）
-- 反映後 **Reinstall to Workspace**
+## 開発
 
-### 3) D1 Database
-- 初回: `npx wrangler d1 create pasr-db` → 返却 ID を `wrangler.jsonc` の `d1_databases[0].database_id` に反映
-- ローカル: `npm run db:migrate:local`
-- 本番 deploy 前: `npx wrangler d1 migrations apply pasr-db --remote`
+Node.js 24（`mise.toml` / CI と同一）。
 
-### 4) KV Namespace
-- 初回: `npx wrangler kv namespace create PASR_STATE` → 返却 ID を `wrangler.jsonc` の `kv_namespaces[0].id` に反映
+| コマンド | 用途 |
+|----------|------|
+| `npm run check` | 型チェック |
+| `npm test` | 単体テスト |
+| `npm run dev` | ローカル Worker（`--persist-to=./.wrangler/state`） |
 
-### 5) Cloudflare Secrets
-- `npx wrangler secret put SLACK_BOT_TOKEN`
-- `npx wrangler secret put SLACK_SIGNING_SECRET`
-- `npx wrangler secret put RUN_ENDPOINT_TOKEN`
-- Status 同期を使う場合（任意）: `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` / `SLACK_OAUTH_ENCRYPTION_KEY` も Secret として設定（Dashboard Variables でも可。いずれもログ・レスポンスに出さない）
+実装完了・PR 前・deploy 前に `npm run check && npm test` を実行する。
 
-### 6) Vars（`wrangler.jsonc`）
-- `vars.TZ=Asia/Tokyo` のみ（deploy 時に上書きされるため、ここに載せない値は Dashboard / `.dev.vars` へ）
-- `keep_vars: true` で Dashboard の平文 Variables を deploy 時に保持（Workers Builds の既定 `npx wrangler deploy` でも有効）
+mention AI 結合テストは CI 対象外。`npm run dev` 起動中に `.dev.vars`（`DEBUG_ENDPOINTS_ENABLED=true` 等）を設定し、`npm run test:integration` を実行する。
 
-### 6a) Cloudflare Dashboard Variables（本番・redeploy なしで変更）
-- [Cloudflare Dashboard](https://dash.cloudflare.com) → **Workers & Pages** → 対象 Worker → **Settings** → **Variables and Secrets** → **Add**（Plain text）
-- `SLACK_ADMIN_USER_IDS`（必須: カンマ区切り Slack User ID、`/pasr-admin` 実行許可）
-- `SLACK_PASR_USERS_USERGROUP_ID`（任意: User Group encoded ID `S...`。未設定時は usergroup 操作をスキップ）
-- `PASR_NOTIFY_EMPTY_DEFAULT`（任意: `true`/`false`。未設定時 `true`。CH 別上書きが無いときの 0件時通知）
-- `SLACK_PASR_OPS_CHANNEL`（任意: ops レポート投稿先 CH ID `C...`。未設定時はスキップ）
-- `SLACK_PASR_NOTICE_CH`（任意: カンマ区切り CH ID。`member_master` 自動作成時の既定通知 CH seed）
-- Status 同期（任意）: `PASR_STATUS_DEFAULT_TEXT`（未設定時 `不在`）、`PASR_STATUS_EMOJI`（未設定時 `:date:`）、`PASR_PUBLIC_BASE_URL`（本番は通常不要。ローカル OAuth やカスタムドメイン時のみ Worker の公開ベース URL）
-- ローカル: `.dev.vars` に同名キーを設定（`cp .dev.vars.example .dev.vars`）
+## デプロイ
 
-正本は D1（`absences`, `member_master`, `channel_notify_settings`, `slack_user_oauth`）。
+```bash
+npm run check && npm test
+npx wrangler d1 migrations apply pasr-db --remote   # schema 変更時
+npm run deploy
+curl https://<worker>/health
+```
 
-`channel_notify_settings` は migration `0002` 適用後に利用可能。未 migrate 時は daily は org デフォルト（0件時通知 on）で継続し、`/pasr-admin channel-config` のみ失敗する。
+deploy 後、Cloudflare Dashboard の **Bindings** が `wrangler.jsonc` と一致することを確認する。
 
-`slack_user_oauth` は migration `0003` 適用後に利用可能。未 migrate 時は OAuth 連携 UI と scheduled の Status 同期をスキップする（CH/DM 通知は継続）。
+ローカル確認: `npm run dev` 起動後、`GET /health`、Bearer 付き `POST /run`、`GET /__scheduled`。
 
-`PASR_NOTIFY_EMPTY_DEFAULT=false` の CH で 0件時に通知を止めても、過去に投稿された「予定なし」メッセージは自動削除・更新しない（Phase 1）。
+## 運用
 
-### 6b) User Group 自動追加（任意）
-- Slack で `@pasr_users`（任意名）を作成し、Group ID（`S...`）を Dashboard Variables の `SLACK_PASR_USERS_USERGROUP_ID` に設定
-- ID 取得: Slack 管理画面（User Groups）または `usergroups.list`
-- manifest に `usergroups:read` / `usergroups:write` を追加し **Reinstall to Workspace** 必須
-- ユーザーが PASR を初回操作して D1 `member_master` が作成されたときのみ `@pasr_users` へ自動追加（register / settings / mention / edit 等）
-- 既存 PASR ユーザーは自動バックフィルしない（次回 PASR 操作 or Slack 管理画面で手動追加）
-- daily run のみで `member_master` が作られたユーザー（不在のみ存在するデータ不整合時）は対象外。次回 UI 操作で追加
-- ワークスペースで User Group 管理が管理者限定の場合 `permission_denied` になりうる（D1 作成は成功、group 追加のみ失敗）
+ログは JSON 形式。`event=daily_notify_done` の `run_id` / `errors` を確認する。
 
-### 6c) Slack User OAuth（Status 同期・任意）
-- manifest の `user` scope に `users.profile:write` を含め **Reinstall to Workspace** 必須
-- Slack App → **OAuth & Permissions** → **Redirect URLs** に `{WORKER_URL}/slack/oauth/callback` を追加
-- `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` / `SLACK_OAUTH_ENCRYPTION_KEY`（32 byte を base64 化したキー）を設定。いずれか欠落時は OAuth UI と Status 同期を無効化
-- `SLACK_OAUTH_ENCRYPTION_KEY` を変更した場合、既存の暗号化トークンは復号できなくなる。全連携ユーザーに `/pasr settings` から再連携を依頼すること
-- ユーザーは `/pasr settings` または App Home から連携。callback で Slack 本人 ID と state の `user_id` を照合
-- **scheduled daily（JST 9:00）のみ**、OAuth 連携済みユーザーの当日不在に応じて `users.profile.set`（`status_expiration` は当日 JST 23:59:59 固定）。CH 未設定の不在者も対象
-- `note` は同一ユーザーの当日レコードのうち `itemId` 昇順先頭（100 字 truncate）。空なら `PASR_STATUS_DEFAULT_TEXT`
-- 手動 `/pasr-admin run` や `/run` では Status を設定しない
-- **既知の制限（Phase 1）**: 登録直後の即時同期なし、当日キャンセル時の Status クリアなし、Enterprise Grid の一部制限は skip 集計
-- 連携解除は本人のみ（`pasr_status_oauth_disconnect`）。失効トークンは D1 から削除
-
-## 開発・テスト
-
-- 前提: Node.js 24（`mise.toml` / CI と揃える）。`npm run debug:mention-ai` は `--experimental-strip-types` 利用のため Node 22+ 必須（24 で問題なし）
-- 型チェック: `npm run check`（CI では `wrangler types --check` も実行）
-- D1 マイグレーション（ローカル初回）: `npm run db:migrate:local`
-- 単体テスト: `npm test`
-- ウォッチ: `npm run test:watch`
-- **結合テスト（Workers AI / `npm run dev` 必須）**: `npm run test:integration`
-- 変更後は deploy 前に `npm run check && npm test` をローカル実行する
-- CI: GitHub Actions（`.github/workflows/ci.yml`）が push/PR で `check` + `test` を実行（結合テストは含まない）
-
-### テストのカバー範囲（単体）
-
-- domain パース、D1 repository / schema-check、absence-registration、absence-mention-parse、署名検証、event dedupe、Queue ack/retry、daily-notify、channel-config、ops-report、status-sync、oauth
-
-### 非カバー（単体テスト）
-
-- 本番 Slack API、Workers ランタイム統合
-
-### 結合テスト（mention AI）
-
-- 配置: `src/integration/**/*.integration.test.ts`
-- 実行: `npm run test:integration`（`npm test` には含めない）
-- 前提:
-  1. `wrangler.jsonc` に `ai` binding
-  2. ターミナル A: `npm run dev`（既定ポート **8787**。`wrangler.jsonc` の `ai.remote: true` で Workers AI を利用）
-  3. `.dev.vars` に `RUN_ENDPOINT_TOKEN`・`SLACK_ADMIN_USER_IDS`（`/pasr-admin` ローカル確認用）・`DEBUG_ENDPOINTS_ENABLED=true`（**`npm run dev` も `.dev.vars` を読む**。編集後は dev を再起動。結合テスト実行時も vitest が自動読み込み）
-  4. 8787 が使用中で dev が別ポート（例: 8788）になった場合は、古い wrangler を止めるか `PASR_DEV_URL=http://localhost:8788` を指定
-- ケース定義: `src/domain/mention/mention-ai-cases.ts`（`src/integration/mention-ai-cases.ts` から re-export。基準日 `2026-06-24` 固定）
-  - `MENTION_AI_INFER_CASES`: enrich/infer で日付が決まる → `npm test` で検証
-  - `MENTION_AI_MODEL_CASES`: AI 推論品質 → `npm run test:integration` で検証
-- 日付解釈: 年省略は未来日優先、週境界は日曜〜土曜（詳細は `AGENTS.md`「app_mention 日付解釈」）
-- 単発デバッグ: `npm run debug:mention-ai -- "明日 通院"`（`@cli` 結合テスト経由）
-
-テスト配置: `src/**/*.test.ts`、KV mock は `src/test/mock-kv.ts`
-
-## デプロイ手順
-
-### dev
-1. `npm run db:migrate:local`
-2. `npm run dev`（`--persist-to=./.wrangler/state`。Slack / Queue / Workers AI）
-3. `curl http://localhost:8787/health`
-4. `curl -X POST -H "Authorization: Bearer <RUN_ENDPOINT_TOKEN>" http://localhost:8787/run`
-5. `curl http://localhost:8787/__scheduled`
-
-#### mention AI のローカルデバッグ（Slack なし）
-1. ターミナル A: `npm run dev`（`wrangler.jsonc` と Secret / `.dev.vars` が必要）
-2. ターミナル B（結合テスト一括）:
-   ```bash
-   npm run test:integration
-   ```
-3. ターミナル B（単発）:
-   ```bash
-   npm run debug:mention-ai -- "明日 通院のため午後から"
-   ```
-   - `PASR_TODAY_JST=2026-06-24` で「今日」基準日を固定できる
-   - `PASR_DEV_URL` で dev サーバー URL を変更できる（既定 `http://localhost:8787`）
-
-### staging / prod
-1. Secret が環境に投入済みであることを確認
-2. Dashboard Variables に `SLACK_ADMIN_USER_IDS`（必須）等が設定済みであることを確認（「6a)」参照）
-3. `npm run check && npm test` が通ることを確認
-4. 初回のみ Queue を作成: `npx wrangler queues create pasr-admin-tasks`
-5. `npx wrangler d1 migrations apply pasr-db --remote`
-6. `npm run deploy`（`wrangler.jsonc` の `keep_vars: true` で Dashboard Variables を保持。Workers Builds は Deploy command 未変更なら既定の `npx wrangler deploy` でも可）
-7. `/health` で readiness を確認
-8. デプロイ後、Dashboard **Bindings** が `wrangler.jsonc` と一致していることを確認
-
-## 運用時の確認ポイント
-- 実行ログは JSON を前提に確認する。
-- `event=daily_notify_done` を基点に、以下を最低限追跡する:
-  - `run_id`
-  - `processed`
-  - `sent`
-  - `skipped`
-  - `deleted`
-  - `errors`
-- skip は `event=skip_record` の `reason` で確認する（例: `missing_notify_channels`, `invalid_date_range`）。
-
-## 再実行 Runbook（障害時）
-1. 失敗 run の `run_id` とエラーイベントを確認
-2. 原因（Slack 側データ不備、token 期限、チャネル権限など）を修正
-3. 当日分を `/run` で再実行（Bearer 必須）
-4. `daily_notify_done` の `errors=0` または許容範囲を確認
-5. Slack 投稿が既存メッセージ更新（`chat.update`）で重複していないことを確認
-
-## Endpoint 仕様
-
-### HTTP / スケジュール
-- `GET /health`
-  - 認証不要
-  - `200 {"ok":true}`
-- `POST /run`
-  - `Authorization: Bearer <RUN_ENDPOINT_TOKEN>` 必須
-  - 成功時レスポンスは最小化し `200 {"ok":true,"runId":"..."}` を返す
-  - 認証失敗時は `401 {"ok":false,"error":"Unauthorized"}`
-  - メソッド不正時は `405 {"ok":false,"error":"Method Not Allowed"}`
-- `scheduled`（cron `0 0 * * *` UTC = JST 9:00）
-  - 平日のみ実行
-  - 週末は `skip_weekend_scheduled` を出力して終了
-
-### Slack Events（`POST /slack/events`）
-- `X-Slack-Signature` / `X-Slack-Request-Timestamp` を `SLACK_SIGNING_SECRET` で検証
-- 署名検証は `request.text()` の生ボディを使って実施
-- 署名不正時は `401 {"ok":false,"error":"Unauthorized"}`
-- `url_verification` は `200 {"challenge":"..."}` を返す
-- `event_callback` は先に `200 {"ok":true}` を返し、後続処理は非同期で実行
-- 同一 `event_id` は KV 短期 TTL で重複抑止し、再送は捨てる
-- 重複抑止時は `duplicate_event_dropped` を構造化ログ出力
-- `app_mention`（チャンネル直下のみ）:
-  - `thread_ts` ありは `app_mention_thread_skipped` で案内 ephemeral
-  - メンションのみ → ephemeral +「不在予定を登録」ボタン（`block_actions` で Modal 起動）
-  - 本文付きメンション → infer / Workers AI で日付・note を解釈 → ephemeral 確認 UI（登録 / キャンセル / フォーム）→ 確認後 D1 書き込み
-  - AI 解釈失敗時はフォームボタンへフォールバック
-- Bot DM（`message.im`）:
-  - App Home の Messages Tab からユーザーが Bot に DM を送る（例: `明日 通院`）
-  - 処理フローは本文付き `app_mention` と同じ。応答は `chat.postMessage`（DM 内に残る。ephemeral 不可）
-  - `subtype` / `bot_id` 付きメッセージは `dm_message_skipped` で無視
-- App Home（`app_home_opened`, `tab=home`）:
-  - 開くたびに本人の通知設定と今後の不在予定（最大5件）を D1 読取して `views.publish`
-  - 登録・通知設定・不在予定一覧ボタン。Home 上の編集/削除成功時は Home を refresh
-  - D1 読取失敗時は CTA のみの簡素表示（詳細エラーなし）
-
-#### Slack Events ローカル確認（署名あり）
-1. 生ボディを準備  
-   `BODY='{"type":"url_verification","challenge":"test-challenge"}'`
-2. timestamp を作成  
-   `TS=$(date +%s)`
-3. 署名を作成  
-   `SIG=$(printf "v0:%s:%s" "$TS" "$BODY" | openssl dgst -sha256 -hmac "$SLACK_SIGNING_SECRET" | sed 's/^.* //')`
-4. 送信  
-   `curl -X POST http://localhost:8787/slack/events -H "Content-Type: application/json" -H "X-Slack-Request-Timestamp: $TS" -H "X-Slack-Signature: v0=$SIG" --data "$BODY"`
-
-### Slash Command（`POST /slack/command`）
-- `X-Slack-Signature` / `X-Slack-Request-Timestamp` を `SLACK_SIGNING_SECRET` で検証
-- 署名検証は `request.text()` の生ボディを使って実施
-- 署名不正時は `401 {"ok":false,"error":"Unauthorized"}`
-- body 不正（必須フィールド不足）は `400 {"ok":false,"error":"Bad Request"}`
-- `trigger_id` をキーに TTL=300秒で重複抑止（enqueue 前。重複時は no-op）
-
-#### `/pasr`（全ユーザー可）
-- `/pasr help` -> ユーザ向けコマンドの使い方表示
-- `/pasr settings` -> 自分の通知設定を編集（Modal）。OAuth 有効時は連携案内 ephemeral も表示
-- `/pasr list` -> 自分の不在予定一覧（編集・削除ボタン、Queue 非同期・最大25行）
-- `/pasr update` -> `/pasr list` と同じ
-- `/pasr update YYYY-MM-DD` -> 開始日指定で不在予定編集 Modal（同期・`trigger_id`）
-- `/pasr register` -> 自分の不在予定を Modal で登録
-
-#### `/pasr-admin`（`SLACK_ADMIN_USER_IDS` allowlist 必須）
-- allowlist 非該当時の即時ACK本文: `Received. Processing...`（実処理は行わない）
-- `/pasr-admin help` -> 管理者向けコマンドの使い方表示
-- `/pasr-admin status` -> 直近 run 要約 + `db:` / `channel_notify_settings:` / `slack_user_oauth:` 状態（`sent` は CH+DM 合計）
-- `/pasr-admin run` -> daily notify 手動実行（即時 ACK 後 Queue 経由で非同期。ops レポートは投稿しない。応答の `sent` も CH+DM 合計）
-- `/pasr-admin users` -> `member_master` 登録ユーザー一覧（active / 既定通知先 / OAuth 連携状態。ページ番号またはボタンでページ送り。即時 ACK 後 `waitUntil` + ephemeral）
-- `/pasr-admin absences` -> 本日 JST の不在一覧（`today` / ページ番号省略可。通知先は absence レコードのみ。ページ送り同上）
-- `/pasr-admin channel-config empty on|off|default` -> 実行 CH の 0件時通知を上書き（即時 ACK 後 `waitUntil` で D1 処理、ephemeral で結果。queue 不可）
-- `/pasr-admin channel-config list` -> CH 別 0件時通知の上書き一覧（同上）
-
-#### ops レポート（`SLACK_PASR_OPS_CHANNEL`）
-- 平日 scheduled daily（JST 9:00）完了直後のみ `chat.postMessage` で 1 投稿
-- manual `/pasr-admin run` や `/run` では投稿しない
-- 失敗時はログ + `errors` 加算のみ（CH/DM 通知は継続）
-- レポートの `sent` は **CH 通知 + DM 通知** の成功件数合計
-- OAuth 有効時は `status: set=… skipped=… errors=…` 行を追加（scheduled のみ）
-
-#### OAuth ルート
-- `GET /slack/oauth/start?state=<nonce>` — KV に保存した nonce で CSRF 防御し、Slack authorize へリダイレクト（設定・App Home から利用）
-- `GET /slack/oauth/callback` — トークン保存後 HTML 完了ページ（Slack 署名検証なし。state nonce で CSRF 防御）
-
-#### Slash Command ローカル確認（署名あり）
-1. 生ボディを準備（URL-encoded）  
-   `BODY='command=%2Fpasr&text=run&user_id=UADMIN&team_id=TTEST&trigger_id=TRIG001'`
-2. timestamp を作成  
-   `TS=$(date +%s)`
-3. 署名を作成  
-   `SIG=$(printf "v0:%s:%s" "$TS" "$BODY" | openssl dgst -sha256 -hmac "$SLACK_SIGNING_SECRET" | sed 's/^.* //')`
-4. 送信  
-   `curl -X POST http://localhost:8787/slack/command -H "Content-Type: application/x-www-form-urlencoded" -H "X-Slack-Request-Timestamp: $TS" -H "X-Slack-Signature: v0=$SIG" --data "$BODY"`
-
-### Interactions（`POST /slack/interactions`）
-- 署名検証必須（raw body）
-- `view_submission`: `pasr_absence_register` / `pasr_absence_edit` / `pasr_member_master_update`
-- `block_actions`: `pasr_register_open` / `pasr_home_settings_open` / `pasr_home_list_open` / `pasr_mention_confirm` / `pasr_mention_cancel` / `pasr_absence_edit_open` / `pasr_absence_delete` / `pasr_status_oauth_disconnect` / `pasr_status_oauth_disconnect_confirm`
-- D1 書き込みまで同期 ACK。登録通知・一覧削除の再描画・mention confirm は `waitUntil` で非同期
-- バリデーション失敗時は `response_action: errors` を返す
-
-## 不在予定一覧・編集（`/pasr list` / `/pasr update`）
-- 本人の `end_date >= today`（JST）の不在予定のみ表示（最大25行）
-- 削除は1クリック（確認 Modal なし）。`pasr_absence_delete` は ACK 後 `waitUntil` で削除+一覧再描画
-- 編集 Modal 保存時は登録通知を再送しない。保存時は active list 上の行を再照合してから更新
-- `type` は常に `absence` 固定（Modal・一覧に非表示）
-
-## 終了済み不在予定の物理削除（daily run）
-- `end_date < today`（JST）の行を run 通知後に D1 から DELETE
-
-## 不在予定登録（`/pasr register` / Bot メンション / Bot DM）
-- 入口:
-  - `/pasr register`（Slash）
-  - チャンネル直下の `@bot` メンション（スレッド内メンションは除外）
-    - メンションのみ → ephemeral ボタン → Modal
-    - 本文付き（例: `@PASR 明日 通院`）→ infer / Workers AI 解釈 → 確認 UI → 登録（通知先は `member_master` 既定）
-  - Bot への DM（`message.im`、例: `明日 通院`）→ 上記本文付きメンションと同フロー（応答は DM 内に表示）
-- `member_master` の既定通知先・既定登録通知を Modal 初期値として表示
-- D1 `absences` へ 1 件 insert
-- 終了日を省略した場合は開始日と同日として登録する
-- **登録通知** select: `none` / `ch` / `dm` / `both`（`member_master.default_registration_notify` が既定値）
-- `none` でも daily 用に通知チャンネルまたは通知ユーザーを1件以上指定必須（即時通知は送らない）
-- **当日不在予定**（`start ≤ today ≤ end`）:
-  - JST 9:00 前: 選択した登録通知に従う（`none` なら即時通知なし、daily が担当）
-  - JST 9:00 以降: `both` に昇格し、設定済みの CH/DM のみ送信（degrade）
-- **未来予定**: 選択した登録通知に従う
-- 登録成功後は ephemeral で完了メッセージを 1 通送る
-- 当日・登録通知ありの場合、daily 通知と即時通知の両方が届くことがある（9:00 前 + `none` 以外）
-- 構造化ログ: `absence_registered`, `registration_notify_done`, `absence_register_ack_ephemeral_sent` 等
-- `type` は常に `absence`（不在）を自動セット。理由・時間帯などは Modal の「詳細（任意）」= `note` に記載
-- 日次通知本文は `• <@user> {note}`（`type` は出さない）。登録通知は `• <@user> {期間} — {note}` 形式
-
-## User Master（`member_master`）
-- D1 テーブル `member_master` が正本
-- 主キー相当は `target_user`（Slack user ID）
-- `active`: true で通知対象、false は `inactive_user_master` スキップ
-- `default_registration_notify`: `none` / `ch` / `dm` / `both`
-- daily 実行時: master 未登録ユーザーは最小レコードで自動 insert
-- `absence.notify_channels` / `absence.notify_users` は master default で補完しない
-
-## Notify Users（DM別送）
-- `Notify Users` は absence レコードの値のみを使う（`member_master` で補完しない）。
-- `Notify Users` が未入力の場合、DM は送らない。
-- 日次対象レコード（`todays`）から `Notify Users` をユーザー単位で集約し、1ユーザーにつき1通の DM を送る。
-- DM本文は以下形式:
-  - `本日の不在予定です（YYYY-MM-DD JST）`
-  - `• <@U12345> 午前休`
-  - `• <@U67890> 外出 15:00〜`
-  - `• <@U22222> 終日休（私用）`
-- DM本文の行順は `startDate` 昇順 → `targetUser` 昇順。
-- DM送信失敗時の `errors` は失敗ユーザー単位で `+1`。他レコード/他通知は継続する。
-
-### 必要 Scope（Slack API）
-
-正本は [`slack-app-manifest.json.template`](slack-app-manifest.json.template)。api.slack.com → **App Manifest** に貼り付け、`REPLACE_WITH_WORKER_URL` を Worker のベース URL（例: `https://pasr-absence-notifier.example.workers.dev`）に置換する。
-
-| Scope | 用途 |
-|-------|------|
-| `chat:write` | `chat.postMessage` / `chat.update` |
-| `im:history` | Bot DM（`message.im`）受信 |
-| `im:write` | `conversations.open`（DM） |
-| `commands` | Slash Command 受信 |
-| `users:read` | Modal の user selector |
-| `channels:read` | Modal の channel selector |
-| `app_mentions:read` | `app_mention` イベント受信 |
-| `usergroups:read` | `@pasr_users` 現メンバー一覧取得 |
-| `usergroups:write` | `@pasr_users` メンバー更新 |
-
-manifest には上記に加え `channels:join` / `chat:write.public` も含む（公開チャンネル投稿・参加用）。
-
-**Subscribe to bot events:** `app_mention`, `message.im`, `app_home_opened`
-
-**Modal / App Home（追加 scope 不要）:** `views.open` / `views.publish` は専用 OAuth scope を要しない。manifest の **Interactivity** を有効にし、Bot Token で呼び出す（[Slack 公式](https://docs.slack.dev/reference/methods/views.open)）。
-
-scope / event 変更後は **Install App → Reinstall to Workspace** 必須。
-
-**App Home（manifest 内 `features.app_home`）**
-
-- `home_tab_enabled: true` — Home Tab（`views.publish`）
-- `messages_tab_enabled: true` / `messages_tab_read_only_enabled: false` — Messages Tab からの DM 自然文登録
-
-### Slack Web API 一覧（PASR が使用）
-
-| メソッド | 用途 |
-|---------|------|
-| `chat.postMessage` / `chat.update` | チャネル・DM 通知 |
-| `conversations.open` | DM チャネル解決 |
-| `views.open` | Modal 起動 |
-| `views.publish` | App Home Tab |
-| `chat.postEphemeral` | 登録完了・メンション案内 |
-| `usergroups.users.list` / `usergroups.users.update` | `@pasr_users` 自動追加（任意 var 設定時） |
-
-Slash Command の応答は `response_url` へ POST（Web API 外）。
+障害時は原因を修正のうえ Bearer 付き `POST /run` で当日分を再実行する。再実行後、Slack 上の CH 通知が `chat.update` により重複していないことを確認する（KV の ts 不整合時は旧メッセージが残る）。
