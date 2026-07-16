@@ -7,7 +7,7 @@ Slack から不在予定を登録し、平日 JST 9:00 に日次通知する（C
 ## 初回セットアップ
 
 1. `npm install`
-2. [`wrangler.jsonc`](wrangler.jsonc) の D1 / KV ID を環境に合わせて差し替え
+2. 初回のみ: `npx wrangler d1 create pasr-db` / `npx wrangler kv namespace create PASR_STATE` → 返却 ID を [`wrangler.jsonc`](wrangler.jsonc) に反映
 3. `npm run db:migrate:local`（本番: `npx wrangler d1 migrations apply pasr-db --remote`）
 4. Secrets: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `RUN_ENDPOINT_TOKEN`
 5. [`slack-app-manifest.json.template`](slack-app-manifest.json.template) を Slack に反映 → URL 置換 → **Reinstall**
@@ -31,6 +31,7 @@ npm run check && npm test
 npx wrangler d1 migrations apply pasr-db --remote   # 必要時
 npm run deploy
 curl https://<worker>/health
+# Dashboard Bindings が wrangler.jsonc と一致することを確認
 ```
 
 ローカル: `npm run dev` → `curl localhost:8787/health` / `POST /run`（Bearer）/ `GET /__scheduled`

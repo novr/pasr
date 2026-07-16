@@ -17,6 +17,12 @@
 - daily の `notify_users` / `notify_channels` は absence の値のみ。`member_master` で補完しない
 - `channel_notify_settings` は CH の 0件時通知上書きのみ。absence は触らない
 
+## データ・migration
+
+- D1 正本: `absences`, `member_master`, `channel_notify_settings`（`0002`）, `slack_user_oauth`（`0003`）
+- `0002` 未適用: daily CH/DM は継続。`/pasr-admin channel-config` のみ失敗
+- `0003` 未適用: OAuth UI・Status 同期をスキップ。CH/DM は継続
+
 ## 登録通知（`src/domain/absence-registration.ts`）
 
 - `none` でも daily 用に CH または Notify Users を 1 件以上必須
@@ -34,17 +40,21 @@
 ## Slack
 
 - 署名は `request.text()` の生ボディ。`event_id` / `trigger_id` は KV 300 秒 dedupe
+- `view_submission` は D1 書き込みまで同期 ACK。登録通知・一覧再描画・mention confirm は `waitUntil`
+- `/pasr`: 一覧は Queue 非同期。Modal 起動（`settings` / `register` / `update`）は即時 ACK 後 `waitUntil`（`trigger_id` 期限）
 - `/pasr-admin`: allowlist 外は ACK のみで実処理なし。`users` / `absences` / `channel-config` は queue 不可（`waitUntil` + ephemeral）
 - `blocks` 付き ephemeral は **section（本文）+ actions**。actions のみは本文が空に見える
-- `app_mention`: チャンネル直下のみ。AI は提案のみ、確定は確認 UI 必須。通知先は master 既定（AI 対象外）
+- `app_mention`: チャンネル直下のみ。AI は提案のみ、確定は確認 UI 必須。通知先は master 既定（AI 対象外）。confirm commit の `channelId` は interaction と payload の両方を照合し、commit には interaction 側を使用
 - high 信頼度 infer で日付完結時は AI スキップ。ただし `startDate`/`endDate` が `todayJst` より前ならスキップしない
 - Bot DM: 本文付きメンションと同フロー。応答は ephemeral 不可（会話に残る）
+- App Home: 削除・編集成功時のみ refresh。登録・設定保存後は refresh しない
 - Status OAuth: User Token は D1 暗号化。ログ・レスポンスに出さない。鍵変更後は全員再連携
 
 ## app_mention 日付（コードに散らばりやすい）
 
-- 年省略 `M/D` は未来日優先（過去なら翌年）。ISO `YYYY-MM-DD` は繰り上げなし
-- 週境界は日曜〜土曜。`今週`+曜日が過去なら翌週同日
+- 年省略 `M/D` は未来日優先（過去なら翌年）。`M/D〜M/D` の年跨ぎは終了側を翌年へ補完。ISO `YYYY-MM-DD` は繰り上げなし
+- 週境界は日曜〜土曜。`今週`+曜日が過去なら翌週同日。`来週は`（曜日なし）は翌週日曜〜土曜
+- ケース詳細: `src/domain/mention/mention-ai-cases.ts`
 
 ## User Group（任意）
 
@@ -53,7 +63,7 @@
 ## セキュリティ・実装
 
 - Secret は Cloudflare のみ。`/run` は Bearer（timing-safe）
-- 実行ログに `run_id`, `processed`, `sent`, `skipped`, `errors` 必須
+- 実行ログに `run_id`, `processed`, `sent`, `skipped`, `deleted`, `errors` 必須
 - request スコープのグローバル保持と未管理 Promise 禁止
 - binding / `Env` 変更時は `npm run types`（`worker-configuration.d.ts` 手書き禁止）
 
@@ -61,4 +71,4 @@
 
 - 実装完了・PR 前・deploy 前: `npm run check && npm test`
 - domain / queue / dedupe / db 変更時は `npm test`。npm scripts 変更時は README も更新
-- mention AI 結合は `npm run test:integration`（CI 外）。Queue retry は一時障害のみ
+- mention AI 結合は `PASR_RUN_INTEGRATION=1` 時のみ `npm run test:integration`（CI 外）。Queue retry は一時障害のみ
