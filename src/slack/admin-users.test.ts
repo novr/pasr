@@ -75,7 +75,11 @@ describe("handleUsersCommand", () => {
     if (typeof reply === "string") return;
     expect(reply.text).toContain("ページ 1/2");
     expect(reply.text).not.toContain("… 他");
-    const actions = reply.blocks?.[0] as { elements?: Array<{ text?: { text?: string } }> };
+    const section = reply.blocks?.[0] as { type?: string; text?: { text?: string } };
+    expect(section.type).toBe("section");
+    expect(section.text?.text).toContain("<@U0000>");
+    const actions = reply.blocks?.[1] as { type?: string; elements?: Array<{ text?: { text?: string } }> };
+    expect(actions.type).toBe("actions");
     expect(actions.elements?.some((element) => element.text?.text === "他 1 件 →")).toBe(true);
   });
 
