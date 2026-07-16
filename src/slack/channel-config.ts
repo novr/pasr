@@ -8,7 +8,7 @@ import {
   resolveNotifyWhenEmpty,
   upsertChannelNotifySetting
 } from "../db/channel-notify-repository";
-import { parseChannelConfigCommand } from "./admin-command-parse";
+import { parseChannelConfigCommand, type ParsedChannelConfigCommand } from "./admin-command-parse";
 import type { SlackCommandPayload } from "./command";
 
 const formatNotifyWhenEmpty = (value: boolean): string => (value ? "on" : "off");
@@ -27,14 +27,15 @@ const formatChannelConfigList = async (config: AppConfig): Promise<string> => {
 
 export const handleChannelConfigCommand = async (
   config: AppConfig,
-  payload: SlackCommandPayload
+  payload: SlackCommandPayload,
+  parsed?: ParsedChannelConfigCommand
 ): Promise<string> => {
-  const parsed = parseChannelConfigCommand(payload.text);
-  if (!parsed) {
+  const resolved = parsed ?? parseChannelConfigCommand(payload.text);
+  if (!resolved) {
     return "使い方: /pasr-admin channel-config empty on|off|default | list";
   }
-  if (parsed.kind === "invalid") {
-    return parsed.message;
+  if (resolved.kind === "invalid") {
+    return resolved.message;
   }
 
   try {
@@ -43,7 +44,7 @@ export const handleChannelConfigCommand = async (
     return "db: schema_missing（channel_notify_settings）。`npx wrangler d1 migrations apply` を実行してください。";
   }
 
-  if (parsed.kind === "list") {
+  if (resolved.kind === "list") {
     return formatChannelConfigList(config);
   }
   if (!payload.channelId.startsWith("C")) {
@@ -51,10 +52,10 @@ export const handleChannelConfigCommand = async (
   }
 
   const channelId = payload.channelId;
-  if (parsed.value === "default") {
+  if (resolved.value === "default") {
     await deleteChannelNotifySetting(config, channelId);
   } else {
-    await upsertChannelNotifySetting(config, channelId, parsed.value === "on", payload.userId);
+    await upsertChannelNotifySetting(config, channelId, resolved.value === "on", payload.userId);
   }
 
   const settingsMap = await loadChannelNotifySettingsMap(config);
@@ -63,6 +64,6 @@ export const handleChannelConfigCommand = async (
   const source = override ? "channel override" : "org default";
   return [
     `<#${channelId}> の 0件時通知: ${formatNotifyWhenEmpty(effective)}（${source}）`,
-    `設定: empty ${parsed.value}`
+    `設定: empty ${resolved.value}`
   ].join("\n");
 };

@@ -52,7 +52,11 @@ describe("channel-config deferred handler", () => {
 
     await dispatch.run();
 
-    expect(handleChannelConfigCommandMock).toHaveBeenCalledWith(config, channelConfigPayload);
+    expect(handleChannelConfigCommandMock).toHaveBeenCalledWith(
+      config,
+      channelConfigPayload,
+      { kind: "empty", value: "on" }
+    );
     expect(fetch).toHaveBeenCalledWith(
       channelConfigPayload.responseUrl,
       expect.objectContaining({
@@ -93,7 +97,7 @@ describe("admin deferred handlers", () => {
     expect(dispatch.mode).toBe("deferred");
     if (dispatch.mode !== "deferred") return;
     await dispatch.run();
-    expect(handleUsersCommandMock).toHaveBeenCalled();
+    expect(handleUsersCommandMock).toHaveBeenCalledWith(config, expect.objectContaining({ text: "users" }), 1);
     expect(fetch).toHaveBeenCalledWith(
       adminPayload.responseUrl,
       expect.objectContaining({ body: expect.stringContaining("users listed") })
@@ -110,5 +114,16 @@ describe("admin deferred handlers", () => {
     if (dispatch.mode !== "deferred") return;
     await dispatch.run();
     expect(handleAbsencesCommandMock).toHaveBeenCalled();
+  });
+
+  it("invalid users text returns immediate text not queue", async () => {
+    const config = createTestConfig(createMockKv());
+    const dispatch = await resolveSlashCommandDispatch(config, {
+      ...adminPayload,
+      text: "users list"
+    });
+    expect(dispatch.mode).toBe("text");
+    if (dispatch.mode !== "text") return;
+    expect(dispatch.text).toContain("使い方");
   });
 });

@@ -103,8 +103,12 @@ export const buildUsersListReply = async (
 
 export const handleUsersCommand = async (
   config: AppConfig,
-  payload: SlackCommandPayload
+  payload: SlackCommandPayload,
+  page?: number
 ): Promise<AdminEphemeralReply | string> => {
+  if (page !== undefined) {
+    return buildUsersListReply(config, page);
+  }
   const parsed = parseUsersCommand(payload.text);
   if (!parsed) {
     return "使い方: /pasr-admin users [ページ番号]";

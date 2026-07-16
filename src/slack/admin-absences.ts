@@ -73,8 +73,12 @@ export const buildAbsencesTodayReply = async (
 
 export const handleAbsencesCommand = async (
   config: AppConfig,
-  payload: SlackCommandPayload
+  payload: SlackCommandPayload,
+  page?: number
 ): Promise<AdminEphemeralReply | string> => {
+  if (page !== undefined) {
+    return buildAbsencesTodayReply(config, page);
+  }
   const parsed = parseAbsencesCommand(payload.text);
   if (!parsed) {
     return "使い方: /pasr-admin absences（本日）[ページ番号]";
