@@ -17,7 +17,6 @@ import {
   normalizeAdminPage,
   type AdminEphemeralReply
 } from "./admin-format";
-import { parseAbsencesCommand } from "./admin-command-parse";
 import type { SlackCommandPayload } from "./command";
 
 const formatAbsenceLine = (record: {
@@ -73,17 +72,9 @@ export const buildAbsencesTodayReply = async (
 
 export const handleAbsencesCommand = async (
   config: AppConfig,
-  payload: SlackCommandPayload
-): Promise<AdminEphemeralReply | string> => {
-  const parsed = parseAbsencesCommand(payload.text);
-  if (!parsed) {
-    return "使い方: /pasr-admin absences（本日）[ページ番号]";
-  }
-  if (parsed.kind === "invalid") {
-    return parsed.message;
-  }
-  return buildAbsencesTodayReply(config, parsed.page);
-};
+  _payload: SlackCommandPayload,
+  page: number
+): Promise<AdminEphemeralReply | string> => buildAbsencesTodayReply(config, page);
 
 export const handleAdminAbsencesPageInteraction = async (
   config: AppConfig,

@@ -8,7 +8,7 @@ import {
   resolveNotifyWhenEmpty,
   upsertChannelNotifySetting
 } from "../db/channel-notify-repository";
-import { parseChannelConfigCommand } from "./admin-command-parse";
+import type { ValidChannelConfigCommand } from "./admin-command-parse";
 import type { SlackCommandPayload } from "./command";
 
 const formatNotifyWhenEmpty = (value: boolean): string => (value ? "on" : "off");
@@ -27,16 +27,9 @@ const formatChannelConfigList = async (config: AppConfig): Promise<string> => {
 
 export const handleChannelConfigCommand = async (
   config: AppConfig,
-  payload: SlackCommandPayload
+  payload: SlackCommandPayload,
+  parsed: ValidChannelConfigCommand
 ): Promise<string> => {
-  const parsed = parseChannelConfigCommand(payload.text);
-  if (!parsed) {
-    return "使い方: /pasr-admin channel-config empty on|off|default | list";
-  }
-  if (parsed.kind === "invalid") {
-    return parsed.message;
-  }
-
   try {
     await assertChannelNotifySettingsTable(config);
   } catch {

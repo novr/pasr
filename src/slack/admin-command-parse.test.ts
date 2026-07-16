@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { parseAbsencesCommand, parseChannelConfigCommand, parseUsersCommand } from "./admin-command-parse";
+import {
+  parseAbsencesCommand,
+  parseAdminCommandText,
+  parseChannelConfigCommand,
+  parseUsersCommand,
+  DEFERRED_ADMIN_COMMAND_KINDS,
+  isDeferredAdminCommandParse
+} from "./admin-command-parse";
 
 describe("parseChannelConfigCommand", () => {
   it("parses empty on off default", () => {
@@ -64,5 +71,53 @@ describe("parseAbsencesCommand", () => {
   it("rejects unknown subcommand", () => {
     const result = parseAbsencesCommand("absences foo");
     expect(result?.kind).toBe("invalid");
+  });
+});
+
+describe("parseAdminCommandText", () => {
+  it("parses top-level admin actions", () => {
+    expect(parseAdminCommandText("")).toEqual({ kind: "help" });
+    expect(parseAdminCommandText("help")).toEqual({ kind: "help" });
+    expect(parseAdminCommandText("status")).toEqual({ kind: "status" });
+    expect(parseAdminCommandText("run")).toEqual({ kind: "run" });
+    expect(parseAdminCommandText("run extra")).toEqual({ kind: "run" });
+  });
+
+  it("delegates users absences and channel-config", () => {
+    expect(parseAdminCommandText("users 2")).toEqual({ kind: "users", page: 2 });
+    expect(parseAdminCommandText("absences today")).toEqual({
+      kind: "absences",
+      scope: "today",
+      page: 1
+    });
+    expect(parseAdminCommandText("channel-config list")).toEqual({
+      kind: "channel-config",
+      sub: { kind: "list" }
+    });
+  });
+
+  it("returns invalid instead of unknown for bad subcommands", () => {
+    const users = parseAdminCommandText("users list");
+    expect(users.kind).toBe("invalid");
+    const channel = parseAdminCommandText("channel-config empty maybe");
+    expect(channel.kind).toBe("invalid");
+  });
+
+  it("returns unknown for unsupported top-level action", () => {
+    expect(parseAdminCommandText("migrate")).toEqual({ kind: "unknown", action: "migrate" });
+  });
+});
+
+describe("DEFERRED_ADMIN_COMMAND_KINDS", () => {
+  it("lists deferred kinds only", () => {
+    expect(DEFERRED_ADMIN_COMMAND_KINDS).toEqual(["users", "absences", "channel-config"]);
+  });
+
+  it("isDeferredAdminCommandParse matches deferred kinds only", () => {
+    expect(isDeferredAdminCommandParse(parseAdminCommandText("users"))).toBe(true);
+    expect(isDeferredAdminCommandParse(parseAdminCommandText("absences"))).toBe(true);
+    expect(isDeferredAdminCommandParse(parseAdminCommandText("channel-config list"))).toBe(true);
+    expect(isDeferredAdminCommandParse(parseAdminCommandText("run"))).toBe(false);
+    expect(isDeferredAdminCommandParse(parseAdminCommandText("users list"))).toBe(false);
   });
 });
