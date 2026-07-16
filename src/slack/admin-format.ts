@@ -1,5 +1,5 @@
 import type { AppConfig } from "../config";
-import { slackApi } from "./api";
+import { postUserFacingMessage } from "./user-message";
 import { ADMIN_EPHEMERAL_LIST_MAX } from "./admin-constants";
 
 export const ADMIN_EPHEMERAL_TEXT_MAX = 2800;
@@ -161,20 +161,20 @@ export const deliverAdminEphemeralReply = async (
 ): Promise<void> => {
   const normalized = normalizeAdminEphemeralReply(reply);
   if (params.responseUrl) {
-    await postAdminEphemeralToResponseUrl(params.responseUrl, normalized, {
+    const posted = await postAdminEphemeralToResponseUrl(params.responseUrl, normalized, {
       replaceOriginal: params.replaceOriginal
     });
-    return;
+    if (posted) return;
+    if (params.replaceOriginal) return;
   }
   if (params.channelId) {
     try {
-      await slackApi.postEphemeral(
-        config,
-        params.channelId,
-        params.userId,
-        normalized.text,
-        normalized.blocks
-      );
+      await postUserFacingMessage(config, {
+        channelId: params.channelId,
+        userId: params.userId,
+        text: normalized.text,
+        blocks: normalized.blocks
+      });
     } catch (error) {
       console.warn(
         JSON.stringify({

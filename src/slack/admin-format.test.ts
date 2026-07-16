@@ -1,9 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { createMockKv, createTestConfig } from "../test/mock-kv";
 import { ADMIN_EPHEMERAL_LIST_MAX } from "./admin-constants";
+
+const { postUserFacingMessageMock } = vi.hoisted(() => ({
+  postUserFacingMessageMock: vi.fn(async () => undefined)
+}));
+
+vi.mock("./user-message", () => ({
+  postUserFacingMessage: postUserFacingMessageMock
+}));
+
 import {
   ADMIN_EPHEMERAL_TEXT_MAX,
   buildAdminEphemeralBlocks,
   buildAdminEphemeralPostBody,
+  deliverAdminEphemeralReply,
   formatAdminEphemeralMessage,
   formatEntityList,
   normalizeAdminEphemeralReply
@@ -97,5 +108,80 @@ describe("buildAdminEphemeralBlocks", () => {
         totalCount: 1
       })
     ).toBeUndefined();
+  });
+});
+
+describe("deliverAdminEphemeralReply", () => {
+  it("falls back to channel postUserFacingMessage when response_url fails", async () => {
+    postUserFacingMessageMock.mockClear();
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 500 }) as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    const config = createTestConfig(createMockKv());
+
+    await deliverAdminEphemeralReply(
+      config,
+      {
+        userId: "U1",
+        responseUrl: "https://hooks.slack.com/commands/1/2/3",
+        channelId: "C1"
+      },
+      "fallback body"
+    );
+
+    expect(fetchMock).toHaveBeenCalled();
+    expect(postUserFacingMessageMock).toHaveBeenCalledWith(config, {
+      channelId: "C1",
+      userId: "U1",
+      text: "fallback body",
+      blocks: undefined
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it("falls back to DM chat.postMessage when response_url fails in IM", async () => {
+    postUserFacingMessageMock.mockClear();
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 500 }) as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    const config = createTestConfig(createMockKv());
+
+    await deliverAdminEphemeralReply(
+      config,
+      {
+        userId: "U1",
+        responseUrl: "https://hooks.slack.com/commands/1/2/3",
+        channelId: "D_DM"
+      },
+      "dm fallback"
+    );
+
+    expect(postUserFacingMessageMock).toHaveBeenCalledWith(config, {
+      channelId: "D_DM",
+      userId: "U1",
+      text: "dm fallback",
+      blocks: undefined
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it("does not channel-fallback when replace_original fails", async () => {
+    postUserFacingMessageMock.mockClear();
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 500 }) as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    const config = createTestConfig(createMockKv());
+
+    await deliverAdminEphemeralReply(
+      config,
+      {
+        userId: "U1",
+        responseUrl: "https://hooks.slack.com/actions/T/1/2",
+        channelId: "C1",
+        replaceOriginal: true
+      },
+      "page 2"
+    );
+
+    expect(fetchMock).toHaveBeenCalled();
+    expect(postUserFacingMessageMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 });
