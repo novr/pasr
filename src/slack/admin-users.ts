@@ -11,7 +11,7 @@ import { formatRegistrationNotifyModeLabel } from "../domain/absence-registratio
 import { ADMIN_USERS_PAGE_ACTION_ID } from "./action-ids";
 import { ADMIN_EPHEMERAL_LIST_MAX } from "./admin-constants";
 import {
-  buildAdminPaginationBlocks,
+  buildAdminEphemeralBlocks,
   computeAdminTotalPages,
   deliverAdminEphemeralReply,
   formatAdminEphemeralMessage,
@@ -90,7 +90,8 @@ export const buildUsersListReply = async (
   );
   const header = `PASR 登録ユーザー (active ${activeCount} / 全 ${totalCount}) — ページ ${currentPage}/${totalPages}`;
   const text = formatAdminEphemeralMessage(header, lines, 0);
-  const blocks = buildAdminPaginationBlocks(
+  const blocks = buildAdminEphemeralBlocks(
+    text,
     ADMIN_USERS_PAGE_ACTION_ID,
     "pasr_admin_users_pagination",
     currentPage,

@@ -9,7 +9,7 @@ import { getJstDateParts } from "../domain/jst-date";
 import { ADMIN_ABSENCES_PAGE_ACTION_ID } from "./action-ids";
 import { ADMIN_EPHEMERAL_LIST_MAX } from "./admin-constants";
 import {
-  buildAdminPaginationBlocks,
+  buildAdminEphemeralBlocks,
   computeAdminTotalPages,
   deliverAdminEphemeralReply,
   formatAdminEphemeralMessage,
@@ -60,7 +60,8 @@ export const buildAbsencesTodayReply = async (
   const header = `${headerBase} — ページ ${currentPage}/${totalPages}`;
   const lines = records.map((record) => formatAbsenceLine(record));
   const text = formatAdminEphemeralMessage(header, lines, 0);
-  const blocks = buildAdminPaginationBlocks(
+  const blocks = buildAdminEphemeralBlocks(
+    text,
     ADMIN_ABSENCES_PAGE_ACTION_ID,
     "pasr_admin_absences_pagination",
     currentPage,

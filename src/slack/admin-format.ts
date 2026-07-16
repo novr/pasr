@@ -11,7 +11,7 @@ export const computeAdminTotalPages = (totalCount: number): number =>
 export const normalizeAdminPage = (page: number, totalPages: number): number =>
   Math.min(Math.max(1, page), totalPages);
 
-export const buildAdminPaginationBlocks = (
+const buildAdminPaginationActions = (
   actionId: string,
   blockId: string,
   page: number,
@@ -40,6 +40,19 @@ export const buildAdminPaginationBlocks = (
   }
   if (elements.length === 0) return undefined;
   return [{ type: "actions", block_id: blockId, elements }];
+};
+
+export const buildAdminEphemeralBlocks = (
+  text: string,
+  actionId: string,
+  blockId: string,
+  page: number,
+  totalPages: number,
+  totalCount: number
+): Array<Record<string, unknown>> | undefined => {
+  const pagination = buildAdminPaginationActions(actionId, blockId, page, totalPages, totalCount);
+  if (!pagination) return undefined;
+  return [{ type: "section", text: { type: "mrkdwn", text } }, ...pagination];
 };
 
 export type AdminEphemeralReply = {
