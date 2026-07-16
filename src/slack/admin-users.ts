@@ -89,14 +89,13 @@ export const buildUsersListReply = async (
   );
   const header = `PASR 登録ユーザー (active ${activeCount} / 全 ${totalCount}) — ページ ${currentPage}/${totalPages}`;
   const text = formatAdminEphemeralMessage(header, lines, 0);
-  const blocks = buildAdminEphemeralBlocks(
-    text,
-    ADMIN_USERS_PAGE_ACTION_ID,
-    "pasr_admin_users_pagination",
-    currentPage,
+  const blocks = buildAdminEphemeralBlocks(text, {
+    actionId: ADMIN_USERS_PAGE_ACTION_ID,
+    blockId: "pasr_admin_users_pagination",
+    page: currentPage,
     totalPages,
     totalCount
-  );
+  });
   return blocks ? { text, blocks } : { text };
 };
 
@@ -130,7 +129,7 @@ export const handleAdminUsersPageInteraction = async (
     handled: true,
     followUp: async () => {
       const reply = await buildUsersListReply(config, page);
-      await deliverAdminEphemeralReply(config, params, reply);
+      await deliverAdminEphemeralReply(config, { ...params, replaceOriginal: true }, reply);
     }
   };
 };

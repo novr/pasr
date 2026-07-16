@@ -136,6 +136,40 @@ describe("handleAdminUsersPageInteraction", () => {
     vi.unstubAllGlobals();
   });
 
+  it("posts section mrkdwn before pagination actions", async () => {
+    const config = createTestConfig(createMockKv());
+    for (let i = 0; i < ADMIN_EPHEMERAL_LIST_MAX + 1; i++) {
+      await upsertMemberMaster(config, {
+        targetUser: `U${String(i).padStart(4, "0")}`,
+        active: true,
+        defaultNotifyChannels: [],
+        defaultNotifyUsers: [],
+        defaultRegistrationNotify: "none"
+      });
+    }
+    const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await handleAdminUsersPageInteraction(config, {
+      actionId: ADMIN_USERS_PAGE_ACTION_ID,
+      userId: "U_ADMIN",
+      pageValue: "1",
+      responseUrl: "https://hooks.slack.com/actions/T/1/2"
+    });
+    await result.followUp?.();
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+    const [, requestInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(requestInit.body as string) as {
+      replace_original?: boolean;
+      blocks?: Array<{ type: string; text?: { type: string; text: string } }>;
+    };
+    expect(body.replace_original).toBe(true);
+    expect(body.blocks?.[0]?.type).toBe("section");
+    expect(body.blocks?.[0]?.text?.type).toBe("mrkdwn");
+    expect(body.blocks?.[1]?.type).toBe("actions");
+    vi.unstubAllGlobals();
+  });
+
   it("ignores non-admin users", async () => {
     const config = createTestConfig(createMockKv());
     const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
