@@ -5,6 +5,11 @@ export type ParsedChannelConfigCommand =
   | { kind: "list" }
   | { kind: "invalid"; message: string };
 
+export type ValidChannelConfigCommand = Extract<
+  ParsedChannelConfigCommand,
+  { kind: "list" } | { kind: "empty" }
+>;
+
 export type ParsedUsersCommand =
   | { kind: "list"; page: number }
   | { kind: "invalid"; message: string };
@@ -19,7 +24,7 @@ export type AdminCommandParse =
   | { kind: "run" }
   | { kind: "users"; page: number }
   | { kind: "absences"; scope: "today"; page: number }
-  | { kind: "channel-config"; sub: ParsedChannelConfigCommand }
+  | { kind: "channel-config"; sub: ValidChannelConfigCommand }
   | { kind: "invalid"; message: string }
   | { kind: "unknown"; action: string };
 
@@ -142,36 +147,21 @@ export const parseAdminCommandText = (text: string): AdminCommandParse => {
     case "run":
       return { kind: "run" };
     case "users": {
-      const parsed = parseUsersCommandParts(parts);
-      if (!parsed) {
-        return { kind: "invalid", message: "使い方: /pasr-admin users [ページ番号]" };
-      }
+      const parsed = parseUsersCommandParts(parts)!;
       if (parsed.kind === "invalid") {
         return { kind: "invalid", message: parsed.message };
       }
       return { kind: "users", page: parsed.page };
     }
     case "absences": {
-      const parsed = parseAbsencesCommandParts(parts);
-      if (!parsed) {
-        return {
-          kind: "invalid",
-          message: "使い方: /pasr-admin absences（本日）[ページ番号]"
-        };
-      }
+      const parsed = parseAbsencesCommandParts(parts)!;
       if (parsed.kind === "invalid") {
         return { kind: "invalid", message: parsed.message };
       }
       return { kind: "absences", scope: "today", page: parsed.page };
     }
     case "channel-config": {
-      const sub = parseChannelConfigCommandParts(parts);
-      if (!sub) {
-        return {
-          kind: "invalid",
-          message: "使い方: /pasr-admin channel-config empty on|off|default | list"
-        };
-      }
+      const sub = parseChannelConfigCommandParts(parts)!;
       if (sub.kind === "invalid") {
         return { kind: "invalid", message: sub.message };
       }

@@ -40,7 +40,7 @@ describe("handleAbsencesCommand", () => {
       notifyUsers: ["U_DM"],
       note: "通院"
     });
-    const reply = await handleAbsencesCommand(config, basePayload());
+    const reply = await handleAbsencesCommand(config, basePayload(), 1);
     const text = replyText(reply);
     expect(text).toContain("2099-06-15 JST): 1件");
     expect(text).toContain("通院");
@@ -51,14 +51,8 @@ describe("handleAbsencesCommand", () => {
 
   it("returns zero count when no absences today", async () => {
     const config = createTestConfig(createMockKv());
-    const reply = await handleAbsencesCommand(config, basePayload({ text: "absences today" }));
+    const reply = await handleAbsencesCommand(config, basePayload({ text: "absences today" }), 1);
     expect(replyText(reply)).toMatch(/本日の不在 .* JST\): 0件/);
-  });
-
-  it("rejects unknown subcommand", async () => {
-    const config = createTestConfig(createMockKv());
-    const reply = await handleAbsencesCommand(config, basePayload({ text: "absences foo" }));
-    expect(replyText(reply)).toContain("使い方");
   });
 
   it("shows pagination button instead of plain hidden count", async () => {
@@ -75,7 +69,7 @@ describe("handleAbsencesCommand", () => {
         notifyUsers: []
       });
     }
-    const reply = await handleAbsencesCommand(config, basePayload());
+    const reply = await handleAbsencesCommand(config, basePayload(), 1);
     expect(typeof reply).not.toBe("string");
     if (typeof reply === "string") return;
     expect(reply.text).toContain("ページ 1/2");
@@ -125,7 +119,7 @@ describe("handleAbsencesCommand", () => {
         note: "x".repeat(200)
       });
     }
-    const reply = await handleAbsencesCommand(config, basePayload());
+    const reply = await handleAbsencesCommand(config, basePayload(), 1);
     expect(replyText(reply).length).toBeLessThanOrEqual(ADMIN_EPHEMERAL_TEXT_MAX);
     vi.useRealTimers();
   });

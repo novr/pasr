@@ -29,6 +29,7 @@ import {
   adminCommandParseAction,
   type AdminCommandParse,
   type DeferredAdminCommandParse,
+  isDeferredAdminCommandParse,
   parseAdminCommandText
 } from "./admin-command-parse";
 import { MEMBER_MASTER_MODAL_CALLBACK_ID, openMemberMasterSettingsModal } from "./member-master-modal";
@@ -463,6 +464,17 @@ const handleAdminSlashCommandDispatch = async (
   payload: SlackCommandPayload,
   parse: AdminCommandParse
 ): Promise<SlashCommandDispatch> => {
+  if (isDeferredAdminCommandParse(parse)) {
+    return {
+      mode: "deferred",
+      ackText: "処理しています…",
+      run: async () => {
+        const result = await handleDeferredAdminCommand(config, payload, parse);
+        await deliverDeferredAdminResult(config, payload, result);
+      }
+    };
+  }
+
   switch (parse.kind) {
     case "help":
       return { mode: "text", text: buildAdminHelpText() };
@@ -470,17 +482,6 @@ const handleAdminSlashCommandDispatch = async (
       return { mode: "text", text: await buildAdminStatusText(config) };
     case "run":
       return { mode: "queue" };
-    case "users":
-    case "absences":
-    case "channel-config":
-      return {
-        mode: "deferred",
-        ackText: "処理しています…",
-        run: async () => {
-          const result = await handleDeferredAdminCommand(config, payload, parse);
-          await deliverDeferredAdminResult(config, payload, result);
-        }
-      };
     case "invalid":
       return { mode: "text", text: parse.message };
     case "unknown":

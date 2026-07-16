@@ -19,7 +19,6 @@ import {
   normalizeAdminPage,
   type AdminEphemeralReply
 } from "./admin-format";
-import { parseUsersCommand } from "./admin-command-parse";
 import type { SlackCommandPayload } from "./command";
 
 const formatUserLine = (master: MemberMasterRecord, statusLabel: string): string => {
@@ -103,21 +102,9 @@ export const buildUsersListReply = async (
 
 export const handleUsersCommand = async (
   config: AppConfig,
-  payload: SlackCommandPayload,
-  page?: number
-): Promise<AdminEphemeralReply | string> => {
-  if (page !== undefined) {
-    return buildUsersListReply(config, page);
-  }
-  const parsed = parseUsersCommand(payload.text);
-  if (!parsed) {
-    return "使い方: /pasr-admin users [ページ番号]";
-  }
-  if (parsed.kind === "invalid") {
-    return parsed.message;
-  }
-  return buildUsersListReply(config, parsed.page);
-};
+  _payload: SlackCommandPayload,
+  page: number
+): Promise<AdminEphemeralReply | string> => buildUsersListReply(config, page);
 
 export const handleAdminUsersPageInteraction = async (
   config: AppConfig,

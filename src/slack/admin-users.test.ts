@@ -52,7 +52,7 @@ describe("handleUsersCommand", () => {
       defaultNotifyUsers: [],
       defaultRegistrationNotify: "none"
     });
-    const text = replyText(await handleUsersCommand(config, basePayload()));
+    const text = replyText(await handleUsersCommand(config, basePayload(), 1));
     expect(text).toContain("active 1 / 全 2");
     expect(text).toContain("ページ 1/1");
     expect(text).toContain("<@U1>");
@@ -70,7 +70,7 @@ describe("handleUsersCommand", () => {
         defaultRegistrationNotify: "none"
       });
     }
-    const reply = await handleUsersCommand(config, basePayload());
+    const reply = await handleUsersCommand(config, basePayload(), 1);
     expect(typeof reply).not.toBe("string");
     if (typeof reply === "string") return;
     expect(reply.text).toContain("ページ 1/2");
@@ -101,7 +101,7 @@ describe("handleUsersCommand", () => {
 
   it("returns empty message when no users", async () => {
     const config = createTestConfig(createMockKv());
-    const reply = await handleUsersCommand(config, basePayload());
+    const reply = await handleUsersCommand(config, basePayload(), 1);
     expect(reply).toBe("PASR 登録ユーザーは 0 件です。");
   });
 });
@@ -163,7 +163,7 @@ describe("handleAdminUsersPageInteraction", () => {
         defaultRegistrationNotify: "both"
       });
     }
-    const text = replyText(await handleUsersCommand(config, basePayload()));
+    const text = replyText(await handleUsersCommand(config, basePayload(), 1));
     expect(text.length).toBeLessThanOrEqual(ADMIN_EPHEMERAL_TEXT_MAX);
   });
 });

@@ -21,7 +21,8 @@ describe("handleChannelConfigCommand", () => {
     const config = createTestConfig(createMockKv());
     const text = await handleChannelConfigCommand(
       config,
-      basePayload({ channelId: "D_DM", text: "channel-config empty off" })
+      basePayload({ channelId: "D_DM", text: "channel-config empty off" }),
+      { kind: "empty", value: "off" }
     );
     expect(text).toContain("チャンネル内でのみ");
   });
@@ -30,13 +31,17 @@ describe("handleChannelConfigCommand", () => {
     const config = createTestConfig(createMockKv(), {
       db: createMockD1({ includeChannelNotifySettings: false })
     });
-    const text = await handleChannelConfigCommand(config, basePayload());
+    const text = await handleChannelConfigCommand(config, basePayload(), { kind: "empty", value: "off" });
     expect(text).toContain("db: schema_missing");
   });
 
   it("upserts empty off and reports effective value", async () => {
     const config = createTestConfig(createMockKv());
-    const text = await handleChannelConfigCommand(config, basePayload({ text: "channel-config empty off" }));
+    const text = await handleChannelConfigCommand(
+      config,
+      basePayload({ text: "channel-config empty off" }),
+      { kind: "empty", value: "off" }
+    );
     expect(text).toContain("0件時通知: off");
     expect(text).toContain("channel override");
   });
@@ -46,7 +51,8 @@ describe("handleChannelConfigCommand", () => {
     await upsertChannelNotifySetting(config, "C1", false, "U_ADMIN");
     const text = await handleChannelConfigCommand(
       config,
-      basePayload({ channelId: "", text: "channel-config list" })
+      basePayload({ channelId: "", text: "channel-config list" }),
+      { kind: "list" }
     );
     expect(text).toContain("org default: on");
     expect(text).toContain("C1");
