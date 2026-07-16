@@ -1,26 +1,26 @@
 # PASR
 
-Slack に不在予定を書き、平日 JST 9:00 にまとめて知らせる。Cloudflare Workers と D1 が本体だ。
+Slack 上の不在予定を登録し、平日 JST 9:00 に日次通知する Cloudflare Workers + D1 アプリケーション。
 
-挙動の境界（何を補完しないか、いつ queue に載せないか）は [`AGENTS.md`](AGENTS.md) を見る。ここは初回セットアップから deploy、障害時の手戻りまでの順序だけを書く。
+挙動の不変条件は [`AGENTS.md`](AGENTS.md) を参照。本文はセットアップ・開発・デプロイ・運用の手順のみを記載する。
 
 ## 初回セットアップ
 
-clone しただけでは動かない。`pasr-db` と `PASR_STATE` の ID は環境ごとに違う。Slack は manifest を貼っても **Reinstall** するまでイベントが届かないことがある。
+D1 / KV の ID は環境ごとに異なる。Slack App は manifest 反映後に **Reinstall to Workspace** が必要。
 
 1. `npm install`
-2. 初回のみ `npx wrangler d1 create pasr-db` と `npx wrangler kv namespace create PASR_STATE` — 返ってきた ID を [`wrangler.jsonc`](wrangler.jsonc) に書く
-3. `npm run db:migrate:local`（本番は `npx wrangler d1 migrations apply pasr-db --remote`）
-4. Secrets を入れる: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `RUN_ENDPOINT_TOKEN`（`npx wrangler secret put`）
-5. [`slack-app-manifest.json.template`](slack-app-manifest.json.template) を Slack App Manifest に貼る。`REPLACE_WITH_WORKER_URL` を Worker の URL に直し、**Reinstall**
-6. Dashboard Variables に最低 `SLACK_ADMIN_USER_IDS`。ローカルは [`cp .dev.vars.example .dev.vars`](.dev.vars.example)
-7. 初回 deploy の前に Queue: `npx wrangler queues create pasr-admin-tasks`
+2. 初回のみ `npx wrangler d1 create pasr-db` および `npx wrangler kv namespace create PASR_STATE` — 返却 ID を [`wrangler.jsonc`](wrangler.jsonc) に設定
+3. `npm run db:migrate:local`（本番: `npx wrangler d1 migrations apply pasr-db --remote`）
+4. Secrets: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `RUN_ENDPOINT_TOKEN`（`npx wrangler secret put`）
+5. [`slack-app-manifest.json.template`](slack-app-manifest.json.template) を Slack App Manifest に反映。`REPLACE_WITH_WORKER_URL` を Worker URL に置換し **Reinstall**
+6. Dashboard Variables に `SLACK_ADMIN_USER_IDS`（必須）を設定。ローカルは [`cp .dev.vars.example .dev.vars`](.dev.vars.example)
+7. 初回 deploy 前: `npx wrangler queues create pasr-admin-tasks`
 
-`wrangler.jsonc` の `vars` は `TZ` だけ。それ以外の平文設定は Dashboard か `.dev.vars`。`keep_vars: true` なので deploy しても Dashboard の値は残る。
+`wrangler.jsonc` の `vars` は `TZ` のみ。その他の平文設定は Dashboard または `.dev.vars`。`keep_vars: true` により deploy 時も Dashboard Variables を保持する。
 
 ## 開発
 
-Node 24（`mise.toml` と CI が同じ）。
+Node.js 24（`mise.toml` / CI と同一）。
 
 | コマンド | 用途 |
 |----------|------|
@@ -28,27 +28,25 @@ Node 24（`mise.toml` と CI が同じ）。
 | `npm test` | 単体テスト |
 | `npm run dev` | ローカル Worker（`--persist-to=./.wrangler/state`） |
 
-実装が一段落したら `npm run check && npm test` を通す。PR の前でも、deploy の前でも。
+実装完了・PR 前・deploy 前に `npm run check && npm test` を実行する。
 
-mention AI の結合テストは CI に入っていない。別ターミナルで `npm run dev` を立て、`.dev.vars` に `DEBUG_ENDPOINTS_ENABLED=true` などを入れたうえで `npm run test:integration` を実行する。
+mention AI 結合テストは CI 対象外。`npm run dev` 起動中に `.dev.vars`（`DEBUG_ENDPOINTS_ENABLED=true` 等）を設定し、`npm run test:integration` を実行する。
 
 ## デプロイ
 
-本番へ上げる流れは次のとおり。
-
 ```bash
 npm run check && npm test
-npx wrangler d1 migrations apply pasr-db --remote   # schema を変えたとき
+npx wrangler d1 migrations apply pasr-db --remote   # schema 変更時
 npm run deploy
 curl https://<worker>/health
 ```
 
-deploy のあと、Cloudflare Dashboard の **Bindings** が `wrangler.jsonc` と食い違っていないか確認する。ここがずれると本番だけ D1 が別物を指す。
+deploy 後、Cloudflare Dashboard の **Bindings** が `wrangler.jsonc` と一致することを確認する。
 
-ローカルで叩くなら `npm run dev` のあと、`/health`、Bearer 付き `POST /run`、`GET /__scheduled` で足りる。
+ローカル確認: `npm run dev` 起動後、`GET /health`、Bearer 付き `POST /run`、`GET /__scheduled`。
 
 ## 運用
 
-ログは JSON。`event=daily_notify_done` で `run_id` と `errors` を追う。
+ログは JSON 形式。`event=daily_notify_done` の `run_id` / `errors` を確認する。
 
-障害で当日分をやり直すときは、原因を直してから Bearer 付き `POST /run` を叩く。終わったら Slack で同じ CH に投稿が二重になっていないか見る。日次通知は `chat.update` で上書きする設計なので、ts がずれると古い本文が残る。
+障害時は原因を修正のうえ Bearer 付き `POST /run` で当日分を再実行する。再実行後、Slack 上の CH 通知が `chat.update` により重複していないことを確認する（KV の ts 不整合時は旧メッセージが残る）。
