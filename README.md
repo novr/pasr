@@ -20,7 +20,7 @@ Slack から不在予定を登録し、平日 JST 9:00 に日次通知する（C
 
 Node 24。`npm run check` / `npm test` / `npm run dev`（`--persist-to=./.wrangler/state`）。
 
-deploy 前: `npm run check && npm test`
+実装完了・PR 前・deploy 前: `npm run check && npm test`
 
 mention AI 結合（CI 外）: dev 起動 + `.dev.vars`（`DEBUG_ENDPOINTS_ENABLED=true` 等）→ `npm run test:integration`
 

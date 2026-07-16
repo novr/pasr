@@ -59,6 +59,6 @@
 
 ## テスト
 
-- deploy 前: `npm run check && npm test`
+- 実装完了・PR 前・deploy 前: `npm run check && npm test`
 - domain / queue / dedupe / db 変更時は `npm test`。npm scripts 変更時は README も更新
 - mention AI 結合は `npm run test:integration`（CI 外）。Queue retry は一時障害のみ
