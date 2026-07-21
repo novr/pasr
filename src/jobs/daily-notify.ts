@@ -1,5 +1,6 @@
 import type { AppConfig } from "../config";
 import { filterToday, groupByChannel, type AbsenceRecord, type SkipReason } from "../domain/absence";
+import { getJstDateParts, isWeekdayInJst } from "../domain/jst-date";
 import { formatAttendanceNoticeLine } from "../domain/absence-registration";
 import {
   deleteAbsenceById,
@@ -52,31 +53,6 @@ const zeroedReasons = (): Record<SkipReason, number> => ({
   invalid_date_range: 0,
   inactive_user_master: 0
 });
-
-const toJstDate = (): { day: string; weekday: number } => {
-  const now = new Date();
-  const day = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Tokyo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).format(now);
-
-  const weekDayName = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Tokyo",
-    weekday: "short"
-  }).format(now);
-  const weekdayMap: Record<string, number> = {
-    Sun: 0,
-    Mon: 1,
-    Tue: 2,
-    Wed: 3,
-    Thu: 4,
-    Fri: 5,
-    Sat: 6
-  };
-  return { day, weekday: weekdayMap[weekDayName] ?? 0 };
-};
 
 const buildMessageLine = (record: AbsenceRecord): string =>
   formatAttendanceNoticeLine(record.targetUser, record.note);
@@ -320,12 +296,8 @@ export const runDailyNotify = async (
     return result;
   }
 
-  const { day } = toJstDate();
-  const channelSettingsMap = await loadChannelNotifySettingsMap(config, { runId: context.runId });
-  const notifyContext: ChannelNotifyContext = {
-    settingsMap: channelSettingsMap,
-    notifyEmptyDefault: config.notifyEmptyDefault
-  };
+  const { day } = getJstDateParts();
+  const weekendScheduledOpsOnly = context.trigger === "scheduled" && !isWeekdayInJst();
   const memberMasterMap = await loadMemberMasterActiveMap(config);
   const records = await listAllAbsences(config);
   result.processed = records.length;
@@ -348,6 +320,9 @@ export const runDailyNotify = async (
 
     let master = memberMasterMap.get(record.targetUser);
     if (!master) {
+      if (weekendScheduledOpsOnly) {
+        continue;
+      }
       const created = await ensureMemberMasterActive(config, record.targetUser);
       master = { targetUser: created.targetUser, active: created.active };
       memberMasterMap.set(created.targetUser, master);
@@ -364,34 +339,65 @@ export const runDailyNotify = async (
     validRecords.push(record);
   }
 
-  const todays = filterToday(validRecords, day);
-  result.todayAbsenceCount = todays.length;
-  const todaysForDm = filterToday(dmCandidateRecords, day);
-  const grouped =
-    todays.length > 0
-      ? groupByChannel(todays)
-      : new Map(
-          [
-            ...new Set([
-              ...validRecords.flatMap((record) => record.notifyChannels),
-              ...channelSettingsMap.keys()
-            ])
-          ].map((channel) => [channel, [] as AbsenceRecord[]])
-        );
-  await sendChannelNotifications(config, context, result, day, grouped, notifyContext);
+  if (weekendScheduledOpsOnly) {
+    result.todayAbsenceCount = filterToday(
+      records.filter(
+        (record) =>
+          record.targetUser &&
+          record.startDate &&
+          record.startDate <= record.endDate
+      ),
+      day
+    ).length;
+  } else {
+    const todays = filterToday(validRecords, day);
+    result.todayAbsenceCount = todays.length;
+  }
 
-  const groupedNotifyUsers = groupByNotifyUser(todaysForDm);
-  await sendDirectMessageNotifications(config, context, result, day, groupedNotifyUsers);
+  let statusSyncResult = {
+    active: false,
+    statusSet: 0,
+    statusSkipped: 0,
+    statusErrors: 0
+  };
+  if (weekendScheduledOpsOnly) {
+    console.log(
+      JSON.stringify({
+        level: "info",
+        event: "skip_weekend_scheduled_notify",
+        run_id: context.runId,
+        trigger: context.trigger
+      })
+    );
+  } else {
+    const todays = filterToday(validRecords, day);
+    const todaysForDm = filterToday(dmCandidateRecords, day);
+    const channelSettingsMap = await loadChannelNotifySettingsMap(config, { runId: context.runId });
+    const notifyContext: ChannelNotifyContext = {
+      settingsMap: channelSettingsMap,
+      notifyEmptyDefault: config.notifyEmptyDefault
+    };
+    const grouped =
+      todays.length > 0
+        ? groupByChannel(todays)
+        : new Map(
+            [
+              ...new Set([
+                ...validRecords.flatMap((record) => record.notifyChannels),
+                ...channelSettingsMap.keys()
+              ])
+            ].map((channel) => [channel, [] as AbsenceRecord[]])
+          );
+    await sendChannelNotifications(config, context, result, day, grouped, notifyContext);
 
-  const statusSyncResult = await syncTodayAbsenceStatus(
-    config,
-    context,
-    dmCandidateRecords,
-    day
-  );
-  result.errors += statusSyncResult.statusErrors;
+    const groupedNotifyUsers = groupByNotifyUser(todaysForDm);
+    await sendDirectMessageNotifications(config, context, result, day, groupedNotifyUsers);
 
-  await deleteEndedAbsences(config, context, result, day);
+    statusSyncResult = await syncTodayAbsenceStatus(config, context, dmCandidateRecords, day);
+    result.errors += statusSyncResult.statusErrors;
+
+    await deleteEndedAbsences(config, context, result, day);
+  }
 
   const opsResult = await postOpsReport(config, {
     runId: result.runId,
@@ -422,6 +428,7 @@ export const runDailyNotify = async (
       event: "daily_notify_done",
       run_id: context.runId,
       trigger: context.trigger,
+      ...(weekendScheduledOpsOnly ? { weekend_ops_only: true } : {}),
       processed: result.processed,
       sent: result.sent,
       sent_channels: result.sentChannels,
@@ -434,19 +441,21 @@ export const runDailyNotify = async (
     })
   );
   try {
-    await writeLastRunSummary(config, {
-      runId: result.runId,
-      trigger: result.trigger,
-      processed: result.processed,
-      sent: result.sent,
-      sentChannels: result.sentChannels,
-      sentDms: result.sentDms,
-      skipped: result.skipped,
-      errors: result.errors,
-      deleted: result.deleted,
-      executedAt: new Date().toISOString(),
-      dbStatus: result.dbStatus
-    });
+    if (!weekendScheduledOpsOnly) {
+      await writeLastRunSummary(config, {
+        runId: result.runId,
+        trigger: result.trigger,
+        processed: result.processed,
+        sent: result.sent,
+        sentChannels: result.sentChannels,
+        sentDms: result.sentDms,
+        skipped: result.skipped,
+        errors: result.errors,
+        deleted: result.deleted,
+        executedAt: new Date().toISOString(),
+        dbStatus: result.dbStatus
+      });
+    }
   } catch (error) {
     console.warn(
       JSON.stringify({

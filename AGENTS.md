@@ -10,7 +10,7 @@
 ## 時刻・失敗
 
 - 判定は常に JST。失敗はレコード単位で隔離し全体は継続
-- `scheduled` は JST 平日のみ。週末スキップの強制実行フラグは導入しない
+- `scheduled` の CH/DM 通知・Status 同期・終了 absence 削除は JST 平日のみ。ops レポートは土日も投稿。週末スキップの強制実行フラグは導入しない
 
 ## データ補完しない（why: レコードが届け先の意図の正本）
 
@@ -33,9 +33,9 @@
 ## 日次・ops・Status
 
 - CH 0件時 off にしても過去の「予定なし」投稿は削除・更新しない（Phase 1）
-- ops レポートは `trigger === "scheduled"` のみ。`sent` は CH+DM 合計。内訳は `sent_channels` / `sent_dms`
-- Status 同期: scheduled daily のみ。登録直後同期・当日キャンセル時クリアはスコープ外
-- `end_date < today` の absence は daily 後に D1 DELETE（証票用途なし）
+- ops レポートは `trigger === "scheduled"` のみ（土日含む）。`sent` は CH+DM 合計。内訳は `sent_channels` / `sent_dms`
+- Status 同期: scheduled daily の JST 平日のみ。登録直後同期・当日キャンセル時クリアはスコープ外
+- `end_date < today` の absence は平日 scheduled daily 後に D1 DELETE（証票用途なし）
 
 ## Slack
 
