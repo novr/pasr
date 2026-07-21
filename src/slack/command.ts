@@ -5,6 +5,7 @@ import {
 } from "../domain/absence-registration";
 import { isTransientError } from "../errors/transient";
 import { runDailyNotify } from "../jobs/daily-notify";
+import { formatRunSentForAdmin } from "../domain/run-sent-metrics";
 import { isValidJstDateString, getJstDateParts } from "../domain/jst-date";
 import { checkDbSchema, checkChannelNotifySettingsSchema, checkSlackUserOAuthSchema } from "../db/schema-check";
 import { upsertMemberMaster } from "../db/member-master-repository";
@@ -392,8 +393,6 @@ const handleSelfImmediateText = async (
   }
 };
 
-const formatRunSent = (sent: number): string => `sent=${sent} (CH+DM)`;
-
 const buildAdminStatusText = async (config: AppConfig): Promise<string> => {
   const summary = await readLastRunSummary(config);
   const dbSchema = await checkDbSchema(config);
@@ -404,7 +403,7 @@ const buildAdminStatusText = async (config: AppConfig): Promise<string> => {
   const oauthLine = `slack_user_oauth: ${oauthSchema === "ok" ? "ok" : "schema_missing"}`;
   return summary
     ? [
-        `last run: processed=${summary.processed} ${formatRunSent(summary.sent)} skipped=${summary.skipped} deleted=${summary.deleted ?? 0} errors=${summary.errors}`,
+        `last run: processed=${summary.processed} ${formatRunSentForAdmin(summary)} skipped=${summary.skipped} deleted=${summary.deleted ?? 0} errors=${summary.errors}`,
         `run_id: ${summary.runId}`,
         dbLine,
         channelNotifyLine,
@@ -536,6 +535,8 @@ export const runSlackCommandAsync = async (
         run_id: runId,
         processed: result.processed,
         sent: result.sent,
+        sent_channels: result.sentChannels,
+        sent_dms: result.sentDms,
         skipped: result.skipped,
         deleted: result.deleted,
         errors: result.errors
@@ -544,7 +545,7 @@ export const runSlackCommandAsync = async (
 
     const status = result.errors > 0 ? "一部エラーあり" : "完了";
     const resultText = [
-      `run ${status}: processed=${result.processed} ${formatRunSent(result.sent)} skipped=${result.skipped} deleted=${result.deleted} errors=${result.errors}`,
+      `run ${status}: processed=${result.processed} ${formatRunSentForAdmin(result)} skipped=${result.skipped} deleted=${result.deleted} errors=${result.errors}`,
       `run_id: ${runId}`
     ].join("\n");
     await notifySlashCommandEphemeral(config, payload, resultText);

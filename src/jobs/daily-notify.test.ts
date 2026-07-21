@@ -247,6 +247,8 @@ describe("runDailyNotify", () => {
     const result = await runDailyNotify(config, { runId: "run_dm_sent", trigger: "manual" });
 
     expect(result.sent).toBe(2);
+    expect(result.sentChannels).toBe(1);
+    expect(result.sentDms).toBe(1);
     expect(openDirectMessageMock).toHaveBeenCalledWith(expect.anything(), "U2");
   });
 

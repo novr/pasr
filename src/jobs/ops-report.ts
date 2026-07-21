@@ -1,6 +1,7 @@
 import type { AppConfig } from "../config";
 import { countMemberMasterActive, countMemberMasterTotal } from "../db/stats-repository";
 import type { SkipReason } from "../domain/absence";
+import { formatRunSentForOps, type RunSentCounts } from "../domain/run-sent-metrics";
 import { slackApi } from "../slack/api";
 
 export type OpsReportInput = {
@@ -10,6 +11,8 @@ export type OpsReportInput = {
   todayAbsenceCount: number;
   processed: number;
   sent: number;
+  sentChannels?: number;
+  sentDms?: number;
   skipped: number;
   errors: number;
   deleted: number;
@@ -31,11 +34,16 @@ export const buildOpsReportText = (
   memberTotal: number,
   memberActive: number
 ): string => {
+  const sentLine = formatRunSentForOps({
+    sent: input.sent,
+    sentChannels: input.sentChannels,
+    sentDms: input.sentDms
+  } satisfies RunSentCounts);
   const lines = [
     `PASR 日次レポート（${input.day} JST）`,
     `• 本日の不在: ${input.todayAbsenceCount}件`,
     `• 利用者: active ${memberActive} / 全 ${memberTotal}`,
-    `• run: sent=${input.sent} skipped=${input.skipped} errors=${input.errors} deleted=${input.deleted}`,
+    `• run: ${sentLine} skipped=${input.skipped} errors=${input.errors} deleted=${input.deleted}`,
     `• skip: ${formatSkipReasons(input.skipReasons)}`
   ];
   if (
