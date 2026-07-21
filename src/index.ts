@@ -36,14 +36,6 @@ const text = (body: string, status = 200): Response =>
     headers: { "content-type": "text/plain; charset=utf-8" }
   });
 
-const isWeekdayInJst = (): boolean => {
-  const weekDayName = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Tokyo",
-    weekday: "short"
-  }).format(new Date());
-  return weekDayName !== "Sat" && weekDayName !== "Sun";
-};
-
 const newRunId = (): string => crypto.randomUUID();
 
 type SlackEventEnvelope = {
@@ -382,12 +374,6 @@ export default {
   async scheduled(_: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const config = getConfig(env);
     const runId = newRunId();
-    if (!isWeekdayInJst()) {
-      console.log(
-        JSON.stringify({ level: "info", event: "skip_weekend_scheduled", run_id: runId, trigger: "scheduled" })
-      );
-      return;
-    }
     ctx.waitUntil(runDailyNotify(config, { runId, trigger: "scheduled" }));
   },
 

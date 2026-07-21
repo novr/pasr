@@ -34,6 +34,11 @@ export const getJstWeekday = (now = new Date()): number => {
   return weekdayMap[weekDayName] ?? 0;
 };
 
+export const isWeekdayInJst = (now = new Date()): boolean => {
+  const weekday = getJstWeekday(now);
+  return weekday !== 0 && weekday !== 6;
+};
+
 const EN_CA_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export const isValidJstDateString = (value: string): boolean => {

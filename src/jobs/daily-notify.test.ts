@@ -4,6 +4,7 @@ import { createMockD1 } from "../test/mock-d1";
 import { createAbsence } from "../db/absence-repository";
 import { upsertMemberMaster } from "../db/member-master-repository";
 import { readLastRunSummary } from "../state/kv";
+import * as jstDate from "../domain/jst-date";
 import { runDailyNotify } from "./daily-notify";
 
 const { postChannelMessageMock, updateChannelMessageMock, openDirectMessageMock } = vi.hoisted(() => ({
@@ -324,5 +325,36 @@ describe("runDailyNotify", () => {
     });
     await runDailyNotify(configScheduled, { runId: "run_scheduled", trigger: "scheduled" });
     expect(postChannelMessageMock).toHaveBeenCalledWith(expect.anything(), "C_OPS", expect.anything());
+  });
+
+  it("posts ops report on weekend scheduled without notifications or last summary update", async () => {
+    const weekdaySpy = vi.spyOn(jstDate, "isWeekdayInJst").mockReturnValue(false);
+    const kv = createMockKv();
+    const config = createTestConfig(kv, { opsChannelId: "C_OPS" });
+    await upsertMemberMaster(config, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-06-24",
+      endDate: "2026-06-24",
+      notifyChannels: ["C1"],
+      notifyUsers: ["U2"],
+      absenceType: "absence"
+    });
+
+    const result = await runDailyNotify(config, { runId: "run_weekend_ops", trigger: "scheduled" });
+
+    expect(result.sent).toBe(0);
+    expect(postChannelMessageMock).toHaveBeenCalledTimes(1);
+    expect(postChannelMessageMock).toHaveBeenCalledWith(expect.anything(), "C_OPS", expect.anything());
+    expect(postChannelMessageMock).not.toHaveBeenCalledWith(expect.anything(), "C1", expect.anything());
+    expect(openDirectMessageMock).not.toHaveBeenCalled();
+    expect(await readLastRunSummary(config)).toBeUndefined();
+    weekdaySpy.mockRestore();
   });
 });

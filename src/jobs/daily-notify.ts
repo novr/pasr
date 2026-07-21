@@ -1,5 +1,6 @@
 import type { AppConfig } from "../config";
 import { filterToday, groupByChannel, type AbsenceRecord, type SkipReason } from "../domain/absence";
+import { getJstDateParts, isWeekdayInJst } from "../domain/jst-date";
 import { formatAttendanceNoticeLine } from "../domain/absence-registration";
 import {
   deleteAbsenceById,
@@ -52,31 +53,6 @@ const zeroedReasons = (): Record<SkipReason, number> => ({
   invalid_date_range: 0,
   inactive_user_master: 0
 });
-
-const toJstDate = (): { day: string; weekday: number } => {
-  const now = new Date();
-  const day = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Tokyo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).format(now);
-
-  const weekDayName = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Tokyo",
-    weekday: "short"
-  }).format(now);
-  const weekdayMap: Record<string, number> = {
-    Sun: 0,
-    Mon: 1,
-    Tue: 2,
-    Wed: 3,
-    Thu: 4,
-    Fri: 5,
-    Sat: 6
-  };
-  return { day, weekday: weekdayMap[weekDayName] ?? 0 };
-};
 
 const buildMessageLine = (record: AbsenceRecord): string =>
   formatAttendanceNoticeLine(record.targetUser, record.note);
@@ -320,7 +296,8 @@ export const runDailyNotify = async (
     return result;
   }
 
-  const { day } = toJstDate();
+  const { day } = getJstDateParts();
+  const weekendScheduledOpsOnly = context.trigger === "scheduled" && !isWeekdayInJst();
   const channelSettingsMap = await loadChannelNotifySettingsMap(config, { runId: context.runId });
   const notifyContext: ChannelNotifyContext = {
     settingsMap: channelSettingsMap,
@@ -378,20 +355,32 @@ export const runDailyNotify = async (
             ])
           ].map((channel) => [channel, [] as AbsenceRecord[]])
         );
-  await sendChannelNotifications(config, context, result, day, grouped, notifyContext);
+  let statusSyncResult = {
+    active: false,
+    statusSet: 0,
+    statusSkipped: 0,
+    statusErrors: 0
+  };
+  if (weekendScheduledOpsOnly) {
+    console.log(
+      JSON.stringify({
+        level: "info",
+        event: "skip_weekend_scheduled_notify",
+        run_id: context.runId,
+        trigger: context.trigger
+      })
+    );
+  } else {
+    await sendChannelNotifications(config, context, result, day, grouped, notifyContext);
 
-  const groupedNotifyUsers = groupByNotifyUser(todaysForDm);
-  await sendDirectMessageNotifications(config, context, result, day, groupedNotifyUsers);
+    const groupedNotifyUsers = groupByNotifyUser(todaysForDm);
+    await sendDirectMessageNotifications(config, context, result, day, groupedNotifyUsers);
 
-  const statusSyncResult = await syncTodayAbsenceStatus(
-    config,
-    context,
-    dmCandidateRecords,
-    day
-  );
-  result.errors += statusSyncResult.statusErrors;
+    statusSyncResult = await syncTodayAbsenceStatus(config, context, dmCandidateRecords, day);
+    result.errors += statusSyncResult.statusErrors;
 
-  await deleteEndedAbsences(config, context, result, day);
+    await deleteEndedAbsences(config, context, result, day);
+  }
 
   const opsResult = await postOpsReport(config, {
     runId: result.runId,
@@ -434,19 +423,21 @@ export const runDailyNotify = async (
     })
   );
   try {
-    await writeLastRunSummary(config, {
-      runId: result.runId,
-      trigger: result.trigger,
-      processed: result.processed,
-      sent: result.sent,
-      sentChannels: result.sentChannels,
-      sentDms: result.sentDms,
-      skipped: result.skipped,
-      errors: result.errors,
-      deleted: result.deleted,
-      executedAt: new Date().toISOString(),
-      dbStatus: result.dbStatus
-    });
+    if (!weekendScheduledOpsOnly) {
+      await writeLastRunSummary(config, {
+        runId: result.runId,
+        trigger: result.trigger,
+        processed: result.processed,
+        sent: result.sent,
+        sentChannels: result.sentChannels,
+        sentDms: result.sentDms,
+        skipped: result.skipped,
+        errors: result.errors,
+        deleted: result.deleted,
+        executedAt: new Date().toISOString(),
+        dbStatus: result.dbStatus
+      });
+    }
   } catch (error) {
     console.warn(
       JSON.stringify({
