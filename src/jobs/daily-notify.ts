@@ -25,6 +25,8 @@ type DailyResult = {
   trigger: "manual" | "scheduled";
   processed: number;
   sent: number;
+  sentChannels: number;
+  sentDms: number;
   skipped: number;
   errors: number;
   deleted: number;
@@ -158,6 +160,7 @@ const sendChannelNotifications = async (
         if (!posted.ts) throw new Error("chat.postMessage response missing ts");
         await writePostedMessageTs(config, day, channel, posted.ts);
       }
+      result.sentChannels += 1;
       result.sent += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -166,6 +169,7 @@ const sendChannelNotifications = async (
           const posted = await slackApi.postChannelMessage(config, channel, text);
           if (!posted.ts) throw new Error("chat.postMessage response missing ts");
           await writePostedMessageTs(config, day, channel, posted.ts);
+          result.sentChannels += 1;
           result.sent += 1;
           continue;
         } catch (fallbackError) {
@@ -227,6 +231,7 @@ const sendDirectMessageNotifications = async (
         if (!posted.ts) throw new Error("chat.postMessage response missing ts");
         await writePostedDirectMessageTs(config, day, notifyUser, posted.ts);
       }
+      result.sentDms += 1;
       result.sent += 1;
       console.log(
         JSON.stringify({
@@ -299,6 +304,8 @@ export const runDailyNotify = async (
     trigger: context.trigger,
     processed: 0,
     sent: 0,
+    sentChannels: 0,
+    sentDms: 0,
     skipped: 0,
     errors: 0,
     deleted: 0,
@@ -393,6 +400,8 @@ export const runDailyNotify = async (
     todayAbsenceCount: result.todayAbsenceCount,
     processed: result.processed,
     sent: result.sent,
+    sentChannels: result.sentChannels,
+    sentDms: result.sentDms,
     skipped: result.skipped,
     errors: result.errors,
     deleted: result.deleted,
@@ -415,6 +424,8 @@ export const runDailyNotify = async (
       trigger: context.trigger,
       processed: result.processed,
       sent: result.sent,
+      sentChannels: result.sentChannels,
+      sentDms: result.sentDms,
       skipped: result.skipped,
       errors: result.errors,
       deleted: result.deleted,
@@ -428,6 +439,8 @@ export const runDailyNotify = async (
       trigger: result.trigger,
       processed: result.processed,
       sent: result.sent,
+      sentChannels: result.sentChannels,
+      sentDms: result.sentDms,
       skipped: result.skipped,
       errors: result.errors,
       deleted: result.deleted,

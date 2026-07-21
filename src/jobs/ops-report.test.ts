@@ -22,6 +22,8 @@ describe("buildOpsReportText", () => {
         todayAbsenceCount: 3,
         processed: 10,
         sent: 4,
+        sentChannels: 3,
+        sentDms: 1,
         skipped: 1,
         errors: 0,
         deleted: 2,
@@ -38,6 +40,7 @@ describe("buildOpsReportText", () => {
     );
     expect(text).toContain("本日の不在: 3件");
     expect(text).toContain("active 12 / 全 14");
+    expect(text).toContain("sent_channels=3 sent_dms=1 sent=4");
     expect(text).toContain("missing_notify_channels=1");
   });
 

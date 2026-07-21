@@ -33,7 +33,7 @@
 ## 日次・ops・Status
 
 - CH 0件時 off にしても過去の「予定なし」投稿は削除・更新しない（Phase 1）
-- ops レポートは `trigger === "scheduled"` のみ。`sent` は CH+DM 合計
+- ops レポートは `trigger === "scheduled"` のみ。`sent` は CH+DM 合計。内訳は `sent_channels` / `sent_dms`
 - Status 同期: scheduled daily のみ。登録直後同期・当日キャンセル時クリアはスコープ外
 - `end_date < today` の absence は daily 後に D1 DELETE（証票用途なし）
 
@@ -63,7 +63,7 @@
 ## セキュリティ・実装
 
 - Secret は Cloudflare のみ。`/run` は Bearer（timing-safe）
-- 実行ログに `run_id`, `processed`, `sent`, `skipped`, `deleted`, `errors` 必須
+- 実行ログに `run_id`, `processed`, `sent`, `sent_channels`, `sent_dms`, `skipped`, `deleted`, `errors` 必須
 - request スコープのグローバル保持と未管理 Promise 禁止
 - binding / `Env` 変更時は `npm run types`（`worker-configuration.d.ts` 手書き禁止）
 

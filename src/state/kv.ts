@@ -49,6 +49,8 @@ export type LastRunSummary = {
   trigger: "manual" | "scheduled";
   processed: number;
   sent: number;
+  sentChannels?: number;
+  sentDms?: number;
   skipped: number;
   errors: number;
   deleted?: number;
