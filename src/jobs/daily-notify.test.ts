@@ -346,15 +346,51 @@ describe("runDailyNotify", () => {
       notifyUsers: ["U2"],
       absenceType: "absence"
     });
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-06-20",
+      endDate: "2026-06-23",
+      notifyChannels: ["C1"],
+      notifyUsers: [],
+      absenceType: "absence"
+    });
 
     const result = await runDailyNotify(config, { runId: "run_weekend_ops", trigger: "scheduled" });
 
     expect(result.sent).toBe(0);
+    expect(result.deleted).toBe(0);
     expect(postChannelMessageMock).toHaveBeenCalledTimes(1);
     expect(postChannelMessageMock).toHaveBeenCalledWith(expect.anything(), "C_OPS", expect.anything());
     expect(postChannelMessageMock).not.toHaveBeenCalledWith(expect.anything(), "C1", expect.anything());
     expect(openDirectMessageMock).not.toHaveBeenCalled();
     expect(await readLastRunSummary(config)).toBeUndefined();
+    weekdaySpy.mockRestore();
+  });
+
+  it("still notifies on weekend when trigger is manual", async () => {
+    const weekdaySpy = vi.spyOn(jstDate, "isWeekdayInJst").mockReturnValue(false);
+    const kv = createMockKv();
+    const config = createTestConfig(kv);
+    await upsertMemberMaster(config, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-06-24",
+      endDate: "2026-06-24",
+      notifyChannels: ["C1"],
+      notifyUsers: [],
+      absenceType: "absence"
+    });
+
+    const result = await runDailyNotify(config, { runId: "run_weekend_manual", trigger: "manual" });
+
+    expect(result.sent).toBe(1);
+    expect(postChannelMessageMock).toHaveBeenCalledWith(expect.anything(), "C1", expect.anything());
     weekdaySpy.mockRestore();
   });
 });
