@@ -50,6 +50,20 @@ export const formatAppHomeSettingsSummary = (master?: MemberMasterRecord): strin
   return lines.join("\n");
 };
 
+export const formatAppHomeStatusPrefsSummary = (params: {
+  master?: MemberMasterRecord;
+  orgDefaultText: string;
+  orgDefaultEmoji: string;
+}): string => {
+  const textLabel = params.master?.statusDefaultText
+    ? `\`${params.master.statusDefaultText}\``
+    : `組織既定（\`${params.orgDefaultText}\`）`;
+  const emojiLabel = params.master?.statusEmoji
+    ? `\`${params.master.statusEmoji}\``
+    : `組織既定（\`${params.orgDefaultEmoji}\`）`;
+  return ["*Status 設定*", `• 文言: ${textLabel}`, `• 絵文字: ${emojiLabel}`].join("\n");
+};
+
 const buildAppHomeActionBlock = (): Record<string, unknown> => ({
   type: "actions",
   block_id: "pasr_home_actions",
@@ -113,6 +127,21 @@ export const buildAppHomeBlocks = (data: AppHomeData): Array<Record<string, unkn
       type: "section",
       text: { type: "mrkdwn", text: formatAppHomeSettingsSummary(data.master) }
     },
+    ...(data.statusPrefsEnabled
+      ? [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: formatAppHomeStatusPrefsSummary({
+                master: data.master,
+                orgDefaultText: data.orgStatusDefaultText,
+                orgDefaultEmoji: data.orgStatusDefaultEmoji
+              })
+            }
+          }
+        ]
+      : []),
     ...(data.statusOAuth
       ? [
           { type: "divider" },

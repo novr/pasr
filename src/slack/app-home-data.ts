@@ -8,7 +8,7 @@ import {
 } from "../db/member-master-repository";
 
 import { isStatusOAuthEnabled } from "../config";
-import { checkSlackUserOAuthSchema } from "../db/schema-check";
+import { checkMemberMasterStatusPrefsSchema, checkSlackUserOAuthSchema } from "../db/schema-check";
 import { hasSlackUserOAuth } from "../db/slack-user-oauth-repository";
 import { issueOAuthStartUrlForUser } from "./oauth";
 
@@ -25,6 +25,9 @@ export type AppHomeData = {
   master?: MemberMasterRecord;
   absences: AbsenceRecord[];
   hasMoreAbsences: boolean;
+  statusPrefsEnabled: boolean;
+  orgStatusDefaultText: string;
+  orgStatusDefaultEmoji: string;
   statusOAuth?: AppHomeStatusOAuth;
 };
 
@@ -50,16 +53,20 @@ export const loadAppHomeData = async (
   publicBaseUrl = ""
 ): Promise<AppHomeData> => {
   const { day: todayJst } = getJstDateParts();
-  const [master, absences, statusOAuth] = await Promise.all([
+  const [master, absences, statusOAuth, statusPrefsEnabled] = await Promise.all([
     getMemberMaster(config, userId),
     listAbsencesByUserFuture(config, userId, todayJst, { limit: APP_HOME_ABSENCE_FETCH_LIMIT }),
-    loadAppHomeStatusOAuth(config, userId, publicBaseUrl)
+    loadAppHomeStatusOAuth(config, userId, publicBaseUrl),
+    checkMemberMasterStatusPrefsSchema(config).then((result) => result === "ok")
   ]);
   return {
     todayJst,
     master,
     absences,
     hasMoreAbsences: absences.length > APP_HOME_ABSENCE_PREVIEW_MAX,
+    statusPrefsEnabled,
+    orgStatusDefaultText: config.statusDefaultText,
+    orgStatusDefaultEmoji: config.statusEmoji,
     statusOAuth
   };
 };
