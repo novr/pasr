@@ -49,7 +49,7 @@
 - `app_mention`: チャンネル直下のみ。AI は提案のみ、確定は確認 UI 必須。通知先は master 既定（AI 対象外）。confirm commit の `channelId` は interaction と payload の両方を照合し、commit には interaction 側を使用
 - high 信頼度 infer で日付完結時は AI スキップ。ただし `startDate`/`endDate` が `todayJst` より前ならスキップしない
 - Bot DM: 本文付きメンションと同フロー。応答は ephemeral 不可（会話に残る）
-- App Home: 削除・編集成功時のみ refresh。登録・設定保存後は refresh しない
+- App Home: 削除・編集・設定保存成功時に refresh。登録成功後は refresh しない
 - Status OAuth: User Token は D1 暗号化。ログ・レスポンスに出さない。鍵変更後は全員再連携
 
 ## app_mention 日付（コードに散らばりやすい）

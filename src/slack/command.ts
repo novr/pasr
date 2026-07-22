@@ -21,6 +21,7 @@ import { showOwnAbsenceList, handleAbsenceListInteraction } from "./absence-list
 import { openAbsenceRegisterModal, handleAbsenceRegisterInteraction } from "./absence-register";
 import { handleAbsenceMentionInteraction, isMentionAction } from "./absence-mention";
 import { handleAppHomeInteraction } from "./app-home";
+import { refreshAppHomeAfterMutation } from "./app-home-publish";
 import { handleChannelConfigCommand } from "./channel-config";
 import { handleUsersCommand, handleAdminUsersPageInteraction } from "./admin-users";
 import { handleAbsencesCommand, handleAdminAbsencesPageInteraction } from "./admin-absences";
@@ -209,7 +210,7 @@ export const notifySlashCommandEphemeral = async (
 const buildHelpText = (): string =>
   [
     "/pasr help - ユーザ向けコマンドの使い方表示",
-    "/pasr settings - 自分の通知設定を表示・編集",
+    "/pasr settings - 自分の通知・Status 設定を表示・編集",
     "/pasr list - 自分の不在予定一覧（編集・削除）",
     "/pasr update - /pasr list と同じ",
     "/pasr update YYYY-MM-DD - 開始日指定で不在予定を編集",
@@ -673,7 +674,13 @@ export const handleSlackInteraction = async (
           ? parsed.record.statusEmoji
           : existing?.statusEmoji
     });
-    return { ok: true };
+    const userId = metadata.userId;
+    return {
+      ok: true,
+      followUp: async () => {
+        await refreshAppHomeAfterMutation(config, userId);
+      }
+    };
   } catch (error) {
     return {
       ok: false,

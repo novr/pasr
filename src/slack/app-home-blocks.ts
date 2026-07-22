@@ -15,11 +15,13 @@ import { buildAppHomeStatusOAuthBlock } from "./status-oauth-ui";
 const APP_HOME_INTRO_TEXT =
   "チームの不在予定を登録し、平日 JST 9:00 に自動で共有するアプリです。";
 
+const APP_HOME_SETTINGS_BUTTON_TEXT = "通知・Status 設定";
+
 const APP_HOME_USAGE_LINES = [
   "*使い方*",
   "• `/pasr register` — 不在予定を登録",
   "• `/pasr list` — 一覧・編集・削除",
-  "• `/pasr settings` — 通知設定",
+  `• \`/pasr settings\` — ${APP_HOME_SETTINGS_BUTTON_TEXT}`,
   "• Messages タブから自然文（例: `明日 通院`）でも登録できます"
 ];
 
@@ -61,7 +63,12 @@ export const formatAppHomeStatusPrefsSummary = (params: {
   const emojiLabel = params.master?.statusEmoji
     ? `\`${params.master.statusEmoji}\``
     : `組織既定（\`${params.orgDefaultEmoji}\`）`;
-  return ["*Status 設定*", `• 文言: ${textLabel}`, `• 絵文字: ${emojiLabel}`].join("\n");
+  return [
+    "*Status 設定*",
+    "_不在 note がある日は note が優先されます。_",
+    `• 文言: ${textLabel}`,
+    `• 絵文字: ${emojiLabel}`
+  ].join("\n");
 };
 
 const buildAppHomeActionBlock = (): Record<string, unknown> => ({
@@ -77,7 +84,7 @@ const buildAppHomeActionBlock = (): Record<string, unknown> => ({
     {
       type: "button",
       action_id: APP_HOME_SETTINGS_OPEN_ACTION_ID,
-      text: { type: "plain_text", text: "通知設定" }
+      text: { type: "plain_text", text: APP_HOME_SETTINGS_BUTTON_TEXT }
     },
     {
       type: "button",

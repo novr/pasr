@@ -94,7 +94,7 @@ const buildStatusBlocks = (params: {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*Status 設定*\n組織既定: \`${params.config.statusDefaultText}\` / \`${params.config.statusEmoji}\``
+        text: `*Status 設定*\n不在 note がある日は note が優先されます。\n組織既定: \`${params.config.statusDefaultText}\` / \`${params.config.statusEmoji}\``
       }
     }
   ];

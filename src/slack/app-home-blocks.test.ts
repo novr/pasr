@@ -68,6 +68,7 @@ describe("formatAppHomeStatusPrefsSummary", () => {
     });
     expect(summary).toContain("組織既定（`不在`）");
     expect(summary).toContain("組織既定（`:date:`）");
+    expect(summary).toContain("不在 note がある日は note が優先されます");
   });
 
   it("shows user prefs when set", () => {
