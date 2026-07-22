@@ -1,5 +1,5 @@
 import type { AbsenceRecord } from "../domain/absence";
-import { truncateStatusText } from "../domain/status-text";
+import { resolveStatusText as resolveStatusTextFromProfile } from "../domain/status-profile";
 import { getJstDateParts } from "../domain/jst-date";
 
 export const statusExpirationUnixForJstDay = (dayJst: string): number => {
@@ -37,9 +37,8 @@ export const selectStatusNotesByUser = (records: AbsenceRecord[]): UserStatusNot
 export const resolveStatusText = (params: {
   note?: string;
   defaultText: string;
-}): string => {
-  if (params.note && params.note.length > 0) {
-    return truncateStatusText(params.note);
-  }
-  return truncateStatusText(params.defaultText);
-};
+}): string =>
+  resolveStatusTextFromProfile({
+    note: params.note,
+    orgDefaultText: params.defaultText
+  });

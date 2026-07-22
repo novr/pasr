@@ -15,11 +15,13 @@ import { buildAppHomeStatusOAuthBlock } from "./status-oauth-ui";
 const APP_HOME_INTRO_TEXT =
   "チームの不在予定を登録し、平日 JST 9:00 に自動で共有するアプリです。";
 
+const APP_HOME_SETTINGS_BUTTON_TEXT = "通知・Status 設定";
+
 const APP_HOME_USAGE_LINES = [
   "*使い方*",
   "• `/pasr register` — 不在予定を登録",
   "• `/pasr list` — 一覧・編集・削除",
-  "• `/pasr settings` — 通知設定",
+  `• \`/pasr settings\` — ${APP_HOME_SETTINGS_BUTTON_TEXT}`,
   "• Messages タブから自然文（例: `明日 通院`）でも登録できます"
 ];
 
@@ -50,6 +52,25 @@ export const formatAppHomeSettingsSummary = (master?: MemberMasterRecord): strin
   return lines.join("\n");
 };
 
+export const formatAppHomeStatusPrefsSummary = (params: {
+  master?: MemberMasterRecord;
+  orgDefaultText: string;
+  orgDefaultEmoji: string;
+}): string => {
+  const textLabel = params.master?.statusDefaultText
+    ? `\`${params.master.statusDefaultText}\``
+    : `組織既定（\`${params.orgDefaultText}\`）`;
+  const emojiLabel = params.master?.statusEmoji
+    ? `\`${params.master.statusEmoji}\``
+    : `組織既定（\`${params.orgDefaultEmoji}\`）`;
+  return [
+    "*Slack Status 設定*",
+    "_不在の詳細がある日は、詳細が優先されます。_",
+    `• 文言: ${textLabel}`,
+    `• 絵文字: ${emojiLabel}`
+  ].join("\n");
+};
+
 const buildAppHomeActionBlock = (): Record<string, unknown> => ({
   type: "actions",
   block_id: "pasr_home_actions",
@@ -63,7 +84,7 @@ const buildAppHomeActionBlock = (): Record<string, unknown> => ({
     {
       type: "button",
       action_id: APP_HOME_SETTINGS_OPEN_ACTION_ID,
-      text: { type: "plain_text", text: "通知設定" }
+      text: { type: "plain_text", text: APP_HOME_SETTINGS_BUTTON_TEXT }
     },
     {
       type: "button",
@@ -113,6 +134,21 @@ export const buildAppHomeBlocks = (data: AppHomeData): Array<Record<string, unkn
       type: "section",
       text: { type: "mrkdwn", text: formatAppHomeSettingsSummary(data.master) }
     },
+    ...(data.statusPrefsEnabled
+      ? [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: formatAppHomeStatusPrefsSummary({
+                master: data.master,
+                orgDefaultText: data.orgStatusDefaultText,
+                orgDefaultEmoji: data.orgStatusDefaultEmoji
+              })
+            }
+          }
+        ]
+      : []),
     ...(data.statusOAuth
       ? [
           { type: "divider" },

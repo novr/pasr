@@ -8,7 +8,8 @@ import {
 import {
   buildAppHomeBlocks,
   buildAppHomeStaticFallbackBlocks,
-  formatAppHomeSettingsSummary
+  formatAppHomeSettingsSummary,
+  formatAppHomeStatusPrefsSummary
 } from "./app-home-blocks";
 import type { AppHomeData } from "./app-home-data";
 
@@ -52,6 +53,43 @@ describe("formatAppHomeSettingsSummary", () => {
   });
 });
 
+describe("formatAppHomeStatusPrefsSummary", () => {
+  it("shows org defaults when user prefs are unset", () => {
+    const summary = formatAppHomeStatusPrefsSummary({
+      master: {
+        targetUser: "U1",
+        active: true,
+        defaultNotifyChannels: [],
+        defaultNotifyUsers: [],
+        defaultRegistrationNotify: "none"
+      },
+      orgDefaultText: "不在",
+      orgDefaultEmoji: ":date:"
+    });
+    expect(summary).toContain("組織既定（`不在`）");
+    expect(summary).toContain("組織既定（`:date:`）");
+    expect(summary).toContain("不在の詳細がある日は、詳細が優先されます");
+  });
+
+  it("shows user prefs when set", () => {
+    const summary = formatAppHomeStatusPrefsSummary({
+      master: {
+        targetUser: "U1",
+        active: true,
+        defaultNotifyChannels: [],
+        defaultNotifyUsers: [],
+        defaultRegistrationNotify: "none",
+        statusDefaultText: "リモート",
+        statusEmoji: ":house:"
+      },
+      orgDefaultText: "不在",
+      orgDefaultEmoji: ":date:"
+    });
+    expect(summary).toContain("• 文言: `リモート`");
+    expect(summary).toContain("• 絵文字: `:house:`");
+  });
+});
+
 describe("buildAppHomeStaticFallbackBlocks", () => {
   it("includes register, settings, and list action ids", () => {
     const actionIds = collectActionIds(buildAppHomeStaticFallbackBlocks());
@@ -67,8 +105,34 @@ describe("buildAppHomeBlocks", () => {
   const baseData: AppHomeData = {
     todayJst: "2026-06-24",
     absences: [],
-    hasMoreAbsences: false
+    hasMoreAbsences: false,
+    statusPrefsEnabled: false,
+    orgStatusDefaultText: "不在",
+    orgStatusDefaultEmoji: ":date:"
   };
+
+  it("shows status prefs section when schema is ready", () => {
+    const blocks = buildAppHomeBlocks({
+      ...baseData,
+      statusPrefsEnabled: true,
+      master: {
+        targetUser: "U1",
+        active: true,
+        defaultNotifyChannels: [],
+        defaultNotifyUsers: [],
+        defaultRegistrationNotify: "none",
+        statusDefaultText: "リモート",
+        statusEmoji: ":house:"
+      }
+    });
+    const statusSection = blocks.find(
+      (block) =>
+        block.type === "section" &&
+        (block.text as { text?: string } | undefined)?.text?.includes("*Slack Status 設定*")
+    );
+    expect(statusSection).toBeDefined();
+    expect((statusSection?.text as { text?: string }).text).toContain("`リモート`");
+  });
 
   it("places actions before settings and preview sections", () => {
     const blocks = buildAppHomeBlocks(baseData);

@@ -18,3 +18,4 @@ SLACK_OAUTH_ENCRYPTION_KEY=
 PASR_PUBLIC_BASE_URL=
 PASR_STATUS_DEFAULT_TEXT=不在
 PASR_STATUS_EMOJI=:date:
+# 上記は org 既定。ユーザー未設定時の fallback。個別上書きは /pasr settings

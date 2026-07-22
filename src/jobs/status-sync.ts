@@ -3,10 +3,11 @@ import { isStatusOAuthEnabled } from "../config";
 import type { AbsenceRecord } from "../domain/absence";
 import { filterToday } from "../domain/absence";
 import {
-  resolveStatusText,
   selectStatusNotesByUser,
   statusExpirationUnixForJstDay
 } from "../domain/status-expiration";
+import { resolveStatusText, resolveStatusEmoji } from "../domain/status-profile";
+import { listMemberMasterStatusPrefsForUserIds } from "../db/member-master-repository";
 import { checkSlackUserOAuthSchema } from "../db/schema-check";
 import {
   decryptSlackUserAccessToken,
@@ -72,9 +73,11 @@ export const syncTodayAbsenceStatus = async (
   }
 
   const userIds = selections.map((entry) => entry.targetUser);
-  const oauthMap = await listSlackUserOAuthForUserIds(config, userIds);
+  const [oauthMap, statusPrefsMap] = await Promise.all([
+    listSlackUserOAuthForUserIds(config, userIds),
+    listMemberMasterStatusPrefsForUserIds(config, userIds)
+  ]);
   const expiration = statusExpirationUnixForJstDay(dayJst);
-  const emoji = config.statusEmoji;
 
   let statusSet = 0;
   let statusSkipped = 0;
@@ -94,9 +97,15 @@ export const syncTodayAbsenceStatus = async (
       );
       continue;
     }
+    const prefs = statusPrefsMap.get(selection.targetUser);
     const statusText = resolveStatusText({
       note: selection.note,
-      defaultText: config.statusDefaultText
+      userDefaultText: prefs?.statusDefaultText,
+      orgDefaultText: config.statusDefaultText
+    });
+    const emoji = resolveStatusEmoji({
+      userEmoji: prefs?.statusEmoji,
+      orgEmoji: config.statusEmoji
     });
     try {
       const userToken = await decryptSlackUserAccessToken(config, oauth);

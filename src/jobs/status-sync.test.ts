@@ -3,6 +3,7 @@ import { createMockKv, createTestConfig } from "../test/mock-kv";
 import { createMockD1 } from "../test/mock-d1";
 import type { AbsenceRecord } from "../domain/absence";
 import { upsertSlackUserOAuth } from "../db/slack-user-oauth-repository";
+import { upsertMemberMaster } from "../db/member-master-repository";
 import { syncTodayAbsenceStatus } from "./status-sync";
 
 const TEST_KEY_B64 = btoa(String.fromCharCode(...new Uint8Array(32).fill(11)));
@@ -98,5 +99,82 @@ describe("syncTodayAbsenceStatus", () => {
     );
     expect(result.statusSet).toBe(0);
     expect(result.statusSkipped).toBe(1);
+  });
+
+  it("uses user status prefs when note is empty", async () => {
+    await upsertSlackUserOAuth(config, {
+      userId: "U1",
+      accessToken: "xoxp-u1",
+      scope: "users.profile:write"
+    });
+    await upsertMemberMaster(config, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none",
+      statusDefaultText: "リモート",
+      statusEmoji: ":house:"
+    });
+    const records: AbsenceRecord[] = [
+      {
+        itemId: "1",
+        targetUser: "U1",
+        startDate: "2026-06-24",
+        endDate: "2026-06-24",
+        notifyChannels: [],
+        notifyUsers: []
+      }
+    ];
+    const result = await syncTodayAbsenceStatus(
+      config,
+      { runId: "r4", trigger: "scheduled" },
+      records,
+      "2026-06-24"
+    );
+    expect(result.statusSet).toBe(1);
+    expect(setUserProfileStatusMock).toHaveBeenCalledWith(
+      "xoxp-u1",
+      expect.objectContaining({
+        status_text: "リモート",
+        status_emoji: ":house:"
+      })
+    );
+  });
+
+  it("prefers note over user status prefs", async () => {
+    await upsertSlackUserOAuth(config, {
+      userId: "U1",
+      accessToken: "xoxp-u1",
+      scope: "users.profile:write"
+    });
+    await upsertMemberMaster(config, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none",
+      statusDefaultText: "リモート",
+      statusEmoji: ":house:"
+    });
+    const records: AbsenceRecord[] = [
+      {
+        itemId: "1",
+        targetUser: "U1",
+        startDate: "2026-06-24",
+        endDate: "2026-06-24",
+        notifyChannels: [],
+        notifyUsers: [],
+        note: "通院"
+      }
+    ];
+    await syncTodayAbsenceStatus(config, { runId: "r5", trigger: "scheduled" }, records, "2026-06-24");
+    expect(setUserProfileStatusMock).toHaveBeenCalledWith(
+      "xoxp-u1",
+      expect.objectContaining({
+        status_text: "通院",
+        status_emoji: ":house:"
+      })
+    );
   });
 });

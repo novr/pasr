@@ -1,6 +1,7 @@
 import type { AppConfig } from "../config";
 import type { RegistrationNotifyMode } from "../domain/absence-registration";
 import { getDb } from "./client";
+import { checkMemberMasterStatusPrefsSchema } from "./schema-check";
 import { serializeJsonArray } from "./json-columns";
 import { rowToMemberMaster, type MemberMasterRow } from "./row-mapper";
 
@@ -12,7 +13,24 @@ export type MemberMasterRecord = {
   defaultNotifyChannels: string[];
   defaultNotifyUsers: string[];
   defaultRegistrationNotify: RegistrationNotifyMode;
+  statusDefaultText?: string | null;
+  statusEmoji?: string | null;
 };
+
+export type MemberMasterStatusPrefs = {
+  statusDefaultText?: string;
+  statusEmoji?: string;
+};
+
+const toMemberMasterRecord = (mapped: ReturnType<typeof rowToMemberMaster>): MemberMasterRecord => ({
+  targetUser: mapped.targetUser,
+  active: mapped.active,
+  defaultNotifyChannels: mapped.defaultNotifyChannels,
+  defaultNotifyUsers: mapped.defaultNotifyUsers,
+  defaultRegistrationNotify: mapped.defaultRegistrationNotify,
+  statusDefaultText: mapped.statusDefaultText ?? undefined,
+  statusEmoji: mapped.statusEmoji ?? undefined
+});
 
 export const getMemberMaster = async (
   config: AppConfig,
@@ -23,14 +41,7 @@ export const getMemberMaster = async (
     .bind(targetUser)
     .first<MemberMasterRow>();
   if (!row) return undefined;
-  const mapped = rowToMemberMaster(row);
-  return {
-    targetUser: mapped.targetUser,
-    active: mapped.active,
-    defaultNotifyChannels: mapped.defaultNotifyChannels,
-    defaultNotifyUsers: mapped.defaultNotifyUsers,
-    defaultRegistrationNotify: mapped.defaultRegistrationNotify
-  };
+  return toMemberMasterRecord(rowToMemberMaster(row));
 };
 
 export const upsertMemberMaster = async (
@@ -38,17 +49,52 @@ export const upsertMemberMaster = async (
   record: MemberMasterRecord
 ): Promise<void> => {
   const timestamp = nowIso();
+  const statusPrefsSchema = await checkMemberMasterStatusPrefsSchema(config);
+  if (statusPrefsSchema !== "ok") {
+    await getDb(config)
+      .prepare(
+        `INSERT INTO member_master (
+          target_user, active, default_notify_channels, default_notify_users,
+          default_registration_notify, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(target_user) DO UPDATE SET
+          active = excluded.active,
+          default_notify_channels = excluded.default_notify_channels,
+          default_notify_users = excluded.default_notify_users,
+          default_registration_notify = excluded.default_registration_notify,
+          updated_at = excluded.updated_at`
+      )
+      .bind(
+        record.targetUser,
+        record.active ? 1 : 0,
+        serializeJsonArray(record.defaultNotifyChannels),
+        serializeJsonArray(record.defaultNotifyUsers),
+        record.defaultRegistrationNotify,
+        timestamp
+      )
+      .run();
+    return;
+  }
+  const statusUpdateClauses: string[] = [];
+  if (record.statusDefaultText !== undefined) {
+    statusUpdateClauses.push("status_default_text = excluded.status_default_text");
+  }
+  if (record.statusEmoji !== undefined) {
+    statusUpdateClauses.push("status_emoji = excluded.status_emoji");
+  }
   await getDb(config)
     .prepare(
       `INSERT INTO member_master (
         target_user, active, default_notify_channels, default_notify_users,
-        default_registration_notify, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?)
+        default_registration_notify, status_default_text, status_emoji, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(target_user) DO UPDATE SET
         active = excluded.active,
         default_notify_channels = excluded.default_notify_channels,
         default_notify_users = excluded.default_notify_users,
-        default_registration_notify = excluded.default_registration_notify,
+        default_registration_notify = excluded.default_registration_notify${
+          statusUpdateClauses.length > 0 ? `,\n        ${statusUpdateClauses.join(",\n        ")}` : ""
+        },
         updated_at = excluded.updated_at`
     )
     .bind(
@@ -57,6 +103,8 @@ export const upsertMemberMaster = async (
       serializeJsonArray(record.defaultNotifyChannels),
       serializeJsonArray(record.defaultNotifyUsers),
       record.defaultRegistrationNotify,
+      record.statusDefaultText ?? null,
+      record.statusEmoji ?? null,
       timestamp
     )
     .run();
@@ -103,6 +151,37 @@ export const loadMemberMasterActiveMap = async (
   return map;
 };
 
+export const listMemberMasterStatusPrefsForUserIds = async (
+  config: AppConfig,
+  userIds: string[]
+): Promise<Map<string, MemberMasterStatusPrefs>> => {
+  const map = new Map<string, MemberMasterStatusPrefs>();
+  if (userIds.length === 0) return map;
+  if ((await checkMemberMasterStatusPrefsSchema(config)) !== "ok") return map;
+
+  const placeholders = userIds.map(() => "?").join(", ");
+  const result = await getDb(config)
+    .prepare(
+      `SELECT target_user, status_default_text, status_emoji
+       FROM member_master
+       WHERE target_user IN (${placeholders})`
+    )
+    .bind(...userIds)
+    .all<{
+      target_user: string;
+      status_default_text: string | null;
+      status_emoji: string | null;
+    }>();
+
+  for (const row of result.results ?? []) {
+    const statusDefaultText = row.status_default_text?.trim() || undefined;
+    const statusEmoji = row.status_emoji?.trim() || undefined;
+    if (!statusDefaultText && !statusEmoji) continue;
+    map.set(row.target_user, { statusDefaultText, statusEmoji });
+  }
+  return map;
+};
+
 export const listMemberMasterRecords = async (
   config: AppConfig,
   options: { limit: number; offset?: number }
@@ -116,16 +195,7 @@ export const listMemberMasterRecords = async (
     )
     .bind(options.limit, offset)
     .all<MemberMasterRow>();
-  return (result.results ?? []).map((row) => {
-    const mapped = rowToMemberMaster(row);
-    return {
-      targetUser: mapped.targetUser,
-      active: mapped.active,
-      defaultNotifyChannels: mapped.defaultNotifyChannels,
-      defaultNotifyUsers: mapped.defaultNotifyUsers,
-      defaultRegistrationNotify: mapped.defaultRegistrationNotify
-    };
-  });
+  return (result.results ?? []).map((row) => toMemberMasterRecord(rowToMemberMaster(row)));
 };
 
 export const countMemberMaster = async (config: AppConfig): Promise<number> => {
@@ -140,21 +210,42 @@ export const insertMemberMasterOrIgnore = async (
   record: MemberMasterRecord,
   updatedAt: string
 ): Promise<boolean> => {
-  const result = await getDb(config)
-    .prepare(
-      `INSERT OR IGNORE INTO member_master (
+  const statusPrefsSchema = await checkMemberMasterStatusPrefsSchema(config);
+  const result =
+    statusPrefsSchema === "ok"
+      ? await getDb(config)
+          .prepare(
+            `INSERT OR IGNORE INTO member_master (
+        target_user, active, default_notify_channels, default_notify_users,
+        default_registration_notify, status_default_text, status_emoji, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .bind(
+            record.targetUser,
+            record.active ? 1 : 0,
+            serializeJsonArray(record.defaultNotifyChannels),
+            serializeJsonArray(record.defaultNotifyUsers),
+            record.defaultRegistrationNotify,
+            record.statusDefaultText ?? null,
+            record.statusEmoji ?? null,
+            updatedAt
+          )
+          .run()
+      : await getDb(config)
+          .prepare(
+            `INSERT OR IGNORE INTO member_master (
         target_user, active, default_notify_channels, default_notify_users,
         default_registration_notify, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?)`
-    )
-    .bind(
-      record.targetUser,
-      record.active ? 1 : 0,
-      serializeJsonArray(record.defaultNotifyChannels),
-      serializeJsonArray(record.defaultNotifyUsers),
-      record.defaultRegistrationNotify,
-      updatedAt
-    )
-    .run();
+          )
+          .bind(
+            record.targetUser,
+            record.active ? 1 : 0,
+            serializeJsonArray(record.defaultNotifyChannels),
+            serializeJsonArray(record.defaultNotifyUsers),
+            record.defaultRegistrationNotify,
+            updatedAt
+          )
+          .run();
   return (result.meta.changes ?? 0) > 0;
 };
