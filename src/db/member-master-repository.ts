@@ -210,23 +210,42 @@ export const insertMemberMasterOrIgnore = async (
   record: MemberMasterRecord,
   updatedAt: string
 ): Promise<boolean> => {
-  const result = await getDb(config)
-    .prepare(
-      `INSERT OR IGNORE INTO member_master (
+  const statusPrefsSchema = await checkMemberMasterStatusPrefsSchema(config);
+  const result =
+    statusPrefsSchema === "ok"
+      ? await getDb(config)
+          .prepare(
+            `INSERT OR IGNORE INTO member_master (
         target_user, active, default_notify_channels, default_notify_users,
         default_registration_notify, status_default_text, status_emoji, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .bind(
-      record.targetUser,
-      record.active ? 1 : 0,
-      serializeJsonArray(record.defaultNotifyChannels),
-      serializeJsonArray(record.defaultNotifyUsers),
-      record.defaultRegistrationNotify,
-      record.statusDefaultText ?? null,
-      record.statusEmoji ?? null,
-      updatedAt
-    )
-    .run();
+          )
+          .bind(
+            record.targetUser,
+            record.active ? 1 : 0,
+            serializeJsonArray(record.defaultNotifyChannels),
+            serializeJsonArray(record.defaultNotifyUsers),
+            record.defaultRegistrationNotify,
+            record.statusDefaultText ?? null,
+            record.statusEmoji ?? null,
+            updatedAt
+          )
+          .run()
+      : await getDb(config)
+          .prepare(
+            `INSERT OR IGNORE INTO member_master (
+        target_user, active, default_notify_channels, default_notify_users,
+        default_registration_notify, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`
+          )
+          .bind(
+            record.targetUser,
+            record.active ? 1 : 0,
+            serializeJsonArray(record.defaultNotifyChannels),
+            serializeJsonArray(record.defaultNotifyUsers),
+            record.defaultRegistrationNotify,
+            updatedAt
+          )
+          .run();
   return (result.meta.changes ?? 0) > 0;
 };

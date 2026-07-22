@@ -343,16 +343,30 @@ export const createMockD1 = (options: MockD1Options = {}): D1Database => {
       if (ignore && memberMaster.has(targetUser)) {
         return { results: [], run: { success: true, meta: { changes: 0 } } };
       }
-      memberMaster.set(targetUser, {
-        target_user: targetUser,
-        active: Number(p[1]),
-        default_notify_channels: String(p[2]),
-        default_notify_users: String(p[3]),
-        default_registration_notify: String(p[4]),
-        status_default_text: p[5] == null ? null : String(p[5]),
-        status_emoji: p[6] == null ? null : String(p[6]),
-        updated_at: String(p[7])
-      });
+      const hasStatusColumns = sql.includes("status_default_text");
+      if (hasStatusColumns) {
+        memberMaster.set(targetUser, {
+          target_user: targetUser,
+          active: Number(p[1]),
+          default_notify_channels: String(p[2]),
+          default_notify_users: String(p[3]),
+          default_registration_notify: String(p[4]),
+          status_default_text: p[5] == null ? null : String(p[5]),
+          status_emoji: p[6] == null ? null : String(p[6]),
+          updated_at: String(p[7])
+        });
+      } else {
+        memberMaster.set(targetUser, {
+          target_user: targetUser,
+          active: Number(p[1]),
+          default_notify_channels: String(p[2]),
+          default_notify_users: String(p[3]),
+          default_registration_notify: String(p[4]),
+          status_default_text: null,
+          status_emoji: null,
+          updated_at: String(p[5])
+        });
+      }
       return { results: [], run: { success: true, meta: { changes: 1 } } };
     }
 

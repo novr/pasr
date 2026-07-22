@@ -13,7 +13,7 @@ export const STATUS_OAUTH_DISCONNECT_ACTION_ID = "pasr_status_oauth_disconnect";
 export const STATUS_OAUTH_DISCONNECT_CONFIRM_ACTION_ID = "pasr_status_oauth_disconnect_confirm";
 
 export const STATUS_OAUTH_NOTICE_TEXT =
-  "不在の *詳細* がそのまま Slack Status としてワークスペース全体に表示されます。連携は任意です。";
+  "不在の *詳細* があればそれを、なければ設定したデフォルトを Slack Status に反映します（平日 JST 9:00）。連携は任意です。";
 
 export const buildStatusOAuthEphemeralText = (params: {
   linked: boolean;
