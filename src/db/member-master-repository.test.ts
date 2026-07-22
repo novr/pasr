@@ -76,6 +76,19 @@ describe("member-master-repository", () => {
       defaultNotifyUsers: [],
       defaultRegistrationNotify: "none"
     });
+    const preserved = await getMemberMaster(config, "U_STATUS");
+    expect(preserved?.statusDefaultText).toBe("リモート");
+    expect(preserved?.statusEmoji).toBe(":house:");
+
+    await upsertMemberMaster(config, {
+      targetUser: "U_STATUS",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none",
+      statusDefaultText: null,
+      statusEmoji: null
+    });
     const cleared = await getMemberMaster(config, "U_STATUS");
     expect(cleared?.statusDefaultText).toBeUndefined();
     expect(cleared?.statusEmoji).toBeUndefined();

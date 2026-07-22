@@ -297,27 +297,52 @@ export const createMockD1 = (options: MockD1Options = {}): D1Database => {
       return { results: [], run: { success: true, meta: { changes: deleted ? 1 : 0 } } };
     }
 
+    if (sql.includes("ON CONFLICT(target_user) DO UPDATE SET")) {
+      const targetUser = String(p[0]);
+      const existing = memberMaster.get(targetUser);
+      const hasStatusColumns = sql.includes("status_default_text");
+      if (hasStatusColumns) {
+        const updatesStatusText = sql.includes("status_default_text = excluded.status_default_text");
+        const updatesStatusEmoji = sql.includes("status_emoji = excluded.status_emoji");
+        memberMaster.set(targetUser, {
+          target_user: targetUser,
+          active: Number(p[1]),
+          default_notify_channels: String(p[2]),
+          default_notify_users: String(p[3]),
+          default_registration_notify: String(p[4]),
+          status_default_text: updatesStatusText
+            ? p[5] == null
+              ? null
+              : String(p[5])
+            : (existing?.status_default_text ?? null),
+          status_emoji: updatesStatusEmoji
+            ? p[6] == null
+              ? null
+              : String(p[6])
+            : (existing?.status_emoji ?? null),
+          updated_at: String(p[7])
+        });
+      } else {
+        memberMaster.set(targetUser, {
+          target_user: targetUser,
+          active: Number(p[1]),
+          default_notify_channels: String(p[2]),
+          default_notify_users: String(p[3]),
+          default_registration_notify: String(p[4]),
+          status_default_text: existing?.status_default_text ?? null,
+          status_emoji: existing?.status_emoji ?? null,
+          updated_at: String(p[5])
+        });
+      }
+      return { results: [], run: { success: true, meta: { changes: 1 } } };
+    }
+
     if (sql.startsWith("INSERT INTO member_master") || sql.startsWith("INSERT OR IGNORE INTO member_master")) {
       const ignore = sql.includes("OR IGNORE");
       const targetUser = String(p[0]);
       if (ignore && memberMaster.has(targetUser)) {
         return { results: [], run: { success: true, meta: { changes: 0 } } };
       }
-      memberMaster.set(targetUser, {
-        target_user: targetUser,
-        active: Number(p[1]),
-        default_notify_channels: String(p[2]),
-        default_notify_users: String(p[3]),
-        default_registration_notify: String(p[4]),
-        status_default_text: p[5] == null ? null : String(p[5]),
-        status_emoji: p[6] == null ? null : String(p[6]),
-        updated_at: String(p[7])
-      });
-      return { results: [], run: { success: true, meta: { changes: 1 } } };
-    }
-
-    if (sql.includes("ON CONFLICT(target_user) DO UPDATE SET")) {
-      const targetUser = String(p[0]);
       memberMaster.set(targetUser, {
         target_user: targetUser,
         active: Number(p[1]),

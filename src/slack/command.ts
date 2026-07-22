@@ -666,11 +666,11 @@ export const handleSlackInteraction = async (
       defaultRegistrationNotify: parsed.record.defaultRegistrationNotify,
       statusDefaultText:
         parsed.record.statusDefaultText !== undefined
-          ? parsed.record.statusDefaultText ?? undefined
+          ? parsed.record.statusDefaultText
           : existing?.statusDefaultText,
       statusEmoji:
         parsed.record.statusEmoji !== undefined
-          ? parsed.record.statusEmoji ?? undefined
+          ? parsed.record.statusEmoji
           : existing?.statusEmoji
     });
     return { ok: true };

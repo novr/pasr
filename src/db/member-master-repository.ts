@@ -13,8 +13,8 @@ export type MemberMasterRecord = {
   defaultNotifyChannels: string[];
   defaultNotifyUsers: string[];
   defaultRegistrationNotify: RegistrationNotifyMode;
-  statusDefaultText?: string;
-  statusEmoji?: string;
+  statusDefaultText?: string | null;
+  statusEmoji?: string | null;
 };
 
 export type MemberMasterStatusPrefs = {
@@ -28,8 +28,8 @@ const toMemberMasterRecord = (mapped: ReturnType<typeof rowToMemberMaster>): Mem
   defaultNotifyChannels: mapped.defaultNotifyChannels,
   defaultNotifyUsers: mapped.defaultNotifyUsers,
   defaultRegistrationNotify: mapped.defaultRegistrationNotify,
-  statusDefaultText: mapped.statusDefaultText,
-  statusEmoji: mapped.statusEmoji
+  statusDefaultText: mapped.statusDefaultText ?? undefined,
+  statusEmoji: mapped.statusEmoji ?? undefined
 });
 
 export const getMemberMaster = async (
@@ -75,6 +75,13 @@ export const upsertMemberMaster = async (
       .run();
     return;
   }
+  const statusUpdateClauses: string[] = [];
+  if (record.statusDefaultText !== undefined) {
+    statusUpdateClauses.push("status_default_text = excluded.status_default_text");
+  }
+  if (record.statusEmoji !== undefined) {
+    statusUpdateClauses.push("status_emoji = excluded.status_emoji");
+  }
   await getDb(config)
     .prepare(
       `INSERT INTO member_master (
@@ -85,9 +92,9 @@ export const upsertMemberMaster = async (
         active = excluded.active,
         default_notify_channels = excluded.default_notify_channels,
         default_notify_users = excluded.default_notify_users,
-        default_registration_notify = excluded.default_registration_notify,
-        status_default_text = excluded.status_default_text,
-        status_emoji = excluded.status_emoji,
+        default_registration_notify = excluded.default_registration_notify${
+          statusUpdateClauses.length > 0 ? `,\n        ${statusUpdateClauses.join(",\n        ")}` : ""
+        },
         updated_at = excluded.updated_at`
     )
     .bind(
