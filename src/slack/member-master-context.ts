@@ -8,6 +8,8 @@ export type MasterContext = {
   defaultNotifyChannels: string[];
   defaultNotifyUsers: string[];
   defaultRegistrationNotify: RegistrationNotifyMode;
+  statusDefaultText?: string;
+  statusEmoji?: string;
 };
 
 export const resolveMasterContext = async (config: AppConfig, userId: string): Promise<MasterContext> => {
@@ -17,7 +19,9 @@ export const resolveMasterContext = async (config: AppConfig, userId: string): P
       active: existing.active,
       defaultNotifyChannels: existing.defaultNotifyChannels,
       defaultNotifyUsers: existing.defaultNotifyUsers,
-      defaultRegistrationNotify: existing.defaultRegistrationNotify
+      defaultRegistrationNotify: existing.defaultRegistrationNotify,
+      statusDefaultText: existing.statusDefaultText,
+      statusEmoji: existing.statusEmoji
     };
   }
   const created = await ensureMemberMasterActive(config, userId);
@@ -26,6 +30,8 @@ export const resolveMasterContext = async (config: AppConfig, userId: string): P
     active: created.active,
     defaultNotifyChannels: created.defaultNotifyChannels,
     defaultNotifyUsers: created.defaultNotifyUsers,
-    defaultRegistrationNotify: created.defaultRegistrationNotify
+    defaultRegistrationNotify: created.defaultRegistrationNotify,
+    statusDefaultText: created.statusDefaultText,
+    statusEmoji: created.statusEmoji
   };
 };

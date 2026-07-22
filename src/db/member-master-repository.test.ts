@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ensureMemberMasterActive, getMemberMaster, listMemberMasterRecords, upsertMemberMaster } from "./member-master-repository";
+import { ensureMemberMasterActive, getMemberMaster, listMemberMasterRecords, listMemberMasterStatusPrefsForUserIds, upsertMemberMaster } from "./member-master-repository";
 import { createTestConfig, createMockKv } from "../test/mock-kv";
 
 describe("member-master-repository", () => {
@@ -48,5 +48,36 @@ describe("member-master-repository", () => {
     });
     const rows = await listMemberMasterRecords(config, { limit: 10 });
     expect(rows.map((row) => row.targetUser)).toEqual(["U_A", "U_B"]);
+  });
+
+  it("round-trips status prefs and clears them with null", async () => {
+    const config = createTestConfig(createMockKv());
+    await upsertMemberMaster(config, {
+      targetUser: "U_STATUS",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none",
+      statusDefaultText: "リモート",
+      statusEmoji: ":house:"
+    });
+    const row = await getMemberMaster(config, "U_STATUS");
+    expect(row?.statusDefaultText).toBe("リモート");
+    expect(row?.statusEmoji).toBe(":house:");
+
+    const prefs = await listMemberMasterStatusPrefsForUserIds(config, ["U_STATUS", "U_MISSING"]);
+    expect(prefs.get("U_STATUS")).toEqual({ statusDefaultText: "リモート", statusEmoji: ":house:" });
+    expect(prefs.has("U_MISSING")).toBe(false);
+
+    await upsertMemberMaster(config, {
+      targetUser: "U_STATUS",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    const cleared = await getMemberMaster(config, "U_STATUS");
+    expect(cleared?.statusDefaultText).toBeUndefined();
+    expect(cleared?.statusEmoji).toBeUndefined();
   });
 });

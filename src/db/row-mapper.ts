@@ -21,6 +21,8 @@ export type MemberMasterRow = {
   default_notify_channels: string;
   default_notify_users: string;
   default_registration_notify: string;
+  status_default_text?: string | null;
+  status_emoji?: string | null;
   updated_at: string;
 };
 
@@ -43,6 +45,8 @@ export const rowToMemberMaster = (
   defaultNotifyChannels: string[];
   defaultNotifyUsers: string[];
   defaultRegistrationNotify: RegistrationNotifyMode;
+  statusDefaultText?: string;
+  statusEmoji?: string;
   updatedTimestamp: number;
 } => ({
   targetUser: row.target_user,
@@ -50,6 +54,8 @@ export const rowToMemberMaster = (
   defaultNotifyChannels: deserializeJsonArray(row.default_notify_channels),
   defaultNotifyUsers: deserializeJsonArray(row.default_notify_users),
   defaultRegistrationNotify: row.default_registration_notify as RegistrationNotifyMode,
+  statusDefaultText: row.status_default_text?.trim() || undefined,
+  statusEmoji: row.status_emoji?.trim() || undefined,
   updatedTimestamp: Date.parse(row.updated_at) || 0
 });
 

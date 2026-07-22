@@ -30,6 +30,8 @@ Node.js 24（`mise.toml` / CI と同一）。
 
 実装完了・PR 前・deploy 前に `npm run check && npm test` を実行する。
 
+`/pasr settings` でユーザー別の Slack Status デフォルト文言・絵文字を上書きできる（未設定時は org Variable にフォールバック）。
+
 mention AI 結合テストは CI 対象外。`npm run dev` 起動中に `.dev.vars`（`DEBUG_ENDPOINTS_ENABLED=true` 等）を設定し、`npm run test:integration` を実行する。
 
 ## デプロイ

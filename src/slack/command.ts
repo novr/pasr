@@ -1,14 +1,13 @@
 import type { AppConfig } from "../config";
 import {
-  parseRegistrationNotifyMode,
   type RegistrationNotifyMode
 } from "../domain/absence-registration";
 import { isTransientError } from "../errors/transient";
 import { runDailyNotify } from "../jobs/daily-notify";
 import { formatRunSentForAdmin } from "../domain/run-sent-metrics";
 import { isValidJstDateString, getJstDateParts } from "../domain/jst-date";
-import { checkDbSchema, checkChannelNotifySettingsSchema, checkSlackUserOAuthSchema } from "../db/schema-check";
-import { upsertMemberMaster } from "../db/member-master-repository";
+import { checkDbSchema, checkChannelNotifySettingsSchema, checkMemberMasterStatusPrefsSchema, checkSlackUserOAuthSchema } from "../db/schema-check";
+import { upsertMemberMaster, getMemberMaster } from "../db/member-master-repository";
 import { DbSchemaMismatchError, assertDbSchema } from "../db/schema-check";
 import {
   ABSENCE_EDIT_MODAL_CALLBACK_ID,
@@ -34,7 +33,7 @@ import {
   isDeferredAdminCommandParse,
   parseAdminCommandText
 } from "./admin-command-parse";
-import { MEMBER_MASTER_MODAL_CALLBACK_ID, openMemberMasterSettingsModal } from "./member-master-modal";
+import { MEMBER_MASTER_MODAL_CALLBACK_ID, openMemberMasterSettingsModal, parseMemberMasterSubmission } from "./member-master-modal";
 import { readLastRunSummary } from "../state/kv";
 import { postStatusOAuthEphemeral, handleStatusOAuthDisconnectAction } from "./status-oauth-ui";
 
@@ -256,38 +255,6 @@ export const slashCommandLogFields = (payload: SlackCommandPayload): Record<stri
   trigger_id: payload.triggerId,
   has_response_url: payload.responseUrl.length > 0
 });
-
-const parseSelectedChannels = (value: unknown): string[] => {
-  const record = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-  const selected = record?.selected_conversations;
-  if (!Array.isArray(selected)) return [];
-  return selected.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
-};
-
-const parseSelectedUsers = (value: unknown): string[] => {
-  const record = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-  const selected = record?.selected_users;
-  if (!Array.isArray(selected)) return [];
-  return selected.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
-};
-
-const parseActiveValue = (value: unknown): boolean => {
-  const record = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-  const selectedOptions = record?.selected_options;
-  if (!Array.isArray(selectedOptions)) return false;
-  return selectedOptions.some((option) => {
-    const optionRecord = option && typeof option === "object" ? (option as Record<string, unknown>) : null;
-    return optionRecord?.value === "active";
-  });
-};
-
-const parseStaticSelectValue = (value: unknown): string => {
-  const record = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-  const option = record?.selected_option;
-  if (!option || typeof option !== "object") return "";
-  const optionRecord = option as Record<string, unknown>;
-  return typeof optionRecord.value === "string" ? optionRecord.value : "";
-};
 
 const handleSelfImmediateText = async (
   config: AppConfig,
@@ -674,14 +641,13 @@ export const handleSlackInteraction = async (
     return { ok: false, error: "本人以外の設定は更新できません。", errorBlockId: "active_block" };
   }
   const values = payload.view?.state?.values ?? {};
-  const channelsValue = values.channels_block?.default_channels_select;
-  const usersValue = values.users_block?.default_users_select;
-  const activeValue = values.active_block?.active_checkbox;
-  const registrationNotifyValue = values.registration_notify_block?.default_registration_notify_select;
-  const defaultChannels = parseSelectedChannels(channelsValue);
-  const defaultUsers = parseSelectedUsers(usersValue);
-  const active = parseActiveValue(activeValue);
-  const defaultRegistrationNotify = parseRegistrationNotifyMode(parseStaticSelectValue(registrationNotifyValue));
+  const statusPrefsEnabled = (await checkMemberMasterStatusPrefsSchema(config)) === "ok";
+  const parsed = parseMemberMasterSubmission(values as Record<string, Record<string, unknown>>, {
+    statusPrefsEnabled
+  });
+  if (!parsed.ok) {
+    return { ok: false, error: parsed.error, errorBlockId: parsed.errorBlockId };
+  }
   try {
     await assertDbSchema(config);
   } catch (error) {
@@ -691,12 +657,21 @@ export const handleSlackInteraction = async (
     throw error;
   }
   try {
+    const existing = await getMemberMaster(config, metadata.userId);
     await upsertMemberMaster(config, {
       targetUser: metadata.userId,
-      active,
-      defaultNotifyChannels: defaultChannels,
-      defaultNotifyUsers: defaultUsers,
-      defaultRegistrationNotify
+      active: parsed.record.active,
+      defaultNotifyChannels: parsed.record.defaultNotifyChannels,
+      defaultNotifyUsers: parsed.record.defaultNotifyUsers,
+      defaultRegistrationNotify: parsed.record.defaultRegistrationNotify,
+      statusDefaultText:
+        parsed.record.statusDefaultText !== undefined
+          ? parsed.record.statusDefaultText ?? undefined
+          : existing?.statusDefaultText,
+      statusEmoji:
+        parsed.record.statusEmoji !== undefined
+          ? parsed.record.statusEmoji ?? undefined
+          : existing?.statusEmoji
     });
     return { ok: true };
   } catch (error) {

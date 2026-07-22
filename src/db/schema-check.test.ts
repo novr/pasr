@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkChannelNotifySettingsSchema, checkDbSchema, checkSlackUserOAuthSchema } from "./schema-check";
+import { checkChannelNotifySettingsSchema, checkDbSchema, checkMemberMasterStatusPrefsSchema, checkSlackUserOAuthSchema } from "./schema-check";
 import { createTestConfig, createMockKv } from "../test/mock-kv";
 import { createMockD1 } from "../test/mock-d1";
 
@@ -8,6 +8,7 @@ describe("schema-check", () => {
     const config = createTestConfig(createMockKv());
     expect(await checkDbSchema(config)).toBe("ok");
     expect(await checkChannelNotifySettingsSchema(config)).toBe("ok");
+    expect(await checkMemberMasterStatusPrefsSchema(config)).toBe("ok");
   });
 
   it("reports channel_notify_settings missing before migration", async () => {

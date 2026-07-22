@@ -22,6 +22,7 @@
 - D1 正本: `absences`, `member_master`, `channel_notify_settings`（`0002`）, `slack_user_oauth`（`0003`）
 - `0002` 未適用: daily CH/DM は継続。`/pasr-admin channel-config` のみ失敗
 - `0003` 未適用: OAuth UI・Status 同期をスキップ。CH/DM は継続
+- `0004` 未適用: Status ユーザー設定の保存・参照をスキップ（org Variable のみ）。CH/DM は継続
 
 ## 登録通知（`src/domain/absence-registration.ts`）
 
@@ -35,6 +36,7 @@
 - CH 0件時 off にしても過去の「予定なし」投稿は削除・更新しない（Phase 1）
 - ops レポートは `trigger === "scheduled"` のみ（土日含む）。`sent` は CH+DM 合計。内訳は `sent_channels` / `sent_dms`
 - Status 同期: scheduled daily の JST 平日のみ。登録直後同期・当日キャンセル時クリアはスコープ外
+- Status 文言・絵文字の優先順位: absence `note` > `member_master.status_default_text` / `status_emoji` > org Variable（`PASR_STATUS_DEFAULT_TEXT` / `PASR_STATUS_EMOJI`）。ユーザー設定は Status 同期専用（daily 通知には使わない）
 - `end_date < today` の absence は平日 scheduled daily 後に D1 DELETE（証票用途なし）
 
 ## Slack

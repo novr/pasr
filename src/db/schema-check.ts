@@ -4,6 +4,7 @@ import { getDb } from "./client";
 export type DbSchemaStatus = "ok" | "schema_missing";
 export type ChannelNotifySettingsSchemaStatus = "ok" | "schema_missing";
 export type SlackUserOAuthSchemaStatus = "ok" | "schema_missing";
+export type MemberMasterStatusPrefsSchemaStatus = "ok" | "schema_missing";
 
 const CHANNEL_NOTIFY_SETTINGS_TABLE = "channel_notify_settings";
 const SLACK_USER_OAUTH_TABLE = "slack_user_oauth";
@@ -47,6 +48,17 @@ export const checkSlackUserOAuthSchema = async (
     .bind(SLACK_USER_OAUTH_TABLE)
     .first<{ name: string }>();
   return row?.name === SLACK_USER_OAUTH_TABLE ? "ok" : "schema_missing";
+};
+
+export const checkMemberMasterStatusPrefsSchema = async (
+  config: AppConfig
+): Promise<MemberMasterStatusPrefsSchemaStatus> => {
+  const row = await getDb(config)
+    .prepare(`PRAGMA table_info(member_master)`)
+    .all<{ name: string }>();
+  const hasStatusDefaultText = (row.results ?? []).some((column) => column.name === "status_default_text");
+  const hasStatusEmoji = (row.results ?? []).some((column) => column.name === "status_emoji");
+  return hasStatusDefaultText && hasStatusEmoji ? "ok" : "schema_missing";
 };
 
 export class DbSchemaMismatchError extends Error {
