@@ -64,8 +64,8 @@ export const formatAppHomeStatusPrefsSummary = (params: {
     ? `\`${params.master.statusEmoji}\``
     : `組織既定（\`${params.orgDefaultEmoji}\`）`;
   return [
-    "*Status 設定*",
-    "_不在 note がある日は note が優先されます。_",
+    "*Slack Status 設定*",
+    "_不在の詳細がある日は、詳細が優先されます。_",
     `• 文言: ${textLabel}`,
     `• 絵文字: ${emojiLabel}`
   ].join("\n");

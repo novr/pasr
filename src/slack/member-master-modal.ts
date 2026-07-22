@@ -94,7 +94,7 @@ const buildStatusBlocks = (params: {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*Status 設定*\n不在 note がある日は note が優先されます。\n組織既定: \`${params.config.statusDefaultText}\` / \`${params.config.statusEmoji}\``
+        text: `*Slack Status 設定*\n不在の詳細がある日は、詳細が優先されます。\n組織既定: \`${params.config.statusDefaultText}\` / \`${params.config.statusEmoji}\``
       }
     }
   ];
@@ -104,7 +104,7 @@ const buildStatusBlocks = (params: {
       elements: [
         {
           type: "mrkdwn",
-          text: "当日不在の scheduled 実行時に Slack Status へ反映されます。OAuth 連携が必要です。"
+          text: "平日 JST 9:00 の日次実行時に Slack Status へ反映されます。OAuth 連携が必要です。"
         }
       ]
     });
@@ -115,7 +115,7 @@ const buildStatusBlocks = (params: {
       block_id: STATUS_DEFAULT_TEXT_BLOCK_ID,
       optional: true,
       label: { type: "plain_text", text: "Status デフォルト文言" },
-      hint: { type: "plain_text", text: "note が空のときに使う文言。未入力なら組織既定を使用。" },
+      hint: { type: "plain_text", text: "詳細が空のときに使う文言。未入力なら組織既定を使用。" },
       element: {
         type: "plain_text_input",
         action_id: "status_default_text_input",

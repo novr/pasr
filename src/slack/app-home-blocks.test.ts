@@ -68,7 +68,7 @@ describe("formatAppHomeStatusPrefsSummary", () => {
     });
     expect(summary).toContain("組織既定（`不在`）");
     expect(summary).toContain("組織既定（`:date:`）");
-    expect(summary).toContain("不在 note がある日は note が優先されます");
+    expect(summary).toContain("不在の詳細がある日は、詳細が優先されます");
   });
 
   it("shows user prefs when set", () => {
@@ -128,7 +128,7 @@ describe("buildAppHomeBlocks", () => {
     const statusSection = blocks.find(
       (block) =>
         block.type === "section" &&
-        (block.text as { text?: string } | undefined)?.text?.includes("*Status 設定*")
+        (block.text as { text?: string } | undefined)?.text?.includes("*Slack Status 設定*")
     );
     expect(statusSection).toBeDefined();
     expect((statusSection?.text as { text?: string }).text).toContain("`リモート`");

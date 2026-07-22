@@ -13,7 +13,7 @@ export const STATUS_OAUTH_DISCONNECT_ACTION_ID = "pasr_status_oauth_disconnect";
 export const STATUS_OAUTH_DISCONNECT_CONFIRM_ACTION_ID = "pasr_status_oauth_disconnect_confirm";
 
 export const STATUS_OAUTH_NOTICE_TEXT =
-  "不在の *note* がそのまま Slack Status としてワークスペース全体に表示されます。連携は任意です。";
+  "不在の *詳細* がそのまま Slack Status としてワークスペース全体に表示されます。連携は任意です。";
 
 export const buildStatusOAuthEphemeralText = (params: {
   linked: boolean;
@@ -141,7 +141,7 @@ export const buildAppHomeStatusOAuthBlock = (params: {
   const block: Record<string, unknown> = {
     type: "section",
     block_id: "pasr_home_status_oauth",
-    text: { type: "mrkdwn", text: `*Slack Status*\n${text}` }
+    text: { type: "mrkdwn", text: `*Slack Status 連携*\n${text}` }
   };
   if (params.linked) {
     return {
