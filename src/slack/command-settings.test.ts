@@ -7,10 +7,23 @@ const { refreshAppHomeAfterMutationMock } = vi.hoisted(() => ({
   refreshAppHomeAfterMutationMock: vi.fn(async () => undefined)
 }));
 
+const { reconcileStatusAfterMemberMasterSettingsChangeIsolatedMock } = vi.hoisted(() => ({
+  reconcileStatusAfterMemberMasterSettingsChangeIsolatedMock: vi.fn(async () => undefined)
+}));
+
 vi.mock("./app-home-publish", () => ({
   publishAppHome: vi.fn(),
   refreshAppHomeAfterMutation: refreshAppHomeAfterMutationMock
 }));
+
+vi.mock("../jobs/status-sync", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../jobs/status-sync")>();
+  return {
+    ...original,
+    reconcileStatusAfterMemberMasterSettingsChangeIsolated:
+      reconcileStatusAfterMemberMasterSettingsChangeIsolatedMock
+  };
+});
 
 describe("handleSlackInteraction settings submission", () => {
   it("refreshes App Home after member master save", async () => {
@@ -47,6 +60,9 @@ describe("handleSlackInteraction settings submission", () => {
     expect(result.ok).toBe(true);
     expect(result.followUp).toBeTypeOf("function");
     await result.followUp?.();
+    expect(reconcileStatusAfterMemberMasterSettingsChangeIsolatedMock).toHaveBeenCalledWith(config, {
+      userId: "U1"
+    });
     expect(refreshAppHomeAfterMutationMock).toHaveBeenCalledWith(config, "U1");
   });
 });

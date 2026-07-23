@@ -1,4 +1,5 @@
 import type { AppConfig } from "../config";
+import { reconcileStatusAfterMemberMasterSettingsChangeIsolated } from "../jobs/status-sync";
 import { checkMemberMasterStatusPrefsSchema } from "../db/schema-check";
 import { upsertMemberMaster, getMemberMaster } from "../db/member-master-repository";
 import { DbSchemaMismatchError, assertDbSchema } from "../db/schema-check";
@@ -107,6 +108,7 @@ const handleMemberMasterSettingsSubmission = async (
     return {
       ok: true,
       followUp: async () => {
+        await reconcileStatusAfterMemberMasterSettingsChangeIsolated(config, { userId });
         await refreshAppHomeAfterMutation(config, userId);
       }
     };
