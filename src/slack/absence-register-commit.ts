@@ -10,6 +10,7 @@ import { getJstDateParts } from "../domain/jst-date";
 import { createAbsence } from "../db/absence-repository";
 import { DbSchemaMismatchError } from "../db/schema-check";
 import { runRegistrationNotifyAndAck } from "../jobs/registration-notify";
+import { reconcileStatusIfRecordsAffectToday } from "../jobs/status-sync";
 import { assertDbSchema } from "../db/schema-check";
 
 export type CommitAbsenceRegistrationParams = {
@@ -148,6 +149,11 @@ export const commitAbsenceRegistration = async (
         record,
         selectedMode: params.selectedMode,
         resolvedMode
+      });
+      await reconcileStatusIfRecordsAffectToday(config, {
+        userId: params.userId,
+        records: [record],
+        runId: crypto.randomUUID()
       });
     }
   };

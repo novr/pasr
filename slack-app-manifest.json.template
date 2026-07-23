@@ -3,7 +3,7 @@
     "name": "PASR",
     "description": "Planned absence, shared right",
     "background_color": "#5e4db2",
-    "long_description": "PASR（Planned absence, shared right）は、チームの不在予定を登録し、平日の朝に自動で共有するアプリです。\r\n`/pasr register` で不在予定を登録し、`/pasr list` で一覧・編集、`/pasr settings` で通知先を管理できます。\r\n平日 JST 9:00 にチャンネル投稿や DM で日次通知を送ります。"
+    "long_description": "PASR（Planned absence, shared right）は、チームの不在予定を登録し、平日の朝に自動で共有するアプリです。\r\n`/pasr register` で不在予定を登録し、`/pasr list` で一覧・編集、`/pasr settings` で通知先と Slack Status 設定を管理できます。\r\n平日 JST 9:00 にチャンネル投稿や DM で日次通知を送ります。OAuth 連携時は当日の不在を Slack Status に反映します（登録直後も同期）。"
   },
   "features": {
     "app_home": {

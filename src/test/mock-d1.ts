@@ -137,6 +137,14 @@ export const createMockD1 = (options: MockD1Options = {}): D1Database => {
       }
       return { results, run: { success: true, meta: {} } };
     }
+    if (sql.includes("FROM absences WHERE target_user = ? AND start_date <= ? AND end_date >= ?")) {
+      const userId = String(p[0]);
+      const today = String(p[1]);
+      const results = [...absences.values()]
+        .filter((row) => row.target_user === userId && row.start_date <= today && row.end_date >= today)
+        .sort((a, b) => a.start_date.localeCompare(b.start_date) || a.id.localeCompare(b.id));
+      return { results, run: { success: true, meta: {} } };
+    }
     if (sql.startsWith("SELECT COUNT(*) AS count FROM absences WHERE start_date <= ? AND end_date >= ?")) {
       const today = String(p[0]);
       const count = [...absences.values()].filter(

@@ -94,6 +94,22 @@ export const listAbsencesByUserFuture = async (
   return (result.results ?? []).map(rowToAbsenceRecord);
 };
 
+export const listAbsencesByUserActiveOnDate = async (
+  config: AppConfig,
+  userId: string,
+  todayJst: string
+): Promise<AbsenceRecord[]> => {
+  const result = await getDb(config)
+    .prepare(
+      `SELECT * FROM absences
+       WHERE target_user = ? AND start_date <= ? AND end_date >= ?
+       ORDER BY start_date ASC, id ASC`
+    )
+    .bind(userId, todayJst, todayJst)
+    .all<AbsenceRow>();
+  return (result.results ?? []).map(rowToAbsenceRecord);
+};
+
 export const listAllAbsences = async (config: AppConfig): Promise<AbsenceRecord[]> => {
   const result = await getDb(config)
     .prepare("SELECT * FROM absences ORDER BY start_date ASC, id ASC")

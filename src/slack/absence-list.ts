@@ -1,6 +1,7 @@
 import type { AppConfig } from "../config";
 import { getJstDateParts } from "../domain/jst-date";
 import { deleteAbsenceById, getAbsenceById, listAbsencesByUserFuture } from "../db/absence-repository";
+import { reconcileStatusIfRecordsAffectToday } from "../jobs/status-sync";
 import {
   ABSENCE_DELETE_ACTION_ID,
   ABSENCE_EDIT_OPEN_ACTION_ID,
@@ -136,6 +137,8 @@ export const handleAbsenceListInteraction = async (
   return {
     ok: true,
     followUp: async () => {
+      let deletedRecord: Awaited<ReturnType<typeof getAbsenceById>> | undefined;
+      let deleteSucceeded = false;
       try {
         const record = await getAbsenceById(config, itemId);
         if (!record) {
@@ -151,16 +154,18 @@ export const handleAbsenceListInteraction = async (
           return;
         }
         await deleteAbsenceById(config, itemId);
+        deleteSucceeded = true;
+        deletedRecord = record;
         if (fromAppHome) {
           await refreshAppHomeAfterMutation(config, actorUserId);
-          return;
+        } else {
+          await reloadListAfterDelete(
+            config,
+            actorUserId,
+            responseUrl,
+            payload.channel?.id ?? ""
+          );
         }
-        await reloadListAfterDelete(
-          config,
-          actorUserId,
-          responseUrl,
-          payload.channel?.id ?? ""
-        );
       } catch (error) {
         console.error(
           JSON.stringify({
@@ -176,6 +181,14 @@ export const handleAbsenceListInteraction = async (
             responseUrl,
             `削除に失敗しました: ${error instanceof Error ? error.message : String(error)}`
           );
+        }
+      } finally {
+        if (deleteSucceeded && deletedRecord) {
+          await reconcileStatusIfRecordsAffectToday(config, {
+            userId: actorUserId,
+            records: [deletedRecord],
+            runId: crypto.randomUUID()
+          });
         }
       }
     }

@@ -59,6 +59,28 @@ describe("handleUsersCommand", () => {
     expect(text).toContain("inactive");
   });
 
+  it("shows status prefs when schema 0004 is applied", async () => {
+    const config = createTestConfig(createMockKv(), {
+      slackClientId: "C1",
+      slackClientSecret: "secret",
+      slackOauthEncryptionKey: btoa(String.fromCharCode(...new Uint8Array(32).fill(11))),
+      statusDefaultText: "不在",
+      statusEmoji: ":date:"
+    });
+    await upsertMemberMaster(config, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none",
+      statusDefaultText: "リモート",
+      statusEmoji: ":house:"
+    });
+    const text = replyText(await handleUsersCommand(config, basePayload(), 1));
+    expect(text).toContain("Status OAuth:");
+    expect(text).toContain("Status文言: リモート :house:");
+  });
+
   it("shows pagination button instead of plain hidden count", async () => {
     const config = createTestConfig(createMockKv());
     for (let i = 0; i < ADMIN_EPHEMERAL_LIST_MAX + 1; i++) {
