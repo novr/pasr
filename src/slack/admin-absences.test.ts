@@ -79,7 +79,7 @@ describe("handleAbsencesCommand", () => {
     expect(section.text?.text).toContain("<@U0>");
     const actions = reply.blocks?.[1] as { type?: string; elements?: Array<{ text?: { text?: string } }> };
     expect(actions.type).toBe("actions");
-    expect(actions.elements?.some((element) => element.text?.text === "他 1 件 →")).toBe(true);
+    expect(actions.elements?.some((element) => element.text?.text === "次ページ（1 件）→")).toBe(true);
     vi.useRealTimers();
   });
 

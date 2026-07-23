@@ -42,7 +42,14 @@ describe("formatAdminEphemeralMessage", () => {
     const text = formatAdminEphemeralMessage("header", [longLine, "line2"], 0);
     expect(text.length).toBeLessThanOrEqual(ADMIN_EPHEMERAL_TEXT_MAX);
     expect(text).not.toContain("line2");
-    expect(text).toContain("… 他 2 件");
+    expect(text).toContain("… 表示省略 2 件");
+  });
+
+  it("distinguishes text overflow from unfetched lines", () => {
+    const lines = Array.from({ length: 5 }, (_, index) => `line${index + 1}`);
+    const text = formatAdminEphemeralMessage("header", lines, 3);
+    expect(text).toContain("… 他 3 件");
+    expect(text).not.toContain("表示省略");
   });
 });
 
