@@ -285,10 +285,11 @@ export const reconcileStatusAfterMemberMasterSettingsChangeIsolated = async (
   const { day: todayJst } = getJstDateParts();
   try {
     const records = await listAbsencesByUserActiveOnDate(config, params.userId, todayJst);
-    await reconcileStatusIfRecordsAffectToday(config, {
+    await syncStatusForUserToday(config, {
       userId: params.userId,
-      records,
-      runId: params.runId
+      todayJst,
+      runId: params.runId ?? crypto.randomUUID(),
+      records
     });
   } catch (error) {
     console.error(
