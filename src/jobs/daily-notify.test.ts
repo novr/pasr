@@ -4,6 +4,7 @@ import { createMockD1 } from "../test/mock-d1";
 import { createAbsence } from "../db/absence-repository";
 import { upsertMemberMaster } from "../db/member-master-repository";
 import { readLastRunSummary } from "../state/kv";
+import * as jpHolidays from "../domain/jp-holidays";
 import * as jstDate from "../domain/jst-date";
 import { runDailyNotify } from "./daily-notify";
 
@@ -365,6 +366,74 @@ describe("runDailyNotify", () => {
     expect(openDirectMessageMock).not.toHaveBeenCalled();
     expect(await readLastRunSummary(config)).toBeUndefined();
     weekdaySpy.mockRestore();
+  });
+
+  it("posts ops report on holiday scheduled without notifications or last summary update", async () => {
+    const skipSpy = vi.spyOn(jpHolidays, "getScheduledSkipReason").mockImplementation((trigger) =>
+      trigger === "scheduled" ? "holiday" : undefined
+    );
+    const kv = createMockKv();
+    const config = createTestConfig(kv, { opsChannelId: "C_OPS" });
+    await upsertMemberMaster(config, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-06-24",
+      endDate: "2026-06-24",
+      notifyChannels: ["C1"],
+      notifyUsers: ["U2"],
+      absenceType: "absence"
+    });
+
+    const result = await runDailyNotify(config, { runId: "run_holiday_ops", trigger: "scheduled" });
+
+    expect(result.sent).toBe(0);
+    expect(result.deleted).toBe(0);
+    expect(postChannelMessageMock).toHaveBeenCalledTimes(1);
+    expect(postChannelMessageMock).toHaveBeenCalledWith(expect.anything(), "C_OPS", expect.anything());
+    expect(postChannelMessageMock).not.toHaveBeenCalledWith(expect.anything(), "C1", expect.anything());
+    expect(openDirectMessageMock).not.toHaveBeenCalled();
+    expect(await readLastRunSummary(config)).toBeUndefined();
+    skipSpy.mockRestore();
+  });
+
+  it("posts ops report on data_stale scheduled without notifications or last summary update", async () => {
+    const skipSpy = vi.spyOn(jpHolidays, "getScheduledSkipReason").mockImplementation((trigger) =>
+      trigger === "scheduled" ? "data_stale" : undefined
+    );
+    const kv = createMockKv();
+    const config = createTestConfig(kv, { opsChannelId: "C_OPS" });
+    await upsertMemberMaster(config, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-06-24",
+      endDate: "2026-06-24",
+      notifyChannels: ["C1"],
+      notifyUsers: ["U2"],
+      absenceType: "absence"
+    });
+
+    const result = await runDailyNotify(config, { runId: "run_stale_ops", trigger: "scheduled" });
+
+    expect(result.sent).toBe(0);
+    expect(result.deleted).toBe(0);
+    expect(postChannelMessageMock).toHaveBeenCalledTimes(1);
+    expect(postChannelMessageMock).toHaveBeenCalledWith(expect.anything(), "C_OPS", expect.anything());
+    expect(postChannelMessageMock).not.toHaveBeenCalledWith(expect.anything(), "C1", expect.anything());
+    expect(openDirectMessageMock).not.toHaveBeenCalled();
+    expect(await readLastRunSummary(config)).toBeUndefined();
+    skipSpy.mockRestore();
   });
 
   it("still notifies on weekend when trigger is manual", async () => {

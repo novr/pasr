@@ -10,7 +10,7 @@
 ## 時刻・失敗
 
 - 判定は常に JST。失敗はレコード単位で隔離し全体は継続
-- `scheduled` の CH/DM 通知・Status 同期・終了 absence 削除は JST 平日のみ。ops レポートは土日も投稿。週末スキップの強制実行フラグは導入しない
+- `scheduled` の CH/DM 通知・Status 同期・終了 absence 削除は JST 平日かつ非祝日のみ。`coverage.to` 超過（`data_stale`）も同様に skip。ops レポートは土日祝・data_stale でも投稿。週末・祝日の強制実行フラグは導入しない
 
 ## データ補完しない（why: レコードが届け先の意図の正本）
 

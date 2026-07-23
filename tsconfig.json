@@ -4,6 +4,7 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "strict": true,
+    "resolveJsonModule": true,
     "skipLibCheck": true,
     "noEmit": true,
     "lib": [
@@ -15,5 +16,8 @@
     "src/**/*.ts",
     "scripts/**/*.ts",
     "vitest.integration.config.ts"
+  ],
+  "exclude": [
+    "scripts/generate-jp-holidays.ts"
   ]
 }

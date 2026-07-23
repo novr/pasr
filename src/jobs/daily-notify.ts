@@ -1,6 +1,7 @@
 import type { AppConfig } from "../config";
 import { filterToday, groupByChannel, type AbsenceRecord, type SkipReason } from "../domain/absence";
-import { getJstDateParts, isWeekdayInJst } from "../domain/jst-date";
+import { getJstDateParts } from "../domain/jst-date";
+import { getScheduledSkipReason } from "../domain/jp-holidays";
 import { formatAttendanceNoticeLine } from "../domain/absence-registration";
 import {
   deleteAbsenceById,
@@ -297,7 +298,8 @@ export const runDailyNotify = async (
   }
 
   const { day } = getJstDateParts();
-  const weekendScheduledOpsOnly = context.trigger === "scheduled" && !isWeekdayInJst();
+  const scheduledSkipReason = getScheduledSkipReason(context.trigger);
+  const scheduledOpsOnly = scheduledSkipReason !== undefined;
   const memberMasterMap = await loadMemberMasterActiveMap(config);
   const records = await listAllAbsences(config);
   result.processed = records.length;
@@ -320,7 +322,7 @@ export const runDailyNotify = async (
 
     let master = memberMasterMap.get(record.targetUser);
     if (!master) {
-      if (weekendScheduledOpsOnly) {
+      if (scheduledOpsOnly) {
         continue;
       }
       const created = await ensureMemberMasterActive(config, record.targetUser);
@@ -339,7 +341,7 @@ export const runDailyNotify = async (
     validRecords.push(record);
   }
 
-  if (weekendScheduledOpsOnly) {
+  if (scheduledOpsOnly) {
     result.todayAbsenceCount = filterToday(
       records.filter(
         (record) =>
@@ -360,13 +362,16 @@ export const runDailyNotify = async (
     statusSkipped: 0,
     statusErrors: 0
   };
-  if (weekendScheduledOpsOnly) {
+  if (scheduledOpsOnly) {
     console.log(
       JSON.stringify({
-        level: "info",
-        event: "skip_weekend_scheduled_notify",
+        level: scheduledSkipReason === "data_stale" ? "warn" : "info",
+        event: "skip_non_business_day_scheduled_notify",
         run_id: context.runId,
-        trigger: context.trigger
+        trigger: context.trigger,
+        reason: scheduledSkipReason,
+        day_jst: day,
+        ...(scheduledSkipReason === "data_stale" ? { jp_holiday_data_stale: true } : {})
       })
     );
   } else {
@@ -428,7 +433,13 @@ export const runDailyNotify = async (
       event: "daily_notify_done",
       run_id: context.runId,
       trigger: context.trigger,
-      ...(weekendScheduledOpsOnly ? { weekend_ops_only: true } : {}),
+      ...(scheduledOpsOnly
+        ? {
+            scheduled_ops_only: true,
+            scheduled_skip_reason: scheduledSkipReason,
+            weekend_ops_only: scheduledSkipReason === "weekend"
+          }
+        : {}),
       processed: result.processed,
       sent: result.sent,
       sent_channels: result.sentChannels,
@@ -441,7 +452,7 @@ export const runDailyNotify = async (
     })
   );
   try {
-    if (!weekendScheduledOpsOnly) {
+    if (!scheduledOpsOnly) {
       await writeLastRunSummary(config, {
         runId: result.runId,
         trigger: result.trigger,
