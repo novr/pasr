@@ -4,7 +4,7 @@ import {
   listMemberMasterRecords,
   type MemberMasterRecord
 } from "../db/member-master-repository";
-import { checkDbSchema, checkSlackUserOAuthSchema } from "../db/schema-check";
+import { checkDbSchema, checkMemberMasterStatusPrefsSchema, checkSlackUserOAuthSchema } from "../db/schema-check";
 import { listSlackUserOAuthForUserIds } from "../db/slack-user-oauth-repository";
 import { countMemberMasterActive, countMemberMasterTotal } from "../db/stats-repository";
 import { formatRegistrationNotifyModeLabel } from "../domain/absence-registration";
@@ -21,7 +21,21 @@ import {
 } from "./admin-format";
 import type { SlackCommandPayload } from "./command";
 
-const formatUserLine = (master: MemberMasterRecord, statusLabel: string): string => {
+const formatStatusPrefsLabel = (
+  master: MemberMasterRecord,
+  orgDefaultText: string,
+  orgDefaultEmoji: string
+): string => {
+  const text = master.statusDefaultText ?? `org既定(${orgDefaultText})`;
+  const emoji = master.statusEmoji ?? `org既定(${orgDefaultEmoji})`;
+  return `${text} ${emoji}`;
+};
+
+const formatUserLine = (
+  master: MemberMasterRecord,
+  oauthLabel: string,
+  statusPrefsLabel?: string
+): string => {
   const activeLabel = master.active ? "active" : "inactive";
   const ch = formatEntityList(
     master.defaultNotifyChannels.map((id) => `<#${id}>`),
@@ -32,10 +46,11 @@ const formatUserLine = (master: MemberMasterRecord, statusLabel: string): string
     "なし"
   );
   const regNotify = formatRegistrationNotifyModeLabel(master.defaultRegistrationNotify);
-  return `• <@${master.targetUser}> ${activeLabel} | Status: ${statusLabel} | 登録通知: ${regNotify} | CH: ${ch} | DM: ${dm}`;
+  const statusPrefsPart = statusPrefsLabel ? ` | Status文言: ${statusPrefsLabel}` : "";
+  return `• <@${master.targetUser}> ${activeLabel} | Status OAuth: ${oauthLabel}${statusPrefsPart} | 登録通知: ${regNotify} | CH: ${ch} | DM: ${dm}`;
 };
 
-const resolveStatusLabel = async (
+const resolveOAuthLabel = async (
   config: AppConfig,
   records: MemberMasterRecord[]
 ): Promise<Map<string, string>> => {
@@ -76,6 +91,8 @@ export const buildUsersListReply = async (
     return "PASR 登録ユーザーは 0 件です。";
   }
 
+  const statusPrefsEnabled =
+    isStatusOAuthEnabled(config) && (await checkMemberMasterStatusPrefsSchema(config)) === "ok";
   const totalPages = computeAdminTotalPages(totalCount);
   const currentPage = normalizeAdminPage(page, totalPages);
   const offset = (currentPage - 1) * ADMIN_EPHEMERAL_LIST_MAX;
@@ -83,9 +100,15 @@ export const buildUsersListReply = async (
     limit: ADMIN_EPHEMERAL_LIST_MAX,
     offset
   });
-  const statusLabels = await resolveStatusLabel(config, records);
+  const oauthLabels = await resolveOAuthLabel(config, records);
   const lines = records.map((master) =>
-    formatUserLine(master, statusLabels.get(master.targetUser) ?? "n/a")
+    formatUserLine(
+      master,
+      oauthLabels.get(master.targetUser) ?? "n/a",
+      statusPrefsEnabled
+        ? formatStatusPrefsLabel(master, config.statusDefaultText, config.statusEmoji)
+        : undefined
+    )
   );
   const header = `PASR 登録ユーザー (active ${activeCount} / 全 ${totalCount}) — ページ ${currentPage}/${totalPages}`;
   const text = formatAdminEphemeralMessage(header, lines, 0);

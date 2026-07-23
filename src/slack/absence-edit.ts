@@ -18,6 +18,7 @@ import { slackApi } from "./api";
 import { ABSENCE_EDIT_OPEN_ACTION_ID } from "./absence-list-blocks";
 import { isAppHomeBlockActions } from "./app-home-context";
 import { refreshAppHomeAfterMutation } from "./app-home-publish";
+import { reconcileStatusIfRecordsAffectToday } from "../jobs/status-sync";
 import { resolveMasterContext } from "./member-master-context";
 
 export const ABSENCE_EDIT_MODAL_CALLBACK_ID = "pasr_absence_edit";
@@ -320,11 +321,16 @@ const handleEditSubmission = async (
     );
     return {
       ok: true,
-      followUp: metadata.fromAppHome
-        ? async () => {
-            await refreshAppHomeAfterMutation(config, metadata.userId);
-          }
-        : undefined
+      followUp: async () => {
+        if (metadata.fromAppHome) {
+          await refreshAppHomeAfterMutation(config, metadata.userId);
+        }
+        await reconcileStatusIfRecordsAffectToday(config, {
+          userId: metadata.userId,
+          records: [resolved.record, record],
+          runId: crypto.randomUUID()
+        });
+      }
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

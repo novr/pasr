@@ -51,4 +51,14 @@ export const setUserProfileStatus = async (
   });
 };
 
+export const clearUserProfileStatus = async (userToken: string): Promise<void> => {
+  await slackUserApiPost<Record<string, unknown>>(userToken, "users.profile.set", {
+    profile: {
+      status_text: "",
+      status_emoji: "",
+      status_expiration: 0
+    }
+  });
+};
+
 export { SlackApiError };

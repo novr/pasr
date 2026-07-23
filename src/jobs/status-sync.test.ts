@@ -2,18 +2,27 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { createMockKv, createTestConfig } from "../test/mock-kv";
 import { createMockD1 } from "../test/mock-d1";
 import type { AbsenceRecord } from "../domain/absence";
+import { createAbsence } from "../db/absence-repository";
 import { upsertSlackUserOAuth } from "../db/slack-user-oauth-repository";
 import { upsertMemberMaster } from "../db/member-master-repository";
-import { syncTodayAbsenceStatus } from "./status-sync";
+import {
+  reconcileStatusAfterAbsenceChange,
+  reconcileStatusAfterAbsenceChangeIsolated,
+  reconcileStatusIfRecordsAffectToday,
+  syncStatusForUserToday,
+  syncTodayAbsenceStatus
+} from "./status-sync";
 
 const TEST_KEY_B64 = btoa(String.fromCharCode(...new Uint8Array(32).fill(11)));
 
-const { setUserProfileStatusMock } = vi.hoisted(() => ({
-  setUserProfileStatusMock: vi.fn(async () => undefined)
+const { setUserProfileStatusMock, clearUserProfileStatusMock } = vi.hoisted(() => ({
+  setUserProfileStatusMock: vi.fn(async () => undefined),
+  clearUserProfileStatusMock: vi.fn(async () => undefined)
 }));
 
 vi.mock("../slack/user-api", () => ({
-  setUserProfileStatus: setUserProfileStatusMock
+  setUserProfileStatus: setUserProfileStatusMock,
+  clearUserProfileStatus: clearUserProfileStatusMock
 }));
 
 describe("syncTodayAbsenceStatus", () => {
@@ -28,6 +37,7 @@ describe("syncTodayAbsenceStatus", () => {
 
   beforeEach(() => {
     setUserProfileStatusMock.mockClear();
+    clearUserProfileStatusMock.mockClear();
   });
 
   afterEach(() => {
@@ -176,5 +186,243 @@ describe("syncTodayAbsenceStatus", () => {
         status_emoji: ":house:"
       })
     );
+  });
+});
+
+describe("syncStatusForUserToday", () => {
+  let config: ReturnType<typeof createTestConfig>;
+
+  beforeEach(() => {
+    config = createTestConfig(createMockKv(), {
+      db: createMockD1(),
+      slackClientId: "C1",
+      slackClientSecret: "secret",
+      slackOauthEncryptionKey: TEST_KEY_B64,
+      statusDefaultText: "不在",
+      statusEmoji: ":date:"
+    });
+    setUserProfileStatusMock.mockClear();
+    clearUserProfileStatusMock.mockClear();
+  });
+
+  it("sets status for today registration", async () => {
+    await upsertSlackUserOAuth(config, {
+      userId: "U1",
+      accessToken: "xoxp-u1",
+      scope: "users.profile:write"
+    });
+    const records: AbsenceRecord[] = [
+      {
+        itemId: "1",
+        targetUser: "U1",
+        startDate: "2026-06-24",
+        endDate: "2026-06-24",
+        notifyChannels: [],
+        notifyUsers: [],
+        note: "通院"
+      }
+    ];
+    const result = await syncStatusForUserToday(config, {
+      userId: "U1",
+      todayJst: "2026-06-24",
+      runId: "evt-1",
+      records
+    });
+    expect(result).toBe("set");
+    expect(setUserProfileStatusMock).toHaveBeenCalledOnce();
+  });
+
+  it("skips future-only registration", async () => {
+    await upsertSlackUserOAuth(config, {
+      userId: "U1",
+      accessToken: "xoxp-u1",
+      scope: "users.profile:write"
+    });
+    const records: AbsenceRecord[] = [
+      {
+        itemId: "1",
+        targetUser: "U1",
+        startDate: "2026-06-25",
+        endDate: "2026-06-25",
+        notifyChannels: [],
+        notifyUsers: [],
+        note: "休み"
+      }
+    ];
+    const result = await syncStatusForUserToday(config, {
+      userId: "U1",
+      todayJst: "2026-06-24",
+      runId: "evt-2",
+      records
+    });
+    expect(result).toBe("skipped_not_today");
+    expect(setUserProfileStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("skips when oauth is missing", async () => {
+    const records: AbsenceRecord[] = [
+      {
+        itemId: "1",
+        targetUser: "U1",
+        startDate: "2026-06-24",
+        endDate: "2026-06-24",
+        notifyChannels: [],
+        notifyUsers: [],
+        note: "休み"
+      }
+    ];
+    const result = await syncStatusForUserToday(config, {
+      userId: "U1",
+      todayJst: "2026-06-24",
+      runId: "evt-3",
+      records
+    });
+    expect(result).toBe("skipped_no_oauth");
+    expect(setUserProfileStatusMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("reconcileStatusAfterAbsenceChange", () => {
+  let config: ReturnType<typeof createTestConfig>;
+
+  beforeEach(() => {
+    config = createTestConfig(createMockKv(), {
+      db: createMockD1(),
+      slackClientId: "C1",
+      slackClientSecret: "secret",
+      slackOauthEncryptionKey: TEST_KEY_B64,
+      statusDefaultText: "不在",
+      statusEmoji: ":date:"
+    });
+    setUserProfileStatusMock.mockClear();
+    clearUserProfileStatusMock.mockClear();
+  });
+
+  it("re-sets status when another today absence remains", async () => {
+    await upsertSlackUserOAuth(config, {
+      userId: "U1",
+      accessToken: "xoxp-u1",
+      scope: "users.profile:write"
+    });
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-06-24",
+      endDate: "2026-06-24",
+      notifyChannels: [],
+      notifyUsers: [],
+      note: "午後休"
+    });
+    const result = await reconcileStatusAfterAbsenceChange(config, {
+      userId: "U1",
+      todayJst: "2026-06-24",
+      runId: "evt-5"
+    });
+    expect(result).toBe("set");
+    expect(setUserProfileStatusMock).toHaveBeenCalledWith(
+      "xoxp-u1",
+      expect.objectContaining({ status_text: "午後休" })
+    );
+    expect(clearUserProfileStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("clears status when no today absences remain", async () => {
+    await upsertSlackUserOAuth(config, {
+      userId: "U1",
+      accessToken: "xoxp-u1",
+      scope: "users.profile:write"
+    });
+    const result = await reconcileStatusAfterAbsenceChange(config, {
+      userId: "U1",
+      todayJst: "2026-06-24",
+      runId: "evt-4"
+    });
+    expect(result).toBe("cleared");
+    expect(clearUserProfileStatusMock).toHaveBeenCalledOnce();
+    expect(setUserProfileStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("re-resolves from all today absences in db", async () => {
+    await upsertSlackUserOAuth(config, {
+      userId: "U1",
+      accessToken: "xoxp-u1",
+      scope: "users.profile:write"
+    });
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-06-24",
+      endDate: "2026-06-24",
+      notifyChannels: [],
+      notifyUsers: [],
+      note: "午前休"
+    });
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-06-24",
+      endDate: "2026-06-24",
+      notifyChannels: [],
+      notifyUsers: [],
+      note: "通院"
+    });
+    const result = await reconcileStatusAfterAbsenceChange(config, {
+      userId: "U1",
+      todayJst: "2026-06-24",
+      runId: "evt-6"
+    });
+    expect(result).toBe("set");
+    expect(setUserProfileStatusMock).toHaveBeenCalledWith(
+      "xoxp-u1",
+      expect.objectContaining({
+        status_text: expect.stringMatching(/午前休|通院/)
+      })
+    );
+  });
+});
+
+describe("reconcileStatusIfRecordsAffectToday", () => {
+  let config: ReturnType<typeof createTestConfig>;
+
+  beforeEach(() => {
+    config = createTestConfig(createMockKv(), {
+      db: createMockD1(),
+      slackClientId: "C1",
+      slackClientSecret: "secret",
+      slackOauthEncryptionKey: TEST_KEY_B64,
+      statusDefaultText: "不在",
+      statusEmoji: ":date:"
+    });
+    setUserProfileStatusMock.mockClear();
+    clearUserProfileStatusMock.mockClear();
+  });
+
+  it("skips reconcile for future-only records", async () => {
+    await upsertSlackUserOAuth(config, {
+      userId: "U1",
+      accessToken: "xoxp-u1",
+      scope: "users.profile:write"
+    });
+    await reconcileStatusIfRecordsAffectToday(config, {
+      userId: "U1",
+      records: [
+        {
+          itemId: "1",
+          targetUser: "U1",
+          startDate: "2026-06-25",
+          endDate: "2026-06-25",
+          notifyChannels: [],
+          notifyUsers: []
+        }
+      ]
+    });
+    expect(setUserProfileStatusMock).not.toHaveBeenCalled();
+    expect(clearUserProfileStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("isolates reconcile failures", async () => {
+    const repo = await import("../db/absence-repository");
+    const listSpy = vi.spyOn(repo, "listAbsencesByUserActiveOnDate").mockRejectedValueOnce(new Error("db down"));
+    await expect(
+      reconcileStatusAfterAbsenceChangeIsolated(config, { userId: "U1", runId: "evt-7" })
+    ).resolves.toBeUndefined();
+    listSpy.mockRestore();
   });
 });

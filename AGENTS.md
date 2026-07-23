@@ -35,7 +35,7 @@
 
 - CH 0件時 off にしても過去の「予定なし」投稿は削除・更新しない（Phase 1）
 - ops レポートは `trigger === "scheduled"` のみ（土日含む）。`sent` は CH+DM 合計。内訳は `sent_channels` / `sent_dms`
-- Status 同期: scheduled daily の JST 平日のみ。登録直後同期・当日キャンセル時クリアはスコープ外
+- Status 同期: scheduled daily の JST 平日。ユーザー操作（登録・編集・削除）による当日 Status の即時 set / re-resolve / clear を許可（当日が absence 範囲内なら土日祝も可）。失敗はレコード単位で隔離し登録成功は阻害しない
 - Status 文言・絵文字の優先順位: absence `note` > `member_master.status_default_text` / `status_emoji` > org Variable（`PASR_STATUS_DEFAULT_TEXT` / `PASR_STATUS_EMOJI`）。ユーザー設定は Status 同期専用（daily 通知には使わない）
 - `end_date < today` の absence は平日 scheduled daily 後に D1 DELETE（証票用途なし）
 
