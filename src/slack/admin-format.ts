@@ -38,7 +38,7 @@ const buildAdminPaginationActions = (
     elements.push({
       type: "button",
       action_id: actionId,
-      text: { type: "plain_text", text: `他 ${remaining} 件 →` },
+      text: { type: "plain_text", text: `次ページ（${remaining} 件）→` },
       value: String(page + 1)
     });
   }
@@ -201,12 +201,20 @@ export const formatAdminEphemeralMessage = (
   lines: string[],
   hiddenBeyondLines: number
 ): string => {
+  const overflowSuffix = (hidden: number): string =>
+    hiddenBeyondLines > 0 && hidden > hiddenBeyondLines
+      ? `\n… 表示省略 ${hidden - hiddenBeyondLines} 件\n… 他 ${hiddenBeyondLines} 件`
+      : hiddenBeyondLines > 0
+        ? `\n… 他 ${hiddenBeyondLines} 件`
+        : hidden > 0
+          ? `\n… 表示省略 ${hidden} 件`
+          : "";
+
   let visibleLines: string[] = [];
   for (const line of lines) {
     const trialLines = [...visibleLines, line];
     const hidden = hiddenBeyondLines + (lines.length - trialLines.length);
-    const suffix = hidden > 0 ? `\n… 他 ${hidden} 件` : "";
-    const trial = `${header}\n${trialLines.join("\n")}${suffix}`;
+    const trial = `${header}\n${trialLines.join("\n")}${overflowSuffix(hidden)}`;
     if (trial.length > ADMIN_EPHEMERAL_TEXT_MAX) {
       break;
     }
@@ -216,8 +224,9 @@ export const formatAdminEphemeralMessage = (
   while (visibleLines.length > 0) {
     const hidden = hiddenBeyondLines + (lines.length - visibleLines.length);
     const parts = [header, ...visibleLines];
-    if (hidden > 0) {
-      parts.push(`… 他 ${hidden} 件`);
+    const suffix = overflowSuffix(hidden);
+    if (suffix.length > 0) {
+      parts.push(suffix.trimStart());
     }
     const text = parts.join("\n");
     if (text.length <= ADMIN_EPHEMERAL_TEXT_MAX) {
@@ -227,8 +236,7 @@ export const formatAdminEphemeralMessage = (
   }
 
   const hidden = hiddenBeyondLines + lines.length;
-  const suffix = hidden > 0 ? `\n… 他 ${hidden} 件` : "";
-  const fallback = `${header}${suffix}`;
+  const fallback = `${header}${overflowSuffix(hidden)}`;
   if (fallback.length <= ADMIN_EPHEMERAL_TEXT_MAX) {
     return fallback;
   }
