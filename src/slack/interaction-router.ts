@@ -1,4 +1,5 @@
 import type { AppConfig } from "../config";
+import { reconcileStatusAfterMemberMasterSettingsChangeIsolated } from "../jobs/status-sync";
 import { checkMemberMasterStatusPrefsSchema } from "../db/schema-check";
 import { upsertMemberMaster, getMemberMaster } from "../db/member-master-repository";
 import { DbSchemaMismatchError, assertDbSchema } from "../db/schema-check";
@@ -88,25 +89,35 @@ const handleMemberMasterSettingsSubmission = async (
   }
   try {
     const existing = await getMemberMaster(config, metadata.userId);
+    const nextStatusDefaultText =
+      parsed.record.statusDefaultText !== undefined
+        ? parsed.record.statusDefaultText
+        : existing?.statusDefaultText;
+    const nextStatusEmoji =
+      parsed.record.statusEmoji !== undefined ? parsed.record.statusEmoji : existing?.statusEmoji;
+    const statusPrefsSubmitted =
+      statusPrefsEnabled &&
+      (parsed.record.statusDefaultText !== undefined || parsed.record.statusEmoji !== undefined);
+    const statusPrefsChanged =
+      statusPrefsSubmitted &&
+      (nextStatusDefaultText !== existing?.statusDefaultText ||
+        nextStatusEmoji !== existing?.statusEmoji);
     await upsertMemberMaster(config, {
       targetUser: metadata.userId,
       active: parsed.record.active,
       defaultNotifyChannels: parsed.record.defaultNotifyChannels,
       defaultNotifyUsers: parsed.record.defaultNotifyUsers,
       defaultRegistrationNotify: parsed.record.defaultRegistrationNotify,
-      statusDefaultText:
-        parsed.record.statusDefaultText !== undefined
-          ? parsed.record.statusDefaultText
-          : existing?.statusDefaultText,
-      statusEmoji:
-        parsed.record.statusEmoji !== undefined
-          ? parsed.record.statusEmoji
-          : existing?.statusEmoji
+      statusDefaultText: nextStatusDefaultText,
+      statusEmoji: nextStatusEmoji
     });
     const userId = metadata.userId;
     return {
       ok: true,
       followUp: async () => {
+        if (statusPrefsChanged) {
+          await reconcileStatusAfterMemberMasterSettingsChangeIsolated(config, { userId });
+        }
         await refreshAppHomeAfterMutation(config, userId);
       }
     };

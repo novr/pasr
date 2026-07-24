@@ -278,6 +278,32 @@ export const reconcileStatusIfRecordsAffectToday = async (
   });
 };
 
+export const reconcileStatusAfterMemberMasterSettingsChangeIsolated = async (
+  config: AppConfig,
+  params: { userId: string; runId?: string }
+): Promise<void> => {
+  const { day: todayJst } = getJstDateParts();
+  try {
+    const records = await listAbsencesByUserActiveOnDate(config, params.userId, todayJst);
+    await syncStatusForUserToday(config, {
+      userId: params.userId,
+      todayJst,
+      runId: params.runId ?? crypto.randomUUID(),
+      records
+    });
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "status_event_settings_reconcile_failed",
+        user_id: params.userId,
+        run_id: params.runId,
+        message: error instanceof Error ? error.message : String(error)
+      })
+    );
+  }
+};
+
 export const syncTodayAbsenceStatus = async (
   config: AppConfig,
   context: ScheduledRunContext,
