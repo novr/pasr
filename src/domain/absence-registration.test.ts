@@ -21,6 +21,9 @@ describe("absence-registration", () => {
     expect(formatAttendanceNoticeLine("U1", "<script> & >")).toBe(
       "• <@U1> &lt;script&gt; &amp; &gt;"
     );
+    expect(formatAttendanceNoticeLine("U1", "*bold* _italic_")).toBe(
+      "• <@U1> ＊bold＊ ＿italic＿"
+    );
   });
 
   it("buildRegistrationNotifyMessage includes period and optional note", () => {

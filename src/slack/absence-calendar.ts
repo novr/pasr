@@ -23,6 +23,8 @@ import { ADMIN_EPHEMERAL_LIST_MAX } from "./admin-constants";
 import {
   deliverAdminEphemeralReply,
   formatAdminEphemeralMessage,
+  normalizeAdminEphemeralReply,
+  postAdminEphemeralToResponseUrl,
   type AdminEphemeralReply
 } from "./admin-format";
 import { slackApi } from "./api";
@@ -104,6 +106,30 @@ const calendarPaginationValue = (
   page: number
 ): string => encodeAbsenceCalendarPageValue({ ...query, page });
 
+const CALENDAR_PAGINATION_BLOCK_ID_PREFIX = "pasr_calendar_pagination_p";
+
+const calendarPaginationBlockId = (page: number): string =>
+  `${CALENDAR_PAGINATION_BLOCK_ID_PREFIX}${page}`;
+
+const deliverCalendarPageReply = async (
+  config: AppConfig,
+  params: {
+    userId: string;
+    responseUrl?: string;
+    channelId?: string;
+  },
+  reply: AdminEphemeralReply | string
+): Promise<void> => {
+  const normalized = normalizeAdminEphemeralReply(reply);
+  if (params.responseUrl) {
+    const replaced = await postAdminEphemeralToResponseUrl(params.responseUrl, normalized, {
+      replaceOriginal: true
+    });
+    if (replaced) return;
+  }
+  await deliverAdminEphemeralReply(config, params, reply);
+};
+
 const buildCalendarPaginationBlocks = (
   text: string,
   query: Omit<AbsenceCalendarPageQuery, "page">,
@@ -132,7 +158,7 @@ const buildCalendarPaginationBlocks = (
   if (elements.length === 0) return undefined;
   return [
     { type: "section", text: { type: "mrkdwn", text } },
-    { type: "actions", block_id: "pasr_calendar_pagination", elements }
+    { type: "actions", block_id: calendarPaginationBlockId(page), elements }
   ];
 };
 
@@ -382,15 +408,14 @@ export const handleAbsenceCalendarPageInteraction = async (
   const deliverParams = {
     userId: params.userId,
     responseUrl: params.responseUrl,
-    channelId: deliverChannelId,
-    replaceOriginal: true as const
+    channelId: deliverChannelId
   };
 
   if (!decoded || decoded.userId !== params.userId) {
     return {
       handled: true,
       followUp: async () => {
-        await deliverAdminEphemeralReply(
+        await deliverCalendarPageReply(
           config,
           deliverParams,
           "ページ情報の読み取りに失敗しました。もう一度 /pasr calendar を実行してください。"
@@ -407,7 +432,7 @@ export const handleAbsenceCalendarPageInteraction = async (
     return {
       handled: true,
       followUp: async () => {
-        await deliverAdminEphemeralReply(config, deliverParams, message);
+        await deliverCalendarPageReply(config, deliverParams, message);
       }
     };
   }
@@ -426,7 +451,7 @@ export const handleAbsenceCalendarPageInteraction = async (
         todayJst,
         pageTurn: true
       });
-      await deliverAdminEphemeralReply(config, deliverParams, reply);
+      await deliverCalendarPageReply(config, deliverParams, reply);
     }
   };
 };
