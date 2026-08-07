@@ -27,6 +27,7 @@ import {
   type AdminEphemeralReply
 } from "./admin-format";
 import { slackApi } from "./api";
+import { postUserFacingMessage } from "./user-message";
 
 export const ABSENCE_CALENDAR_MODAL_CALLBACK_ID = "pasr_absence_calendar";
 
@@ -111,19 +112,56 @@ const deliverCalendarEphemeralPageReply = async (
     userId: string;
     responseUrl?: string;
     channelId?: string;
+    page?: number;
   },
   reply: AdminEphemeralReply | string
 ): Promise<void> => {
   const normalized = normalizeAdminEphemeralReply(reply);
+  const logBase = {
+    user_id: params.userId,
+    page: params.page,
+    has_response_url: Boolean(params.responseUrl),
+    deliver_channel_id: params.channelId ?? ""
+  };
+
   if (params.responseUrl) {
     const replaced = await postAdminEphemeralToResponseUrl(params.responseUrl, normalized, {
       replaceOriginal: true
     });
-    if (replaced) return;
+    if (replaced) {
+      console.log(JSON.stringify({ level: "info", event: "calendar_page_delivery", ...logBase, method: "replace_original" }));
+      return;
+    }
     const posted = await postAdminEphemeralToResponseUrl(params.responseUrl, normalized);
-    if (posted) return;
+    if (posted) {
+      console.log(JSON.stringify({ level: "info", event: "calendar_page_delivery", ...logBase, method: "response_url_post" }));
+      return;
+    }
   }
-  await deliverAdminEphemeralReply(config, params, normalized);
+
+  if (params.channelId) {
+    try {
+      await postUserFacingMessage(config, {
+        channelId: params.channelId,
+        userId: params.userId,
+        text: normalized.text,
+        blocks: normalized.blocks
+      });
+      console.log(JSON.stringify({ level: "info", event: "calendar_page_delivery", ...logBase, method: "post_ephemeral" }));
+      return;
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "calendar_page_post_ephemeral_failed",
+          ...logBase,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      );
+    }
+  }
+
+  console.warn(JSON.stringify({ level: "warn", event: "calendar_page_delivery_failed", ...logBase }));
 };
 
 const buildCalendarPaginationBlocks = (
@@ -165,11 +203,15 @@ export const buildAbsenceCalendarReply = async (
     from: string;
     to: string;
     channelId: string;
+    deliverChannelId?: string;
     page: number;
     todayJst: string;
+    pageTurn?: boolean;
   }
 ): Promise<AdminEphemeralReply | string> => {
-  const validation = validateAbsenceRange(params.from, params.to, params.todayJst);
+  const validation = params.pageTurn
+    ? validateAbsenceCalendarPageTurn(params.from, params.to)
+    : validateAbsenceRange(params.from, params.to, params.todayJst);
   if (!validation.ok) {
     return formatAbsenceRangeValidationError(validation.error);
   }
@@ -206,7 +248,8 @@ export const buildAbsenceCalendarReply = async (
       userId: params.userId,
       from: params.from,
       to: params.to,
-      channelId: params.channelId
+      channelId: params.channelId,
+      deliverChannelId: params.deliverChannelId
     },
     pagination.currentPage,
     pagination.totalPages,
@@ -359,6 +402,7 @@ const handleAbsenceCalendarSubmission = async (
         from,
         to,
         channelId,
+        deliverChannelId,
         page: 1,
         todayJst
       });
@@ -389,13 +433,15 @@ export const handleAbsenceCalendarPageInteraction = async (
     return { handled: false };
   }
 
+  const decoded = decodeAbsenceCalendarPageValue(params.pageValue);
+  const deliverChannelId = params.channelId ?? decoded?.deliverChannelId;
   const deliverParams = {
     userId: params.userId,
     responseUrl: params.responseUrl,
-    channelId: params.channelId
+    channelId: deliverChannelId,
+    page: decoded?.page
   };
 
-  const decoded = decodeAbsenceCalendarPageValue(params.pageValue);
   if (!decoded || decoded.userId !== params.userId) {
     return {
       handled: true,
@@ -431,10 +477,12 @@ export const handleAbsenceCalendarPageInteraction = async (
         from: decoded.from,
         to: decoded.to,
         channelId: decoded.channelId,
+        deliverChannelId: deliverChannelId,
         page: decoded.page,
-        todayJst
+        todayJst,
+        pageTurn: true
       });
-      await deliverCalendarEphemeralPageReply(config, deliverParams, reply);
+      await deliverCalendarEphemeralPageReply(config, { ...deliverParams, page: decoded.page }, reply);
     }
   };
 };

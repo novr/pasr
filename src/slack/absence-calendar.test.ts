@@ -401,6 +401,48 @@ describe("handleAbsenceCalendarPageInteraction", () => {
     vi.unstubAllGlobals();
   });
 
+  it("encodes deliver channel in page button value", async () => {
+    const config = createTestConfig(createMockKv());
+    for (let index = 0; index < 15; index += 1) {
+      await createAbsence(config, {
+        itemId: `A${index}`,
+        targetUser: `U${index}`,
+        startDate: "2026-08-10",
+        endDate: "2026-08-10",
+        notifyChannels: ["CNOTIFY"],
+        notifyUsers: []
+      });
+    }
+    for (let index = 0; index < 15; index += 1) {
+      await createAbsence(config, {
+        itemId: `B${index}`,
+        targetUser: `V${index}`,
+        startDate: "2026-08-11",
+        endDate: "2026-08-11",
+        notifyChannels: ["CNOTIFY"],
+        notifyUsers: []
+      });
+    }
+
+    const reply = await buildAbsenceCalendarReply(config, {
+      userId: "U1",
+      from: "2026-08-05",
+      to: "2026-08-31",
+      channelId: "CNOTIFY",
+      deliverChannelId: "C_RUN",
+      page: 1,
+      todayJst: "2026-08-05"
+    });
+    const actions =
+      typeof reply !== "string" && reply.blocks
+        ? reply.blocks.find((block) => block.type === "actions")
+        : undefined;
+    const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find((element) =>
+      String((element.text as { text?: string })?.text).includes("次ページ")
+    );
+    expect(String(nextButton?.value)).toContain("C_RUN");
+  });
+
   it("reports an error when page value userId does not match actor", async () => {
     const config = createTestConfig(createMockKv());
     const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
