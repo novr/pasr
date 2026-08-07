@@ -173,7 +173,7 @@ export const buildAbsenceCalendarReply = async (
   const groups = groupAbsencesByJstDay(records, params.from, params.to);
   const totalDays = groups.length;
   const pagination = paginateAbsenceCalendarDayGroups(groups, params.page, ADMIN_EPHEMERAL_LIST_MAX);
-  const header = `${headerBase}: ${totalCount}件 / ${totalDays}日 — ページ ${params.page}/${pagination.totalPages}`;
+  const header = `${headerBase}: ${totalCount}件 / ${totalDays}日 — ページ ${pagination.currentPage}/${pagination.totalPages}`;
   const lines = flattenAbsenceCalendarDayGroups(pagination.pageGroups);
   const text = formatAdminEphemeralMessage(header, lines, 0);
   const blocks = buildCalendarPaginationBlocks(
@@ -184,7 +184,7 @@ export const buildAbsenceCalendarReply = async (
       to: params.to,
       channelId: params.channelId
     },
-    params.page,
+    pagination.currentPage,
     pagination.totalPages,
     pagination.remainingEntryCount
   );

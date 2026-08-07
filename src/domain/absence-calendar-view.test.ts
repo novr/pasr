@@ -91,10 +91,19 @@ describe("paginateAbsenceCalendarDayGroups", () => {
 
   it("keeps a busy day on a single page when it exceeds page size", () => {
     const groups = buildGroups(1, 30);
-    const result = paginateAbsenceCalendarDayGroups(groups, 1, 25);
-    expect(result.totalPages).toBe(1);
-    expect(result.pageGroups[0]?.entries).toHaveLength(30);
-    expect(result.remainingEntryCount).toBe(0);
+    const page1 = paginateAbsenceCalendarDayGroups(groups, 1, 25);
+    const page2 = paginateAbsenceCalendarDayGroups(groups, 2, 25);
+    expect(page1.totalPages).toBe(2);
+    expect(page1.pageGroups[0]?.entries).toHaveLength(25);
+    expect(page2.pageGroups[0]?.entries).toHaveLength(5);
+    expect(page1.remainingEntryCount).toBe(5);
+  });
+
+  it("normalizes out-of-range page numbers", () => {
+    const groups = buildGroups(2, 15);
+    const result = paginateAbsenceCalendarDayGroups(groups, 99, 25);
+    expect(result.currentPage).toBe(2);
+    expect(result.pageGroups[0]?.date).toBe("2026-08-11");
   });
 
   it("reports remaining entry count for the next page button", () => {

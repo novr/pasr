@@ -15,6 +15,7 @@ export type AbsenceCalendarDayGroup = {
 
 export type AbsenceCalendarPaginationResult = {
   pageGroups: AbsenceCalendarDayGroup[];
+  currentPage: number;
   totalPages: number;
   totalDays: number;
   totalEntryCount: number;
@@ -75,6 +76,26 @@ export const flattenAbsenceCalendarDayGroups = (groups: AbsenceCalendarDayGroup[
   return lines;
 };
 
+const explodeOversizedDayGroups = (
+  groups: AbsenceCalendarDayGroup[],
+  pageSize: number
+): AbsenceCalendarDayGroup[] => {
+  const exploded: AbsenceCalendarDayGroup[] = [];
+  for (const group of groups) {
+    if (group.entries.length <= pageSize) {
+      exploded.push(group);
+      continue;
+    }
+    for (let offset = 0; offset < group.entries.length; offset += pageSize) {
+      exploded.push({
+        date: group.date,
+        entries: group.entries.slice(offset, offset + pageSize)
+      });
+    }
+  }
+  return exploded;
+};
+
 const buildAbsenceCalendarPages = (
   groups: AbsenceCalendarDayGroup[],
   pageSize: number
@@ -120,7 +141,7 @@ export const paginateAbsenceCalendarDayGroups = (
 ): AbsenceCalendarPaginationResult => {
   const totalDays = groups.length;
   const totalEntryCount = groups.reduce((sum, group) => sum + group.entries.length, 0);
-  const pages = buildAbsenceCalendarPages(groups, pageSize);
+  const pages = buildAbsenceCalendarPages(explodeOversizedDayGroups(groups, pageSize), pageSize);
   const totalPages = Math.max(1, pages.length);
   const currentPage = Math.min(Math.max(1, page), totalPages);
   const pageGroups = pages[currentPage - 1] ?? [];
@@ -136,6 +157,7 @@ export const paginateAbsenceCalendarDayGroups = (
 
   return {
     pageGroups,
+    currentPage,
     totalPages,
     totalDays,
     totalEntryCount,

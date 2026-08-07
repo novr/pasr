@@ -137,6 +137,28 @@ describe("buildAbsenceCalendarReply", () => {
     expect(text).not.toContain("*2026-08-10");
   });
 
+  it("normalizes an out-of-range page in the header", async () => {
+    const config = createTestConfig(createMockKv());
+    await createAbsence(config, {
+      itemId: "A1",
+      targetUser: "U1",
+      startDate: "2026-08-10",
+      endDate: "2026-08-10",
+      notifyChannels: ["CNOTIFY"],
+      notifyUsers: []
+    });
+
+    const reply = await buildAbsenceCalendarReply(config, {
+      userId: "U1",
+      from: "2026-08-10",
+      to: "2026-08-10",
+      channelId: "CNOTIFY",
+      page: 99,
+      todayJst: "2026-08-05"
+    });
+    expect(replyText(reply)).toContain("ページ 1/1");
+  });
+
   it("rejects from before today", async () => {
     const config = createTestConfig(createMockKv());
     const reply = await buildAbsenceCalendarReply(config, {
