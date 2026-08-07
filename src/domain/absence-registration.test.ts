@@ -17,6 +17,12 @@ describe("absence-registration", () => {
     expect(formatAttendanceNoticeLine("U1", "通院のため午後から")).toBe("• <@U1> 通院のため午後から");
   });
 
+  it("formatAttendanceNoticeLine escapes mrkdwn in notes", () => {
+    expect(formatAttendanceNoticeLine("U1", "<script> & >")).toBe(
+      "• <@U1> &lt;script&gt; &amp; &gt;"
+    );
+  });
+
   it("buildRegistrationNotifyMessage includes period and optional note", () => {
     expect(
       buildRegistrationNotifyMessage({

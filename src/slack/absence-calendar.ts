@@ -11,6 +11,7 @@ import {
   encodeAbsenceCalendarPageValue,
   formatAbsenceRangeValidationError,
   isSlackChannelId,
+  resolveSlackDeliverChannelId,
   validateAbsenceCalendarPageTurn,
   validateAbsenceRange,
   type AbsenceCalendarPageQuery,
@@ -27,7 +28,7 @@ import {
   type AdminEphemeralReply
 } from "./admin-format";
 import { slackApi } from "./api";
-import { postUserFacingMessage } from "./user-message";
+import { isImChannelId, postUserFacingMessage } from "./user-message";
 
 export const ABSENCE_CALENDAR_MODAL_CALLBACK_ID = "pasr_absence_calendar";
 
@@ -124,6 +125,42 @@ const deliverCalendarEphemeralPageReply = async (
     deliver_channel_id: params.channelId ?? ""
   };
 
+  if (params.channelId && !isImChannelId(params.channelId)) {
+    try {
+      await postUserFacingMessage(config, {
+        channelId: params.channelId,
+        userId: params.userId,
+        text: normalized.text,
+        blocks: normalized.blocks
+      });
+      if (params.responseUrl) {
+        const deleted = await postAdminEphemeralToResponseUrl(params.responseUrl, { text: "" }, {
+          deleteOriginal: true
+        });
+        if (!deleted) {
+          console.warn(
+            JSON.stringify({
+              level: "warn",
+              event: "calendar_page_delete_original_failed",
+              ...logBase
+            })
+          );
+        }
+      }
+      console.log(JSON.stringify({ level: "info", event: "calendar_page_delivery", ...logBase, method: "post_ephemeral" }));
+      return;
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "calendar_page_post_ephemeral_failed",
+          ...logBase,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      );
+    }
+  }
+
   if (params.responseUrl) {
     const replaced = await postAdminEphemeralToResponseUrl(params.responseUrl, normalized, {
       replaceOriginal: true
@@ -136,28 +173,6 @@ const deliverCalendarEphemeralPageReply = async (
     if (posted) {
       console.log(JSON.stringify({ level: "info", event: "calendar_page_delivery", ...logBase, method: "response_url_post" }));
       return;
-    }
-  }
-
-  if (params.channelId) {
-    try {
-      await postUserFacingMessage(config, {
-        channelId: params.channelId,
-        userId: params.userId,
-        text: normalized.text,
-        blocks: normalized.blocks
-      });
-      console.log(JSON.stringify({ level: "info", event: "calendar_page_delivery", ...logBase, method: "post_ephemeral" }));
-      return;
-    } catch (error) {
-      console.warn(
-        JSON.stringify({
-          level: "warn",
-          event: "calendar_page_post_ephemeral_failed",
-          ...logBase,
-          message: error instanceof Error ? error.message : String(error)
-        })
-      );
     }
   }
 
@@ -242,6 +257,7 @@ export const buildAbsenceCalendarReply = async (
   const header = `${headerBase}: ${totalCount}件 / ${totalDays}日 — ページ ${pagination.currentPage}/${pagination.totalPages}`;
   const lines = flattenAbsenceCalendarDayGroups(pagination.pageGroups);
   const text = formatAdminEphemeralMessage(header, lines, 0);
+  const deliverChannelId = resolveSlackDeliverChannelId(params.deliverChannelId);
   const blocks = buildCalendarPaginationBlocks(
     text,
     {
@@ -249,7 +265,7 @@ export const buildAbsenceCalendarReply = async (
       from: params.from,
       to: params.to,
       channelId: params.channelId,
-      deliverChannelId: params.deliverChannelId
+      deliverChannelId
     },
     pagination.currentPage,
     pagination.totalPages,
@@ -392,7 +408,10 @@ const handleAbsenceCalendarSubmission = async (
   }
 
   const responseUrl = metadata.responseUrl || payload.response_url || "";
-  const deliverChannelId = metadata.deliverChannelId || payload.channel?.id || "";
+  const deliverChannelId = resolveSlackDeliverChannelId(
+    metadata.deliverChannelId,
+    payload.channel?.id
+  );
 
   return {
     ok: true,
@@ -434,7 +453,7 @@ export const handleAbsenceCalendarPageInteraction = async (
   }
 
   const decoded = decodeAbsenceCalendarPageValue(params.pageValue);
-  const deliverChannelId = params.channelId ?? decoded?.deliverChannelId;
+  const deliverChannelId = resolveSlackDeliverChannelId(params.channelId, decoded?.deliverChannelId);
   const deliverParams = {
     userId: params.userId,
     responseUrl: params.responseUrl,
