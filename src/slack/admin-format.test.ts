@@ -89,9 +89,13 @@ describe("buildAdminEphemeralPostBody", () => {
   });
 
   it("includes delete_original when requested", () => {
-    const body = buildAdminEphemeralPostBody({ text: "" }, { deleteOriginal: true });
-    expect(body.delete_original).toBe(true);
-    expect(body.replace_original).toBeUndefined();
+    const body = buildAdminEphemeralPostBody({ text: "ignored", blocks: [{ type: "section" }] }, {
+      deleteOriginal: true
+    });
+    expect(body).toEqual({
+      response_type: "ephemeral",
+      delete_original: true
+    });
   });
 });
 

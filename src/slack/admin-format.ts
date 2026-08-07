@@ -94,10 +94,22 @@ export type AdminEphemeralPostOptions = {
   deleteOriginal?: boolean;
 };
 
+const adminEphemeralFailureEvent = (options?: AdminEphemeralPostOptions): string => {
+  if (options?.deleteOriginal) return "admin_ephemeral_delete_failed";
+  if (options?.replaceOriginal) return "admin_ephemeral_replace_failed";
+  return "admin_ephemeral_post_failed";
+};
+
 export const buildAdminEphemeralPostBody = (
   reply: AdminEphemeralReply | string,
   options?: AdminEphemeralPostOptions
 ): Record<string, unknown> => {
+  if (options?.deleteOriginal) {
+    return {
+      response_type: "ephemeral",
+      delete_original: true
+    };
+  }
   const normalized = normalizeAdminEphemeralReply(reply);
   const body: Record<string, unknown> = {
     response_type: "ephemeral",
@@ -105,9 +117,6 @@ export const buildAdminEphemeralPostBody = (
   };
   if (options?.replaceOriginal) {
     body.replace_original = true;
-  }
-  if (options?.deleteOriginal) {
-    body.delete_original = true;
   }
   if (normalized.blocks) {
     body.blocks = normalized.blocks;
@@ -131,9 +140,7 @@ export const postAdminEphemeralToResponseUrl = async (
       console.warn(
         JSON.stringify({
           level: "warn",
-          event: options?.replaceOriginal
-            ? "admin_ephemeral_replace_failed"
-            : "admin_ephemeral_post_failed",
+          event: adminEphemeralFailureEvent(options),
           status: response.status,
           body: body.slice(0, 500)
         })
@@ -147,9 +154,7 @@ export const postAdminEphemeralToResponseUrl = async (
         console.warn(
           JSON.stringify({
             level: "warn",
-            event: options?.replaceOriginal
-              ? "admin_ephemeral_replace_failed"
-              : "admin_ephemeral_post_failed",
+            event: adminEphemeralFailureEvent(options),
             slack_error: parsed.error,
             body: body.slice(0, 500)
           })
@@ -164,9 +169,7 @@ export const postAdminEphemeralToResponseUrl = async (
     console.warn(
       JSON.stringify({
         level: "warn",
-        event: options?.replaceOriginal
-          ? "admin_ephemeral_replace_failed"
-          : "admin_ephemeral_post_failed",
+        event: adminEphemeralFailureEvent(options),
         message: error instanceof Error ? error.message : String(error)
       })
     );

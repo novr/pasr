@@ -8,9 +8,13 @@ const { postUserFacingMessageMock } = vi.hoisted(() => ({
   postUserFacingMessageMock: vi.fn(async () => undefined)
 }));
 
-vi.mock("./user-message", () => ({
-  postUserFacingMessage: postUserFacingMessageMock
-}));
+vi.mock("./user-message", async () => {
+  const actual = await vi.importActual<typeof import("./user-message")>("./user-message");
+  return {
+    ...actual,
+    postUserFacingMessage: postUserFacingMessageMock
+  };
+});
 
 import {
   ABSENCE_CALENDAR_MODAL_CALLBACK_ID,
@@ -410,7 +414,10 @@ describe("handleAbsenceCalendarPageInteraction", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "https://hooks.slack.com/actions/T/1/2",
       expect.objectContaining({
-        body: expect.stringContaining("delete_original")
+        body: JSON.stringify({
+          response_type: "ephemeral",
+          delete_original: true
+        })
       })
     );
     vi.unstubAllGlobals();
@@ -545,6 +552,129 @@ describe("handleAbsenceCalendarPageInteraction", () => {
       expect.objectContaining({
         channelId: "C012RUN",
         userId: "U1"
+      })
+    );
+    vi.unstubAllGlobals();
+  });
+
+  it("falls back to replace_original when post_ephemeral fails", async () => {
+    const config = createTestConfig(createMockKv());
+    for (let index = 0; index < 15; index += 1) {
+      await createAbsence(config, {
+        itemId: `A${index}`,
+        targetUser: `U${index}`,
+        startDate: "2026-08-10",
+        endDate: "2026-08-10",
+        notifyChannels: ["CNOTIFY"],
+        notifyUsers: []
+      });
+    }
+    for (let index = 0; index < 15; index += 1) {
+      await createAbsence(config, {
+        itemId: `B${index}`,
+        targetUser: `V${index}`,
+        startDate: "2026-08-11",
+        endDate: "2026-08-11",
+        notifyChannels: ["CNOTIFY"],
+        notifyUsers: []
+      });
+    }
+
+    const page1 = await buildAbsenceCalendarReply(config, {
+      userId: "U1",
+      from: "2026-08-05",
+      to: "2026-08-31",
+      channelId: "CNOTIFY",
+      deliverChannelId: "C012RUN",
+      page: 1,
+      todayJst: "2026-08-05"
+    });
+    const actions =
+      typeof page1 !== "string" && page1.blocks
+        ? page1.blocks.find((block) => block.type === "actions")
+        : undefined;
+    const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find((element) =>
+      String((element.text as { text?: string })?.text).includes("次ページ")
+    );
+
+    postUserFacingMessageMock.mockClear();
+    postUserFacingMessageMock.mockRejectedValueOnce(new Error("postEphemeral failed"));
+    const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await handleAbsenceCalendarPageInteraction(config, {
+      actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
+      userId: "U1",
+      pageValue: String(nextButton?.value),
+      responseUrl: "https://hooks.slack.com/actions/T/1/2",
+      channelId: "C012RUN"
+    });
+    await result.followUp?.();
+    expect(postUserFacingMessageMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://hooks.slack.com/actions/T/1/2",
+      expect.objectContaining({
+        body: expect.stringContaining("replace_original")
+      })
+    );
+    vi.unstubAllGlobals();
+  });
+
+  it("uses replace_original for DM deliver channels", async () => {
+    const config = createTestConfig(createMockKv());
+    for (let index = 0; index < 15; index += 1) {
+      await createAbsence(config, {
+        itemId: `A${index}`,
+        targetUser: `U${index}`,
+        startDate: "2026-08-10",
+        endDate: "2026-08-10",
+        notifyChannels: ["CNOTIFY"],
+        notifyUsers: []
+      });
+    }
+    for (let index = 0; index < 15; index += 1) {
+      await createAbsence(config, {
+        itemId: `B${index}`,
+        targetUser: `V${index}`,
+        startDate: "2026-08-11",
+        endDate: "2026-08-11",
+        notifyChannels: ["CNOTIFY"],
+        notifyUsers: []
+      });
+    }
+
+    const page1 = await buildAbsenceCalendarReply(config, {
+      userId: "U1",
+      from: "2026-08-05",
+      to: "2026-08-31",
+      channelId: "CNOTIFY",
+      deliverChannelId: "D01234567",
+      page: 1,
+      todayJst: "2026-08-05"
+    });
+    const actions =
+      typeof page1 !== "string" && page1.blocks
+        ? page1.blocks.find((block) => block.type === "actions")
+        : undefined;
+    const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find((element) =>
+      String((element.text as { text?: string })?.text).includes("次ページ")
+    );
+
+    postUserFacingMessageMock.mockClear();
+    const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await handleAbsenceCalendarPageInteraction(config, {
+      actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
+      userId: "U1",
+      pageValue: String(nextButton?.value),
+      responseUrl: "https://hooks.slack.com/actions/T/1/2",
+      channelId: "D01234567"
+    });
+    await result.followUp?.();
+    expect(postUserFacingMessageMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://hooks.slack.com/actions/T/1/2",
+      expect.objectContaining({
+        body: expect.stringContaining("replace_original")
       })
     );
     vi.unstubAllGlobals();

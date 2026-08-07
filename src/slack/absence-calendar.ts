@@ -28,7 +28,7 @@ import {
   type AdminEphemeralReply
 } from "./admin-format";
 import { slackApi } from "./api";
-import { postUserFacingMessage } from "./user-message";
+import { isImChannelId, postUserFacingMessage } from "./user-message";
 
 export const ABSENCE_CALENDAR_MODAL_CALLBACK_ID = "pasr_absence_calendar";
 
@@ -125,7 +125,7 @@ const deliverCalendarEphemeralPageReply = async (
     deliver_channel_id: params.channelId ?? ""
   };
 
-  if (params.channelId) {
+  if (params.channelId && !isImChannelId(params.channelId)) {
     try {
       await postUserFacingMessage(config, {
         channelId: params.channelId,
@@ -134,9 +134,18 @@ const deliverCalendarEphemeralPageReply = async (
         blocks: normalized.blocks
       });
       if (params.responseUrl) {
-        await postAdminEphemeralToResponseUrl(params.responseUrl, { text: "" }, {
+        const deleted = await postAdminEphemeralToResponseUrl(params.responseUrl, { text: "" }, {
           deleteOriginal: true
         });
+        if (!deleted) {
+          console.warn(
+            JSON.stringify({
+              level: "warn",
+              event: "calendar_page_delete_original_failed",
+              ...logBase
+            })
+          );
+        }
       }
       console.log(JSON.stringify({ level: "info", event: "calendar_page_delivery", ...logBase, method: "post_ephemeral" }));
       return;
