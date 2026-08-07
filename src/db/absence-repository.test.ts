@@ -96,6 +96,18 @@ describe("absence-repository", () => {
     expect(rows[0]?.targetUser).toBe("U1");
   });
 
+  it("does not match channel ids by prefix", async () => {
+    const config = createTestConfig(createMockKv());
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-08-01",
+      endDate: "2026-08-05",
+      notifyChannels: ["C12"],
+      notifyUsers: []
+    });
+    expect(await countAbsencesOverlappingRangeForChannel(config, "2026-08-01", "2026-08-31", "C1")).toBe(0);
+  });
+
   it("returns empty for invalid channel id", async () => {
     const config = createTestConfig(createMockKv());
     await createAbsence(config, {

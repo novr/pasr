@@ -11,7 +11,8 @@ import {
   formatAbsenceRangeValidationError,
   isSlackChannelId,
   validateAbsenceRange,
-  type AbsenceCalendarPageQuery
+  type AbsenceCalendarPageQuery,
+  type AbsenceRangeValidationError
 } from "../domain/absence-range";
 import { getJstDateParts } from "../domain/jst-date";
 import { ABSENCE_CALENDAR_PAGE_ACTION_ID } from "./action-ids";
@@ -31,6 +32,17 @@ export const ABSENCE_CALENDAR_MODAL_CALLBACK_ID = "pasr_absence_calendar";
 export const START_BLOCK_ID = "start_block";
 export const END_BLOCK_ID = "end_block";
 export const CHANNEL_BLOCK_ID = "channel_block";
+
+const absenceRangeErrorBlockId = (error: AbsenceRangeValidationError): string => {
+  switch (error) {
+    case "from_after_to":
+    case "invalid_to":
+    case "range_too_long":
+      return END_BLOCK_ID;
+    default:
+      return START_BLOCK_ID;
+  }
+};
 
 type AbsenceCalendarMetadata = {
   userId: string;
@@ -226,7 +238,7 @@ export const buildAbsenceCalendarModalView = (params: {
           type: "datepicker",
           action_id: "start_date",
           initial_date: params.todayJst,
-          min_date: params.todayJst
+          placeholder: { type: "plain_text", text: "開始日を選択" }
         }
       },
       {
@@ -237,7 +249,7 @@ export const buildAbsenceCalendarModalView = (params: {
           type: "datepicker",
           action_id: "end_date",
           initial_date: params.todayJst,
-          min_date: params.todayJst
+          placeholder: { type: "plain_text", text: "終了日を選択" }
         }
       },
       {
@@ -302,7 +314,7 @@ const handleAbsenceCalendarSubmission = async (
     return {
       ok: false,
       error: formatAbsenceRangeValidationError(rangeValidation.error),
-      errorBlockId: rangeValidation.error === "from_after_to" ? END_BLOCK_ID : START_BLOCK_ID
+      errorBlockId: absenceRangeErrorBlockId(rangeValidation.error)
     };
   }
   if (!isSlackChannelId(channelId)) {
