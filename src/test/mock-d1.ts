@@ -111,11 +111,10 @@ export const createMockD1 = (options: MockD1Options = {}): D1Database => {
       return { results: tables, run: { success: true, meta: {} } };
     }
 
-    if (sql.startsWith("SELECT COUNT(*) AS count FROM absences WHERE start_date <= ? AND end_date >= ? AND notify_channels LIKE ?")) {
+    if (sql.includes("json_each(notify_channels)") && sql.startsWith("SELECT COUNT(*) AS count FROM absences WHERE start_date <= ? AND end_date >= ?")) {
       const to = String(p[0]);
       const from = String(p[1]);
-      const likePattern = String(p[2]);
-      const channelId = likePattern.slice(2, -2);
+      const channelId = String(p[2]);
       const count = [...absences.values()].filter(
         (row) =>
           row.start_date <= to &&
@@ -174,11 +173,10 @@ export const createMockD1 = (options: MockD1Options = {}): D1Database => {
       ).length;
       return { results: [{ count }], run: { success: true, meta: {} } };
     }
-    if (sql.startsWith("SELECT * FROM absences WHERE start_date <= ? AND end_date >= ? AND notify_channels LIKE ?")) {
+    if (sql.includes("json_each(notify_channels)") && sql.startsWith("SELECT * FROM absences WHERE start_date <= ? AND end_date >= ?")) {
       const to = String(p[0]);
       const from = String(p[1]);
-      const likePattern = String(p[2]);
-      const channelId = likePattern.slice(2, -2);
+      const channelId = String(p[2]);
       let results = [...absences.values()]
         .filter(
           (row) =>

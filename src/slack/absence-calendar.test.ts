@@ -93,6 +93,10 @@ describe("buildAbsenceCalendarModalView", () => {
     };
     expect(startBlock.element?.initial_date).toBe("2026-08-05");
     expect(startBlock.element?.min_date).toBeUndefined();
+    const endBlock = blocks.find((block) => block.block_id === END_BLOCK_ID) as {
+      element?: { min_date?: string };
+    };
+    expect(endBlock.element?.min_date).toBeUndefined();
     const channelBlock = blocks.find((block) => block.block_id === CHANNEL_BLOCK_ID) as {
       element?: { filter?: { include?: string[] } };
     };
@@ -132,6 +136,57 @@ describe("handleAbsenceCalendarInteraction", () => {
       }
     });
     expect(result.ok).toBe(false);
+  });
+
+  it("rejects from before today on submission", async () => {
+    const config = createTestConfig(createMockKv());
+    const result = await handleAbsenceCalendarInteraction(config, {
+      type: "view_submission",
+      user: { id: "U1" },
+      view: {
+        callback_id: ABSENCE_CALENDAR_MODAL_CALLBACK_ID,
+        private_metadata: JSON.stringify({
+          userId: "U1",
+          responseUrl: "https://hooks.example",
+          deliverChannelId: "C_RUN"
+        }),
+        state: {
+          values: {
+            [START_BLOCK_ID]: { start_date: { selected_date: "2026-08-01" } },
+            [END_BLOCK_ID]: { end_date: { selected_date: "2026-08-31" } },
+            [CHANNEL_BLOCK_ID]: { notify_channel_select: { selected_conversation: "CNOTIFY" } }
+          }
+        }
+      }
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("今日以降");
+    expect(result.errorBlockId).toBe(START_BLOCK_ID);
+  });
+
+  it("maps end-date validation errors to end block", async () => {
+    const config = createTestConfig(createMockKv());
+    const result = await handleAbsenceCalendarInteraction(config, {
+      type: "view_submission",
+      user: { id: "U1" },
+      view: {
+        callback_id: ABSENCE_CALENDAR_MODAL_CALLBACK_ID,
+        private_metadata: JSON.stringify({
+          userId: "U1",
+          responseUrl: "https://hooks.example",
+          deliverChannelId: "C_RUN"
+        }),
+        state: {
+          values: {
+            [START_BLOCK_ID]: { start_date: { selected_date: "2026-08-10" } },
+            [END_BLOCK_ID]: { end_date: { selected_date: "2026-08-05" } },
+            [CHANNEL_BLOCK_ID]: { notify_channel_select: { selected_conversation: "CNOTIFY" } }
+          }
+        }
+      }
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errorBlockId).toBe(END_BLOCK_ID);
   });
 });
 

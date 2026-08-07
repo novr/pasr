@@ -88,5 +88,3 @@ export const formatAbsenceRangeValidationError = (error: AbsenceRangeValidationE
       return `期間は最大 ${ABSENCE_RANGE_MAX_INCLUSIVE_DAYS} 日までです。`;
   }
 };
-
-export const notifyChannelLikePattern = (channelId: string): string => `%"${channelId}"%`;
