@@ -1,0 +1,191 @@
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { createAbsence } from "../db/absence-repository";
+import { createMockKv, createTestConfig } from "../test/mock-kv";
+import { ADMIN_EPHEMERAL_LIST_MAX } from "./admin-constants";
+import type { AdminEphemeralReply } from "./admin-format";
+import { ABSENCE_CALENDAR_PAGE_ACTION_ID } from "./action-ids";
+import {
+  ABSENCE_CALENDAR_MODAL_CALLBACK_ID,
+  buildAbsenceCalendarModalView,
+  buildAbsenceCalendarReply,
+  CHANNEL_BLOCK_ID,
+  END_BLOCK_ID,
+  handleAbsenceCalendarInteraction,
+  handleAbsenceCalendarPageInteraction,
+  START_BLOCK_ID
+} from "./absence-calendar";
+
+const replyText = (reply: AdminEphemeralReply | string): string =>
+  typeof reply === "string" ? reply : reply.text;
+
+describe("buildAbsenceCalendarReply", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-05T00:30:00+09:00"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("lists channel absences in range with pagination", async () => {
+    const config = createTestConfig(createMockKv());
+    for (let index = 0; index < ADMIN_EPHEMERAL_LIST_MAX + 1; index += 1) {
+      await createAbsence(config, {
+        itemId: `A${index}`,
+        targetUser: `U${index}`,
+        startDate: "2026-08-10",
+        endDate: "2026-08-10",
+        notifyChannels: ["CNOTIFY"],
+        notifyUsers: []
+      });
+    }
+
+    const reply = await buildAbsenceCalendarReply(config, {
+      userId: "U1",
+      from: "2026-08-05",
+      to: "2026-08-31",
+      channelId: "CNOTIFY",
+      page: 1,
+      todayJst: "2026-08-05"
+    });
+    expect(replyText(reply)).toContain("26件");
+    expect(replyText(reply)).toContain("ページ 1/2");
+    if (typeof reply !== "string" && reply.blocks) {
+      const actions = reply.blocks.find((block) => block.type === "actions");
+      expect(actions).toBeTruthy();
+      const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find(
+        (element) => element.action_id === ABSENCE_CALENDAR_PAGE_ACTION_ID && element.value !== "1"
+      );
+      expect(nextButton?.value).toContain("CNOTIFY");
+    }
+  });
+
+  it("rejects from before today", async () => {
+    const config = createTestConfig(createMockKv());
+    const reply = await buildAbsenceCalendarReply(config, {
+      userId: "U1",
+      from: "2026-08-01",
+      to: "2026-08-31",
+      channelId: "CNOTIFY",
+      page: 1,
+      todayJst: "2026-08-05"
+    });
+    expect(replyText(reply)).toContain("今日以降");
+  });
+});
+
+describe("buildAbsenceCalendarModalView", () => {
+  it("includes guidance and min_date", () => {
+    const view = buildAbsenceCalendarModalView({
+      userId: "U1",
+      responseUrl: "https://hooks.example",
+      deliverChannelId: "C_RUN",
+      todayJst: "2026-08-05",
+      initialChannelId: "CNOTIFY"
+    });
+    expect(view.callback_id).toBe(ABSENCE_CALENDAR_MODAL_CALLBACK_ID);
+    const blocks = view.blocks as Array<Record<string, unknown>>;
+    const context = blocks[0]?.elements as Array<{ text?: string }>;
+    expect(context[0]?.text).toContain("予定");
+    const startBlock = blocks.find((block) => block.block_id === START_BLOCK_ID) as {
+      element?: { min_date?: string };
+    };
+    expect(startBlock.element?.min_date).toBe("2026-08-05");
+    const channelBlock = blocks.find((block) => block.block_id === CHANNEL_BLOCK_ID) as {
+      element?: { filter?: { include?: string[] } };
+    };
+    expect(channelBlock.element?.filter?.include).toEqual(["public", "private"]);
+  });
+});
+
+describe("handleAbsenceCalendarInteraction", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-05T00:30:00+09:00"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("rejects submission from another user", async () => {
+    const config = createTestConfig(createMockKv());
+    const result = await handleAbsenceCalendarInteraction(config, {
+      type: "view_submission",
+      user: { id: "U_OTHER" },
+      view: {
+        callback_id: ABSENCE_CALENDAR_MODAL_CALLBACK_ID,
+        private_metadata: JSON.stringify({
+          userId: "U1",
+          responseUrl: "https://hooks.example",
+          deliverChannelId: "C_RUN"
+        }),
+        state: {
+          values: {
+            [START_BLOCK_ID]: { start_date: { selected_date: "2026-08-10" } },
+            [END_BLOCK_ID]: { end_date: { selected_date: "2026-08-10" } },
+            [CHANNEL_BLOCK_ID]: { notify_channel_select: { selected_conversation: "CNOTIFY" } }
+          }
+        }
+      }
+    });
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe("handleAbsenceCalendarPageInteraction", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-05T00:30:00+09:00"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("no-ops on invalid page value", async () => {
+    const config = createTestConfig(createMockKv());
+    const result = await handleAbsenceCalendarPageInteraction(config, {
+      actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
+      userId: "U1",
+      pageValue: "not-json"
+    });
+    expect(result.handled).toBe(true);
+    expect(result.followUp).toBeUndefined();
+  });
+
+  it("no-ops when from is before today", async () => {
+    const config = createTestConfig(createMockKv());
+    const result = await handleAbsenceCalendarPageInteraction(config, {
+      actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
+      userId: "U1",
+      pageValue: JSON.stringify({
+        userId: "U1",
+        from: "2026-08-01",
+        to: "2026-08-31",
+        channelId: "CNOTIFY",
+        page: 2
+      })
+    });
+    expect(result.handled).toBe(true);
+    expect(result.followUp).toBeUndefined();
+  });
+
+  it("no-ops when page value userId does not match actor", async () => {
+    const config = createTestConfig(createMockKv());
+    const result = await handleAbsenceCalendarPageInteraction(config, {
+      actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
+      userId: "U1",
+      pageValue: JSON.stringify({
+        userId: "U_OTHER",
+        from: "2026-08-05",
+        to: "2026-08-31",
+        channelId: "CNOTIFY",
+        page: 2
+      })
+    });
+    expect(result.handled).toBe(true);
+    expect(result.followUp).toBeUndefined();
+  });
+});

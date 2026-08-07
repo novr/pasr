@@ -53,6 +53,15 @@ export type MockD1Options = {
   includeSlackUserOAuth?: boolean;
 };
 
+const rowNotifyChannelsIncludes = (raw: string, channelId: string): boolean => {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) && parsed.includes(channelId);
+  } catch {
+    return false;
+  }
+};
+
 export const createMockD1 = (options: MockD1Options = {}): D1Database => {
   const includeChannelNotifySettings = options.includeChannelNotifySettings !== false;
   const includeSlackUserOAuth = options.includeSlackUserOAuth !== false;
@@ -102,6 +111,19 @@ export const createMockD1 = (options: MockD1Options = {}): D1Database => {
       return { results: tables, run: { success: true, meta: {} } };
     }
 
+    if (sql.startsWith("SELECT COUNT(*) AS count FROM absences WHERE start_date <= ? AND end_date >= ? AND notify_channels LIKE ?")) {
+      const to = String(p[0]);
+      const from = String(p[1]);
+      const likePattern = String(p[2]);
+      const channelId = likePattern.slice(2, -2);
+      const count = [...absences.values()].filter(
+        (row) =>
+          row.start_date <= to &&
+          row.end_date >= from &&
+          rowNotifyChannelsIncludes(row.notify_channels, channelId)
+      ).length;
+      return { results: [{ count }], run: { success: true, meta: {} } };
+    }
     if (sql.startsWith("SELECT COUNT(*) AS count FROM absences")) {
       return { results: [{ count: absences.size }], run: { success: true, meta: {} } };
     }
@@ -151,6 +173,31 @@ export const createMockD1 = (options: MockD1Options = {}): D1Database => {
         (row) => row.start_date <= today && row.end_date >= today
       ).length;
       return { results: [{ count }], run: { success: true, meta: {} } };
+    }
+    if (sql.startsWith("SELECT * FROM absences WHERE start_date <= ? AND end_date >= ? AND notify_channels LIKE ?")) {
+      const to = String(p[0]);
+      const from = String(p[1]);
+      const likePattern = String(p[2]);
+      const channelId = likePattern.slice(2, -2);
+      let results = [...absences.values()]
+        .filter(
+          (row) =>
+            row.start_date <= to &&
+            row.end_date >= from &&
+            rowNotifyChannelsIncludes(row.notify_channels, channelId)
+        )
+        .sort((a, b) => a.start_date.localeCompare(b.start_date) || a.id.localeCompare(b.id));
+      if (sql.includes("LIMIT ? OFFSET ?") && p.length >= 5) {
+        const limit = Number(p[3]);
+        const offset = Number(p[4]);
+        if (Number.isFinite(offset) && offset > 0) {
+          results = results.slice(offset);
+        }
+        if (Number.isFinite(limit) && limit >= 0) {
+          results = results.slice(0, limit);
+        }
+      }
+      return { results, run: { success: true, meta: {} } };
     }
     if (sql.startsWith("SELECT * FROM absences WHERE start_date <= ? AND end_date >= ?")) {
       const today = String(p[0]);

@@ -6,6 +6,7 @@ import { isTransientError } from "../errors/transient";
 import { runDailyNotify } from "../jobs/daily-notify";
 import { formatRunSentForAdmin } from "../domain/run-sent-metrics";
 import { isValidJstDateString, getJstDateParts } from "../domain/jst-date";
+import { isSlackChannelId } from "../domain/absence-range";
 import { checkDbSchema, checkChannelNotifySettingsSchema, checkSlackUserOAuthSchema } from "../db/schema-check";
 import {
   openAbsenceEditModal,
@@ -14,6 +15,7 @@ import {
   findOwnAbsenceRecordsByStartDate
 } from "./absence-edit";
 import { showOwnAbsenceList } from "./absence-list";
+import { openAbsenceCalendarModal } from "./absence-calendar";
 import { openAbsenceRegisterModal } from "./absence-register";
 import { handleChannelConfigCommand } from "./channel-config";
 import { handleUsersCommand } from "./admin-users";
@@ -113,6 +115,7 @@ export type SelfCommandParse =
   | { kind: "update_item"; itemId: string }
   | { kind: "update_invalid_date" }
   | { kind: "register" }
+  | { kind: "calendar" }
   | { kind: "unknown"; action: string };
 
 export const parseSelfCommandText = (text: string): SelfCommandParse => {
@@ -122,6 +125,7 @@ export const parseSelfCommandText = (text: string): SelfCommandParse => {
   if (action === "settings") return { kind: "settings" };
   if (action === "list") return { kind: "list" };
   if (action === "register") return { kind: "register" };
+  if (action === "calendar") return { kind: "calendar" };
   if (action === "update") {
     if (parts.length === 1) return { kind: "update_list" };
     const token = parts[1];
@@ -185,6 +189,7 @@ const buildHelpText = (): string =>
     "/pasr help - ユーザ向けコマンドの使い方表示",
     "/pasr settings - 自分の通知・Status 設定を表示・編集",
     "/pasr list - 自分の不在予定一覧（編集・削除）",
+    "/pasr calendar - 通知チャンネルの期間別不在一覧（閲覧）",
     "/pasr update - /pasr list と同じ",
     "/pasr update YYYY-MM-DD - 開始日指定で不在予定を編集",
     "/pasr register - 自分の不在予定を登録"
@@ -203,7 +208,7 @@ const buildAdminHelpText = (): string =>
 
 type CommandKind = "self" | "admin" | "unsupported";
 
-const SELF_ACTIONS = ["help", "list", "settings", "update", "register"] as const;
+const SELF_ACTIONS = ["help", "list", "settings", "update", "register", "calendar"] as const;
 
 export const getCommandKind = (command: string): CommandKind => {
   if (command === "/pasr") return "self";
@@ -270,6 +275,20 @@ const handleSelfImmediateText = async (
             channelId: payload.channelId,
             teamId: payload.teamId,
             triggerSource: "slash"
+          });
+        }
+      };
+    case "calendar":
+      return {
+        mode: "deferred",
+        ackText: "不在カレンダーを開きます…",
+        run: async () => {
+          await openAbsenceCalendarModal(config, {
+            triggerId: payload.triggerId,
+            userId: payload.userId,
+            responseUrl: payload.responseUrl,
+            deliverChannelId: payload.channelId,
+            initialChannelId: isSlackChannelId(payload.channelId) ? payload.channelId : undefined
           });
         }
       };

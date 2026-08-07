@@ -9,6 +9,11 @@ import {
 } from "./absence-edit";
 import { handleAbsenceListInteraction } from "./absence-list";
 import { handleAbsenceRegisterInteraction } from "./absence-register";
+import {
+  ABSENCE_CALENDAR_MODAL_CALLBACK_ID,
+  handleAbsenceCalendarInteraction,
+  handleAbsenceCalendarPageInteraction
+} from "./absence-calendar";
 import { handleAbsenceMentionInteraction, isMentionAction } from "./absence-mention";
 import { handleAppHomeInteraction } from "./app-home";
 import { refreshAppHomeAfterMutation } from "./app-home-publish";
@@ -157,6 +162,16 @@ export const handleSlackInteraction = async (
     if (absencesPageResult.handled) {
       return { ok: true, followUp: absencesPageResult.followUp };
     }
+    const calendarPageResult = await handleAbsenceCalendarPageInteraction(config, {
+      actionId,
+      userId,
+      pageValue: payload.actions?.[0]?.value ?? "",
+      responseUrl: payload.response_url,
+      channelId: payload.channel?.id
+    });
+    if (calendarPageResult.handled) {
+      return { ok: true, followUp: calendarPageResult.followUp };
+    }
     const disconnectResult = await handleStatusOAuthDisconnectAction(config, {
       actionId,
       userId: payload.user?.id ?? "",
@@ -181,6 +196,18 @@ export const handleSlackInteraction = async (
   const registerResult = await handleAbsenceRegisterInteraction(config, payload);
   if (payload.type === "view_submission" && payload.view?.callback_id === "pasr_absence_register") {
     return registerResult;
+  }
+
+  const calendarResult = await handleAbsenceCalendarInteraction(config, payload);
+  if (payload.type === "view_submission" && payload.view?.callback_id === ABSENCE_CALENDAR_MODAL_CALLBACK_ID) {
+    if (!calendarResult.ok) {
+      return {
+        ok: false,
+        error: calendarResult.error,
+        errorBlockId: calendarResult.errorBlockId
+      };
+    }
+    return { ok: true, followUp: calendarResult.followUp };
   }
   if (payload.type === "block_actions") {
     const registerActionId = payload.actions?.[0]?.action_id ?? "";
