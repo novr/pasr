@@ -1,5 +1,6 @@
 import type { AppConfig } from "../config";
 import { DEFAULT_ABSENCE_TYPE, type AbsenceRecord } from "../domain/absence";
+import { isSlackChannelId, notifyChannelLikePattern } from "../domain/absence-range";
 import { getDb } from "./client";
 import { serializeJsonArray } from "./json-columns";
 import { rowToAbsenceRecord, type AbsenceRow } from "./row-mapper";
@@ -157,6 +158,43 @@ export const countAbsencesActiveOnDate = async (
     .bind(todayJst, todayJst)
     .first<{ count: number }>();
   return row?.count ?? 0;
+};
+
+export const countAbsencesOverlappingRangeForChannel = async (
+  config: AppConfig,
+  fromJst: string,
+  toJst: string,
+  channelId: string
+): Promise<number> => {
+  if (!isSlackChannelId(channelId)) return 0;
+  const row = await getDb(config)
+    .prepare(
+      `SELECT COUNT(*) AS count FROM absences
+       WHERE start_date <= ? AND end_date >= ? AND notify_channels LIKE ?`
+    )
+    .bind(toJst, fromJst, notifyChannelLikePattern(channelId))
+    .first<{ count: number }>();
+  return row?.count ?? 0;
+};
+
+export const listAbsencesOverlappingRangeForChannel = async (
+  config: AppConfig,
+  fromJst: string,
+  toJst: string,
+  channelId: string,
+  options: { limit: number; offset: number }
+): Promise<AbsenceRecord[]> => {
+  if (!isSlackChannelId(channelId)) return [];
+  const result = await getDb(config)
+    .prepare(
+      `SELECT * FROM absences
+       WHERE start_date <= ? AND end_date >= ? AND notify_channels LIKE ?
+       ORDER BY start_date ASC, id ASC
+       LIMIT ? OFFSET ?`
+    )
+    .bind(toJst, fromJst, notifyChannelLikePattern(channelId), options.limit, options.offset)
+    .all<AbsenceRow>();
+  return (result.results ?? []).map(rowToAbsenceRecord);
 };
 
 export const listAbsenceIdsEndedBefore = async (

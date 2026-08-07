@@ -66,6 +66,7 @@ describe("slash command parsers", () => {
     expect(parseSelfCommandText("update Rec0123ABC")).toEqual({ kind: "update_item", itemId: "Rec0123ABC" });
     expect(parseSelfCommandText("update bad-date")).toEqual({ kind: "update_item", itemId: "bad-date" });
     expect(parseSelfCommandText("update 2026-13-40")).toEqual({ kind: "update_invalid_date" });
+    expect(parseSelfCommandText("calendar")).toEqual({ kind: "calendar" });
   });
 
   it("isSlackAdminUser checks allowlist", () => {

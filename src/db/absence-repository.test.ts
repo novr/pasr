@@ -3,6 +3,8 @@ import {
   createAbsence,
   deleteAbsenceById,
   getAbsenceById,
+  countAbsencesOverlappingRangeForChannel,
+  listAbsencesOverlappingRangeForChannel,
   listAbsencesByUserFuture,
   listAbsenceIdsEndedBefore
 } from "./absence-repository";
@@ -59,5 +61,55 @@ describe("absence-repository", () => {
     expect(ids).toContain(created.itemId);
     await deleteAbsenceById(config, created.itemId);
     expect(await getAbsenceById(config, created.itemId)).toBeUndefined();
+  });
+
+  it("lists overlapping absences for channel in range", async () => {
+    const config = createTestConfig(createMockKv());
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-08-01",
+      endDate: "2026-08-05",
+      notifyChannels: ["C1"],
+      notifyUsers: []
+    });
+    await createAbsence(config, {
+      targetUser: "U2",
+      startDate: "2026-08-10",
+      endDate: "2026-08-12",
+      notifyChannels: ["C2"],
+      notifyUsers: []
+    });
+    await createAbsence(config, {
+      targetUser: "U3",
+      startDate: "2026-09-01",
+      endDate: "2026-09-02",
+      notifyChannels: ["C1"],
+      notifyUsers: []
+    });
+
+    expect(await countAbsencesOverlappingRangeForChannel(config, "2026-08-01", "2026-08-31", "C1")).toBe(1);
+    const rows = await listAbsencesOverlappingRangeForChannel(config, "2026-08-01", "2026-08-31", "C1", {
+      limit: 10,
+      offset: 0
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.targetUser).toBe("U1");
+  });
+
+  it("returns empty for invalid channel id", async () => {
+    const config = createTestConfig(createMockKv());
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-08-01",
+      endDate: "2026-08-05",
+      notifyChannels: ["C1"],
+      notifyUsers: []
+    });
+    expect(await countAbsencesOverlappingRangeForChannel(config, "2026-08-01", "2026-08-31", "D_DM")).toBe(0);
+    const rows = await listAbsencesOverlappingRangeForChannel(config, "2026-08-01", "2026-08-31", "D_DM", {
+      limit: 10,
+      offset: 0
+    });
+    expect(rows).toHaveLength(0);
   });
 });
