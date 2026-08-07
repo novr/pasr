@@ -28,7 +28,6 @@ import {
   type AdminEphemeralReply
 } from "./admin-format";
 import { slackApi } from "./api";
-import { SlackApiError } from "./client";
 import { isImChannelId, postUserFacingMessage } from "./user-message";
 
 export const ABSENCE_CALENDAR_MODAL_CALLBACK_ID = "pasr_absence_calendar";
@@ -108,9 +107,6 @@ const calendarPaginationValue = (
   page: number
 ): string => encodeAbsenceCalendarPageValue({ ...query, page });
 
-const isSlackInvalidBlocksError = (error: unknown): boolean =>
-  error instanceof SlackApiError && error.slackError === "invalid_blocks";
-
 const deliverCalendarEphemeralPageReply = async (
   config: AppConfig,
   params: {
@@ -162,38 +158,6 @@ const deliverCalendarEphemeralPageReply = async (
           message: error instanceof Error ? error.message : String(error)
         })
       );
-      if (isSlackInvalidBlocksError(error)) {
-        try {
-          await postUserFacingMessage(config, {
-            channelId: params.channelId,
-            userId: params.userId,
-            text: normalized.text
-          });
-          if (params.responseUrl) {
-            await postAdminEphemeralToResponseUrl(params.responseUrl, { text: "" }, {
-              deleteOriginal: true
-            });
-          }
-          console.log(
-            JSON.stringify({
-              level: "info",
-              event: "calendar_page_delivery",
-              ...logBase,
-              method: "post_ephemeral_text_only"
-            })
-          );
-          return;
-        } catch (textOnlyError) {
-          console.warn(
-            JSON.stringify({
-              level: "warn",
-              event: "calendar_page_post_ephemeral_text_only_failed",
-              ...logBase,
-              message: textOnlyError instanceof Error ? textOnlyError.message : String(textOnlyError)
-            })
-          );
-        }
-      }
     }
   }
 
@@ -204,24 +168,6 @@ const deliverCalendarEphemeralPageReply = async (
     if (replaced) {
       console.log(JSON.stringify({ level: "info", event: "calendar_page_delivery", ...logBase, method: "replace_original" }));
       return;
-    }
-    if (normalized.blocks) {
-      const replacedTextOnly = await postAdminEphemeralToResponseUrl(
-        params.responseUrl,
-        { text: normalized.text },
-        { replaceOriginal: true }
-      );
-      if (replacedTextOnly) {
-        console.log(
-          JSON.stringify({
-            level: "info",
-            event: "calendar_page_delivery",
-            ...logBase,
-            method: "replace_original_text_only"
-          })
-        );
-        return;
-      }
     }
     const posted = await postAdminEphemeralToResponseUrl(params.responseUrl, normalized);
     if (posted) {
@@ -544,30 +490,18 @@ export const handleAbsenceCalendarPageInteraction = async (
   return {
     handled: true,
     followUp: async () => {
-      try {
-        const { day: todayJst } = getJstDateParts();
-        const reply = await buildAbsenceCalendarReply(config, {
-          userId: decoded.userId,
-          from: decoded.from,
-          to: decoded.to,
-          channelId: decoded.channelId,
-          deliverChannelId: deliverChannelId,
-          page: decoded.page,
-          todayJst,
-          pageTurn: true
-        });
-        await deliverCalendarEphemeralPageReply(config, { ...deliverParams, page: decoded.page }, reply);
-      } catch (error) {
-        console.warn(
-          JSON.stringify({
-            level: "warn",
-            event: "calendar_page_follow_up_failed",
-            user_id: params.userId,
-            page: decoded.page,
-            message: error instanceof Error ? error.message : String(error)
-          })
-        );
-      }
+      const { day: todayJst } = getJstDateParts();
+      const reply = await buildAbsenceCalendarReply(config, {
+        userId: decoded.userId,
+        from: decoded.from,
+        to: decoded.to,
+        channelId: decoded.channelId,
+        deliverChannelId: deliverChannelId,
+        page: decoded.page,
+        todayJst,
+        pageTurn: true
+      });
+      await deliverCalendarEphemeralPageReply(config, { ...deliverParams, page: decoded.page }, reply);
     }
   };
 };

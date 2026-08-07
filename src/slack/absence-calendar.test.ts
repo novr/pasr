@@ -3,7 +3,6 @@ import { createAbsence } from "../db/absence-repository";
 import { createMockKv, createTestConfig } from "../test/mock-kv";
 import type { AdminEphemeralReply } from "./admin-format";
 import { ABSENCE_CALENDAR_PAGE_ACTION_ID } from "./action-ids";
-import { SlackApiError } from "./client";
 
 const { postUserFacingMessageMock } = vi.hoisted(() => ({
   postUserFacingMessageMock: vi.fn(async () => undefined)
@@ -615,75 +614,6 @@ describe("handleAbsenceCalendarPageInteraction", () => {
       "https://hooks.slack.com/actions/T/1/2",
       expect.objectContaining({
         body: expect.stringContaining("replace_original")
-      })
-    );
-    vi.unstubAllGlobals();
-  });
-
-  it("falls back to text-only post_ephemeral when blocks are invalid", async () => {
-    const config = createTestConfig(createMockKv());
-    for (let index = 0; index < 15; index += 1) {
-      await createAbsence(config, {
-        itemId: `A${index}`,
-        targetUser: `U${index}`,
-        startDate: "2026-08-10",
-        endDate: "2026-08-10",
-        notifyChannels: ["CNOTIFY"],
-        notifyUsers: []
-      });
-    }
-    for (let index = 0; index < 15; index += 1) {
-      await createAbsence(config, {
-        itemId: `B${index}`,
-        targetUser: `V${index}`,
-        startDate: "2026-08-11",
-        endDate: "2026-08-11",
-        notifyChannels: ["CNOTIFY"],
-        notifyUsers: []
-      });
-    }
-
-    const page1 = await buildAbsenceCalendarReply(config, {
-      userId: "U1",
-      from: "2026-08-05",
-      to: "2026-08-31",
-      channelId: "CNOTIFY",
-      deliverChannelId: "C012RUN",
-      page: 1,
-      todayJst: "2026-08-05"
-    });
-    const actions =
-      typeof page1 !== "string" && page1.blocks
-        ? page1.blocks.find((block) => block.type === "actions")
-        : undefined;
-    const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find((element) =>
-      String((element.text as { text?: string })?.text).includes("次ページ")
-    );
-
-    postUserFacingMessageMock.mockClear();
-    postUserFacingMessageMock
-      .mockRejectedValueOnce(new SlackApiError("chat.postEphemeral", "invalid_blocks"))
-      .mockResolvedValueOnce(undefined);
-    const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
-    vi.stubGlobal("fetch", fetchMock);
-    const result = await handleAbsenceCalendarPageInteraction(config, {
-      actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
-      userId: "U1",
-      pageValue: String(nextButton?.value),
-      responseUrl: "https://hooks.slack.com/actions/T/1/2",
-      channelId: "C012RUN"
-    });
-    await result.followUp?.();
-    expect(postUserFacingMessageMock).toHaveBeenCalledTimes(2);
-    expect(postUserFacingMessageMock).toHaveBeenNthCalledWith(
-      2,
-      config,
-      expect.not.objectContaining({ blocks: expect.anything() })
-    );
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://hooks.slack.com/actions/T/1/2",
-      expect.objectContaining({
-        body: expect.stringContaining("delete_original")
       })
     );
     vi.unstubAllGlobals();
