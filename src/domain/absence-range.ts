@@ -2,6 +2,8 @@ import { addJstDays, isValidJstDateString } from "./jst-date";
 
 export const ABSENCE_RANGE_MAX_INCLUSIVE_DAYS = 92;
 export const SLACK_CHANNEL_ID_PATTERN = /^C[A-Z0-9]+$/i;
+export const SLACK_DELIVER_CHANNEL_ID_PATTERN = /^(C|D)[A-Z0-9]+$/i;
+export const SLACK_BUTTON_VALUE_MAX = 2000;
 
 export type AbsenceRangeValidationError =
   | "invalid_from"
@@ -20,6 +22,13 @@ export type AbsenceCalendarPageQuery = {
 };
 
 export const isSlackChannelId = (value: string): boolean => SLACK_CHANNEL_ID_PATTERN.test(value);
+
+export const isSlackDeliverChannelId = (value: string | undefined): value is string =>
+  typeof value === "string" && SLACK_DELIVER_CHANNEL_ID_PATTERN.test(value);
+
+export const resolveSlackDeliverChannelId = (
+  ...candidates: Array<string | undefined>
+): string | undefined => candidates.find(isSlackDeliverChannelId);
 
 export const inclusiveJstDaySpan = (from: string, to: string): number => {
   if (!isValidJstDateString(from) || !isValidJstDateString(to) || from > to) return 0;
@@ -48,8 +57,21 @@ export const validateAbsenceRange = (
   return { ok: true };
 };
 
-export const encodeAbsenceCalendarPageValue = (query: AbsenceCalendarPageQuery): string =>
-  JSON.stringify(query);
+export const encodeAbsenceCalendarPageValue = (query: AbsenceCalendarPageQuery): string => {
+  const payload: AbsenceCalendarPageQuery = {
+    ...query,
+    deliverChannelId: isSlackDeliverChannelId(query.deliverChannelId)
+      ? query.deliverChannelId
+      : undefined
+  };
+  const encoded = JSON.stringify(payload);
+  if (encoded.length <= SLACK_BUTTON_VALUE_MAX) return encoded;
+  if (payload.deliverChannelId) {
+    const withoutDeliverChannel = JSON.stringify({ ...payload, deliverChannelId: undefined });
+    if (withoutDeliverChannel.length <= SLACK_BUTTON_VALUE_MAX) return withoutDeliverChannel;
+  }
+  return encoded;
+};
 
 const parseAbsenceCalendarPageNumber = (value: unknown): number | undefined => {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -77,10 +99,9 @@ export const decodeAbsenceCalendarPageValue = (raw: string): AbsenceCalendarPage
       return undefined;
     }
     if (!parsed.userId) return undefined;
-    const deliverChannelId =
-      typeof parsed.deliverChannelId === "string" && parsed.deliverChannelId.length > 0
-        ? parsed.deliverChannelId
-        : undefined;
+    const deliverChannelId = isSlackDeliverChannelId(parsed.deliverChannelId)
+      ? parsed.deliverChannelId
+      : undefined;
     return {
       userId: parsed.userId,
       from: parsed.from,

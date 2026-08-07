@@ -36,8 +36,12 @@ export const resolveAbsenceEndDate = (startDate: string, endDate: string): strin
 export const formatAttendancePeriod = (startDate: string, endDate: string): string =>
   startDate === endDate ? startDate : `${startDate} 〜 ${endDate}`;
 
+export const escapeSlackMrkdwnText = (text: string): string =>
+  text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 export const formatAttendanceNoticeLine = (targetUser: string, noteText?: string): string => {
-  const suffix = noteText && noteText.length > 0 ? ` ${noteText}` : "";
+  const suffix =
+    noteText && noteText.length > 0 ? ` ${escapeSlackMrkdwnText(noteText)}` : "";
   return `• <@${targetUser}>${suffix}`;
 };
 

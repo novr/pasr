@@ -17,7 +17,8 @@ import {
   deliverAdminEphemeralReply,
   formatAdminEphemeralMessage,
   formatEntityList,
-  normalizeAdminEphemeralReply
+  normalizeAdminEphemeralReply,
+  postAdminEphemeralToResponseUrl
 } from "./admin-format";
 
 describe("formatEntityList", () => {
@@ -115,6 +116,27 @@ describe("buildAdminEphemeralBlocks", () => {
         totalCount: 1
       })
     ).toBeUndefined();
+  });
+});
+
+describe("postAdminEphemeralToResponseUrl", () => {
+  it("returns false when Slack responds with invalid_blocks", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          text: async () => JSON.stringify({ ok: false, error: "invalid_blocks" })
+        }) as Response
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const posted = await postAdminEphemeralToResponseUrl("https://hooks.slack.com/actions/T/1/2", {
+      text: "page",
+      blocks: [{ type: "section", text: { type: "mrkdwn", text: "page" } }]
+    });
+
+    expect(posted).toBe(false);
+    vi.unstubAllGlobals();
   });
 });
 

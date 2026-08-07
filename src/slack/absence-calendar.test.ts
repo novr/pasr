@@ -3,6 +3,15 @@ import { createAbsence } from "../db/absence-repository";
 import { createMockKv, createTestConfig } from "../test/mock-kv";
 import type { AdminEphemeralReply } from "./admin-format";
 import { ABSENCE_CALENDAR_PAGE_ACTION_ID } from "./action-ids";
+
+const { postUserFacingMessageMock } = vi.hoisted(() => ({
+  postUserFacingMessageMock: vi.fn(async () => undefined)
+}));
+
+vi.mock("./user-message", () => ({
+  postUserFacingMessage: postUserFacingMessageMock
+}));
+
 import {
   ABSENCE_CALENDAR_MODAL_CALLBACK_ID,
   buildAbsenceCalendarModalView,
@@ -178,7 +187,7 @@ describe("buildAbsenceCalendarModalView", () => {
     const view = buildAbsenceCalendarModalView({
       userId: "U1",
       responseUrl: "https://hooks.example",
-      deliverChannelId: "C_RUN",
+      deliverChannelId: "C012RUN",
       todayJst: "2026-08-05",
       initialChannelId: "CNOTIFY"
     });
@@ -385,7 +394,7 @@ describe("handleAbsenceCalendarPageInteraction", () => {
       userId: "U1",
       pageValue: String(nextButton?.value),
       responseUrl: "https://hooks.slack.com/actions/T/1/2",
-      channelId: "C_RUN"
+      channelId: "C012RUN"
     });
     expect(result.followUp).toBeTypeOf("function");
     await result.followUp?.();
@@ -429,7 +438,7 @@ describe("handleAbsenceCalendarPageInteraction", () => {
       from: "2026-08-05",
       to: "2026-08-31",
       channelId: "CNOTIFY",
-      deliverChannelId: "C_RUN",
+      deliverChannelId: "C012RUN",
       page: 1,
       todayJst: "2026-08-05"
     });
@@ -440,7 +449,7 @@ describe("handleAbsenceCalendarPageInteraction", () => {
     const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find((element) =>
       String((element.text as { text?: string })?.text).includes("次ページ")
     );
-    expect(String(nextButton?.value)).toContain("C_RUN");
+    expect(String(nextButton?.value)).toContain("C012RUN");
   });
 
   it("reports an error when page value userId does not match actor", async () => {
@@ -463,6 +472,75 @@ describe("handleAbsenceCalendarPageInteraction", () => {
     expect(result.followUp).toBeTypeOf("function");
     await result.followUp?.();
     expect(fetchMock).toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("prefers post_ephemeral over response_url when replace_original fails", async () => {
+    const config = createTestConfig(createMockKv());
+    for (let index = 0; index < 15; index += 1) {
+      await createAbsence(config, {
+        itemId: `A${index}`,
+        targetUser: `U${index}`,
+        startDate: "2026-08-10",
+        endDate: "2026-08-10",
+        notifyChannels: ["CNOTIFY"],
+        notifyUsers: []
+      });
+    }
+    for (let index = 0; index < 15; index += 1) {
+      await createAbsence(config, {
+        itemId: `B${index}`,
+        targetUser: `V${index}`,
+        startDate: "2026-08-11",
+        endDate: "2026-08-11",
+        notifyChannels: ["CNOTIFY"],
+        notifyUsers: []
+      });
+    }
+
+    const page1 = await buildAbsenceCalendarReply(config, {
+      userId: "U1",
+      from: "2026-08-05",
+      to: "2026-08-31",
+      channelId: "CNOTIFY",
+      deliverChannelId: "C012RUN",
+      page: 1,
+      todayJst: "2026-08-05"
+    });
+    const actions =
+      typeof page1 !== "string" && page1.blocks
+        ? page1.blocks.find((block) => block.type === "actions")
+        : undefined;
+    const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find((element) =>
+      String((element.text as { text?: string })?.text).includes("次ページ")
+    );
+
+    postUserFacingMessageMock.mockClear();
+    const fetchMock = vi.fn(
+      async () =>
+        ({
+          ok: false,
+          status: 500,
+          text: async () => ""
+        }) as Response
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await handleAbsenceCalendarPageInteraction(config, {
+      actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
+      userId: "U1",
+      pageValue: String(nextButton?.value),
+      responseUrl: "https://hooks.slack.com/actions/T/1/2",
+      channelId: "C012RUN"
+    });
+    await result.followUp?.();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(postUserFacingMessageMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({
+        channelId: "C012RUN",
+        userId: "U1"
+      })
+    );
     vi.unstubAllGlobals();
   });
 });
