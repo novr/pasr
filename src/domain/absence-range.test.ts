@@ -4,6 +4,7 @@ import {
   encodeAbsenceCalendarPageValue,
   inclusiveJstDaySpan,
   isSlackChannelId,
+  validateAbsenceCalendarPageTurn,
   validateAbsenceRange
 } from "./absence-range";
 
@@ -18,6 +19,10 @@ describe("absence-range", () => {
       ok: false,
       error: "from_before_today"
     });
+  });
+
+  it("allows page turns without re-checking from_before_today", () => {
+    expect(validateAbsenceCalendarPageTurn("2026-08-01", "2026-08-10")).toEqual({ ok: true });
   });
 
   it("rejects from after to", () => {
@@ -55,5 +60,25 @@ describe("absence-range", () => {
       page: 2
     });
     expect(decodeAbsenceCalendarPageValue("not-json")).toBeUndefined();
+  });
+
+  it("decodes string page numbers", () => {
+    expect(
+      decodeAbsenceCalendarPageValue(
+        JSON.stringify({
+          userId: "U1",
+          from: "2026-08-05",
+          to: "2026-08-31",
+          channelId: "CNOTIFY",
+          page: "2"
+        })
+      )
+    ).toEqual({
+      userId: "U1",
+      from: "2026-08-05",
+      to: "2026-08-31",
+      channelId: "CNOTIFY",
+      page: 2
+    });
   });
 });

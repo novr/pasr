@@ -31,7 +31,7 @@ export type SlackInteractionPayload = {
   user?: { id?: string };
   channel?: { id?: string };
   response_url?: string;
-  container?: { type?: string };
+  container?: { type?: string; channel_id?: string };
   view?: {
     type?: string;
     callback_id?: string;
@@ -135,6 +135,9 @@ const handleMemberMasterSettingsSubmission = async (
   }
 };
 
+const interactionChannelId = (payload: SlackInteractionPayload): string | undefined =>
+  payload.channel?.id ?? payload.container?.channel_id;
+
 export const handleSlackInteraction = async (
   config: AppConfig,
   payload: SlackInteractionPayload
@@ -142,12 +145,13 @@ export const handleSlackInteraction = async (
   if (payload.type === "block_actions") {
     const actionId = payload.actions?.[0]?.action_id ?? "";
     const userId = payload.user?.id ?? "";
+    const channelId = interactionChannelId(payload);
     const usersPageResult = await handleAdminUsersPageInteraction(config, {
       actionId,
       userId,
       pageValue: payload.actions?.[0]?.value ?? "",
       responseUrl: payload.response_url,
-      channelId: payload.channel?.id
+      channelId
     });
     if (usersPageResult.handled) {
       return { ok: true, followUp: usersPageResult.followUp };
@@ -157,7 +161,7 @@ export const handleSlackInteraction = async (
       userId,
       pageValue: payload.actions?.[0]?.value ?? "",
       responseUrl: payload.response_url,
-      channelId: payload.channel?.id
+      channelId
     });
     if (absencesPageResult.handled) {
       return { ok: true, followUp: absencesPageResult.followUp };
@@ -167,7 +171,7 @@ export const handleSlackInteraction = async (
       userId,
       pageValue: payload.actions?.[0]?.value ?? "",
       responseUrl: payload.response_url,
-      channelId: payload.channel?.id
+      channelId
     });
     if (calendarPageResult.handled) {
       return { ok: true, followUp: calendarPageResult.followUp };

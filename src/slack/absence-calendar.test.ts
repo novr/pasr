@@ -298,19 +298,27 @@ describe("handleAbsenceCalendarPageInteraction", () => {
     vi.useRealTimers();
   });
 
-  it("no-ops on invalid page value", async () => {
+  it("reports an error on invalid page value", async () => {
     const config = createTestConfig(createMockKv());
+    const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
+    vi.stubGlobal("fetch", fetchMock);
     const result = await handleAbsenceCalendarPageInteraction(config, {
       actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
       userId: "U1",
-      pageValue: "not-json"
+      pageValue: "not-json",
+      responseUrl: "https://hooks.slack.com/actions/T/1/2"
     });
     expect(result.handled).toBe(true);
-    expect(result.followUp).toBeUndefined();
+    expect(result.followUp).toBeTypeOf("function");
+    await result.followUp?.();
+    expect(fetchMock).toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 
-  it("no-ops when from is before today", async () => {
+  it("allows page turns even when from is before today", async () => {
     const config = createTestConfig(createMockKv());
+    const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
+    vi.stubGlobal("fetch", fetchMock);
     const result = await handleAbsenceCalendarPageInteraction(config, {
       actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
       userId: "U1",
@@ -320,14 +328,83 @@ describe("handleAbsenceCalendarPageInteraction", () => {
         to: "2026-08-31",
         channelId: "CNOTIFY",
         page: 2
-      })
+      }),
+      responseUrl: "https://hooks.slack.com/actions/T/1/2"
     });
     expect(result.handled).toBe(true);
-    expect(result.followUp).toBeUndefined();
+    expect(result.followUp).toBeTypeOf("function");
+    await result.followUp?.();
+    expect(fetchMock).toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 
-  it("no-ops when page value userId does not match actor", async () => {
+  it("replaces ephemeral on next page click", async () => {
     const config = createTestConfig(createMockKv());
+    for (let index = 0; index < 15; index += 1) {
+      await createAbsence(config, {
+        itemId: `A${index}`,
+        targetUser: `U${index}`,
+        startDate: "2026-08-10",
+        endDate: "2026-08-10",
+        notifyChannels: ["CNOTIFY"],
+        notifyUsers: []
+      });
+    }
+    for (let index = 0; index < 15; index += 1) {
+      await createAbsence(config, {
+        itemId: `B${index}`,
+        targetUser: `V${index}`,
+        startDate: "2026-08-11",
+        endDate: "2026-08-11",
+        notifyChannels: ["CNOTIFY"],
+        notifyUsers: []
+      });
+    }
+
+    const page1 = await buildAbsenceCalendarReply(config, {
+      userId: "U1",
+      from: "2026-08-05",
+      to: "2026-08-31",
+      channelId: "CNOTIFY",
+      page: 1,
+      todayJst: "2026-08-05"
+    });
+    const actions =
+      typeof page1 !== "string" && page1.blocks
+        ? page1.blocks.find((block) => block.type === "actions")
+        : undefined;
+    const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find((element) =>
+      String((element.text as { text?: string })?.text).includes("次ページ")
+    );
+    expect(nextButton?.value).toBeTypeOf("string");
+
+    const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await handleAbsenceCalendarPageInteraction(config, {
+      actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
+      userId: "U1",
+      pageValue: String(nextButton?.value),
+      responseUrl: "https://hooks.slack.com/actions/T/1/2",
+      channelId: "C_RUN"
+    });
+    expect(result.followUp).toBeTypeOf("function");
+    await result.followUp?.();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://hooks.slack.com/actions/T/1/2",
+      expect.objectContaining({
+        body: expect.stringContaining("replace_original")
+      })
+    );
+    const [, requestInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(requestInit.body as string) as { text?: string };
+    expect(body.text).toContain("ページ 2/2");
+    vi.unstubAllGlobals();
+  });
+
+  it("reports an error when page value userId does not match actor", async () => {
+    const config = createTestConfig(createMockKv());
+    const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
+    vi.stubGlobal("fetch", fetchMock);
     const result = await handleAbsenceCalendarPageInteraction(config, {
       actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
       userId: "U1",
@@ -337,9 +414,13 @@ describe("handleAbsenceCalendarPageInteraction", () => {
         to: "2026-08-31",
         channelId: "CNOTIFY",
         page: 2
-      })
+      }),
+      responseUrl: "https://hooks.slack.com/actions/T/1/2"
     });
     expect(result.handled).toBe(true);
-    expect(result.followUp).toBeUndefined();
+    expect(result.followUp).toBeTypeOf("function");
+    await result.followUp?.();
+    expect(fetchMock).toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 });
