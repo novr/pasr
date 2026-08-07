@@ -23,12 +23,9 @@ import { ADMIN_EPHEMERAL_LIST_MAX } from "./admin-constants";
 import {
   deliverAdminEphemeralReply,
   formatAdminEphemeralMessage,
-  normalizeAdminEphemeralReply,
-  postAdminEphemeralToResponseUrl,
   type AdminEphemeralReply
 } from "./admin-format";
 import { slackApi } from "./api";
-import { isImChannelId, postUserFacingMessage } from "./user-message";
 
 export const ABSENCE_CALENDAR_MODAL_CALLBACK_ID = "pasr_absence_calendar";
 
@@ -106,78 +103,6 @@ const calendarPaginationValue = (
   query: Omit<AbsenceCalendarPageQuery, "page">,
   page: number
 ): string => encodeAbsenceCalendarPageValue({ ...query, page });
-
-const deliverCalendarEphemeralPageReply = async (
-  config: AppConfig,
-  params: {
-    userId: string;
-    responseUrl?: string;
-    channelId?: string;
-    page?: number;
-  },
-  reply: AdminEphemeralReply | string
-): Promise<void> => {
-  const normalized = normalizeAdminEphemeralReply(reply);
-  const logBase = {
-    user_id: params.userId,
-    page: params.page,
-    has_response_url: Boolean(params.responseUrl),
-    deliver_channel_id: params.channelId ?? ""
-  };
-
-  if (params.channelId && !isImChannelId(params.channelId)) {
-    try {
-      await postUserFacingMessage(config, {
-        channelId: params.channelId,
-        userId: params.userId,
-        text: normalized.text,
-        blocks: normalized.blocks
-      });
-      if (params.responseUrl) {
-        const deleted = await postAdminEphemeralToResponseUrl(params.responseUrl, { text: "" }, {
-          deleteOriginal: true
-        });
-        if (!deleted) {
-          console.warn(
-            JSON.stringify({
-              level: "warn",
-              event: "calendar_page_delete_original_failed",
-              ...logBase
-            })
-          );
-        }
-      }
-      console.log(JSON.stringify({ level: "info", event: "calendar_page_delivery", ...logBase, method: "post_ephemeral" }));
-      return;
-    } catch (error) {
-      console.warn(
-        JSON.stringify({
-          level: "warn",
-          event: "calendar_page_post_ephemeral_failed",
-          ...logBase,
-          message: error instanceof Error ? error.message : String(error)
-        })
-      );
-    }
-  }
-
-  if (params.responseUrl) {
-    const replaced = await postAdminEphemeralToResponseUrl(params.responseUrl, normalized, {
-      replaceOriginal: true
-    });
-    if (replaced) {
-      console.log(JSON.stringify({ level: "info", event: "calendar_page_delivery", ...logBase, method: "replace_original" }));
-      return;
-    }
-    const posted = await postAdminEphemeralToResponseUrl(params.responseUrl, normalized);
-    if (posted) {
-      console.log(JSON.stringify({ level: "info", event: "calendar_page_delivery", ...logBase, method: "response_url_post" }));
-      return;
-    }
-  }
-
-  console.warn(JSON.stringify({ level: "warn", event: "calendar_page_delivery_failed", ...logBase }));
-};
 
 const buildCalendarPaginationBlocks = (
   text: string,
@@ -458,14 +383,14 @@ export const handleAbsenceCalendarPageInteraction = async (
     userId: params.userId,
     responseUrl: params.responseUrl,
     channelId: deliverChannelId,
-    page: decoded?.page
+    replaceOriginal: true as const
   };
 
   if (!decoded || decoded.userId !== params.userId) {
     return {
       handled: true,
       followUp: async () => {
-        await deliverCalendarEphemeralPageReply(
+        await deliverAdminEphemeralReply(
           config,
           deliverParams,
           "ページ情報の読み取りに失敗しました。もう一度 /pasr calendar を実行してください。"
@@ -482,7 +407,7 @@ export const handleAbsenceCalendarPageInteraction = async (
     return {
       handled: true,
       followUp: async () => {
-        await deliverCalendarEphemeralPageReply(config, deliverParams, message);
+        await deliverAdminEphemeralReply(config, deliverParams, message);
       }
     };
   }
@@ -501,7 +426,7 @@ export const handleAbsenceCalendarPageInteraction = async (
         todayJst,
         pageTurn: true
       });
-      await deliverCalendarEphemeralPageReply(config, { ...deliverParams, page: decoded.page }, reply);
+      await deliverAdminEphemeralReply(config, deliverParams, reply);
     }
   };
 };
