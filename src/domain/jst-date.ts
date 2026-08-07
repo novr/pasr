@@ -57,3 +57,14 @@ export const addJstDays = (dateStr: string, days: number): string => {
   const d = String(shifted.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
 };
+
+const WEEKDAY_SHORT_JP = ["日", "月", "火", "水", "木", "金", "土"] as const;
+
+export const getJstWeekdayForDate = (dateStr: string): number => {
+  if (!isValidJstDateString(dateStr)) return 0;
+  const [year, month, day] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+};
+
+export const formatJstWeekdayShort = (dateStr: string): string =>
+  WEEKDAY_SHORT_JP[getJstWeekdayForDate(dateStr)] ?? "日";

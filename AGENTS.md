@@ -16,7 +16,7 @@
 
 - daily の `notify_users` / `notify_channels` は absence の値のみ。`member_master` で補完しない
 - `channel_notify_settings` は CH の 0件時通知上書きのみ。absence は触らない
-- `/pasr calendar` は選んだ CH の `notify_channels` 一致のみ（非 admin 可）。D1 に残る予定分のみ。`from` は今日 JST 以降
+- `/pasr calendar` は選んだ CH の `notify_channels` 一致のみ（非 admin 可）。D1 に残る予定分のみ。`from` は今日 JST 以降。表示は日付見出し + 期間中の各日に展開（レコード数と表示行数は一致しない場合あり）
 
 ## データ・migration
 

@@ -1,10 +1,11 @@
 import type { AppConfig } from "../config";
-import {
-  countAbsencesOverlappingRangeForChannel,
-  listAbsencesOverlappingRangeForChannel
-} from "../db/absence-repository";
+import { listAbsencesOverlappingRangeForChannel } from "../db/absence-repository";
 import { checkDbSchema } from "../db/schema-check";
-import { formatAbsenceListLine } from "../domain/absence-registration";
+import {
+  flattenAbsenceCalendarDayGroups,
+  groupAbsencesByJstDay,
+  paginateAbsenceCalendarDayGroups
+} from "../domain/absence-calendar-view";
 import {
   decodeAbsenceCalendarPageValue,
   encodeAbsenceCalendarPageValue,
@@ -18,11 +19,8 @@ import { getJstDateParts } from "../domain/jst-date";
 import { ABSENCE_CALENDAR_PAGE_ACTION_ID } from "./action-ids";
 import { ADMIN_EPHEMERAL_LIST_MAX } from "./admin-constants";
 import {
-  buildAdminEphemeralBlocks,
-  computeAdminTotalPages,
   deliverAdminEphemeralReply,
   formatAdminEphemeralMessage,
-  normalizeAdminPage,
   type AdminEphemeralReply
 } from "./admin-format";
 import { slackApi } from "./api";
@@ -109,24 +107,31 @@ const buildCalendarPaginationBlocks = (
   query: Omit<AbsenceCalendarPageQuery, "page">,
   page: number,
   totalPages: number,
-  totalCount: number
+  remainingEntryCount: number
 ): Array<Record<string, unknown>> | undefined => {
-  const blocks = buildAdminEphemeralBlocks(text, {
-    actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
-    blockId: "pasr_calendar_pagination",
-    page,
-    totalPages,
-    totalCount
-  });
-  if (!blocks) return undefined;
-  const actionsBlock = blocks.find((block) => block.type === "actions");
-  if (!actionsBlock || !Array.isArray(actionsBlock.elements)) return blocks;
-  for (const element of actionsBlock.elements as Array<Record<string, unknown>>) {
-    const pageNumber = Number(element.value);
-    if (!Number.isFinite(pageNumber) || pageNumber < 1) continue;
-    element.value = calendarPaginationValue(query, pageNumber);
+  if (totalPages <= 1) return undefined;
+  const elements: Array<Record<string, unknown>> = [];
+  if (page > 1) {
+    elements.push({
+      type: "button",
+      action_id: ABSENCE_CALENDAR_PAGE_ACTION_ID,
+      text: { type: "plain_text", text: `← ${page - 1}` },
+      value: calendarPaginationValue(query, page - 1)
+    });
   }
-  return blocks;
+  if (page < totalPages && remainingEntryCount > 0) {
+    elements.push({
+      type: "button",
+      action_id: ABSENCE_CALENDAR_PAGE_ACTION_ID,
+      text: { type: "plain_text", text: `次ページ（${remainingEntryCount} 件）→` },
+      value: calendarPaginationValue(query, page + 1)
+    });
+  }
+  if (elements.length === 0) return undefined;
+  return [
+    { type: "section", text: { type: "mrkdwn", text } },
+    { type: "actions", block_id: "pasr_calendar_pagination", elements }
+  ];
 };
 
 export const buildAbsenceCalendarReply = async (
@@ -153,29 +158,23 @@ export const buildAbsenceCalendarReply = async (
     return "データベースの準備が完了していません。";
   }
 
-  const totalCount = await countAbsencesOverlappingRangeForChannel(
+  const records = await listAbsencesOverlappingRangeForChannel(
     config,
     params.from,
     params.to,
     params.channelId
   );
-  const headerBase = `<#${params.channelId}> の不在 (${params.from} 〜 ${params.to} JST): ${totalCount}件`;
+  const totalCount = records.length;
+  const headerBase = `<#${params.channelId}> の不在カレンダー (${params.from} 〜 ${params.to} JST)`;
   if (totalCount === 0) {
-    return `${headerBase}\n（該当なし）`;
+    return `${headerBase}: 0件\n（該当なし）`;
   }
 
-  const totalPages = computeAdminTotalPages(totalCount);
-  const currentPage = normalizeAdminPage(params.page, totalPages);
-  const offset = (currentPage - 1) * ADMIN_EPHEMERAL_LIST_MAX;
-  const records = await listAbsencesOverlappingRangeForChannel(
-    config,
-    params.from,
-    params.to,
-    params.channelId,
-    { limit: ADMIN_EPHEMERAL_LIST_MAX, offset }
-  );
-  const header = `${headerBase} — ページ ${currentPage}/${totalPages}`;
-  const lines = records.map((record) => `• <@${record.targetUser}> ${formatAbsenceListLine(record)}`);
+  const groups = groupAbsencesByJstDay(records, params.from, params.to);
+  const totalDays = groups.length;
+  const pagination = paginateAbsenceCalendarDayGroups(groups, params.page, ADMIN_EPHEMERAL_LIST_MAX);
+  const header = `${headerBase}: ${totalCount}件 / ${totalDays}日 — ページ ${pagination.currentPage}/${pagination.totalPages}`;
+  const lines = flattenAbsenceCalendarDayGroups(pagination.pageGroups);
   const text = formatAdminEphemeralMessage(header, lines, 0);
   const blocks = buildCalendarPaginationBlocks(
     text,
@@ -185,9 +184,9 @@ export const buildAbsenceCalendarReply = async (
       to: params.to,
       channelId: params.channelId
     },
-    currentPage,
-    totalPages,
-    totalCount
+    pagination.currentPage,
+    pagination.totalPages,
+    pagination.remainingEntryCount
   );
   return blocks ? { text, blocks } : { text };
 };

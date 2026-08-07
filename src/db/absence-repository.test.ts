@@ -96,6 +96,21 @@ describe("absence-repository", () => {
     expect(rows[0]?.targetUser).toBe("U1");
   });
 
+  it("lists all overlapping absences when pagination options are omitted", async () => {
+    const config = createTestConfig(createMockKv());
+    for (let index = 0; index < 3; index += 1) {
+      await createAbsence(config, {
+        targetUser: `U${index}`,
+        startDate: "2026-08-01",
+        endDate: "2026-08-05",
+        notifyChannels: ["C1"],
+        notifyUsers: []
+      });
+    }
+    const rows = await listAbsencesOverlappingRangeForChannel(config, "2026-08-01", "2026-08-31", "C1");
+    expect(rows).toHaveLength(3);
+  });
+
   it("does not match channel ids by prefix", async () => {
     const config = createTestConfig(createMockKv());
     await createAbsence(config, {
