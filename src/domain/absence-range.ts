@@ -50,29 +50,55 @@ export const validateAbsenceRange = (
 export const encodeAbsenceCalendarPageValue = (query: AbsenceCalendarPageQuery): string =>
   JSON.stringify(query);
 
+const parseAbsenceCalendarPageNumber = (value: unknown): number | undefined => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+};
+
 export const decodeAbsenceCalendarPageValue = (raw: string): AbsenceCalendarPageQuery | undefined => {
   try {
-    const parsed = JSON.parse(raw) as Partial<AbsenceCalendarPageQuery>;
+    const parsed = JSON.parse(raw) as Partial<AbsenceCalendarPageQuery> & { page?: unknown };
+    const page = parseAbsenceCalendarPageNumber(parsed.page);
     if (
       typeof parsed.userId !== "string" ||
       typeof parsed.from !== "string" ||
       typeof parsed.to !== "string" ||
       typeof parsed.channelId !== "string" ||
-      typeof parsed.page !== "number"
+      page === undefined ||
+      page < 1
     ) {
       return undefined;
     }
-    if (!parsed.userId || !Number.isFinite(parsed.page) || parsed.page < 1) return undefined;
+    if (!parsed.userId) return undefined;
     return {
       userId: parsed.userId,
       from: parsed.from,
       to: parsed.to,
       channelId: parsed.channelId,
-      page: Math.trunc(parsed.page)
+      page
     };
   } catch {
     return undefined;
   }
+};
+
+export const validateAbsenceCalendarPageTurn = (
+  from: string,
+  to: string
+): { ok: true } | { ok: false; error: AbsenceRangeValidationError } => {
+  if (!isValidJstDateString(from)) return { ok: false, error: "invalid_from" };
+  if (!isValidJstDateString(to)) return { ok: false, error: "invalid_to" };
+  if (from > to) return { ok: false, error: "from_after_to" };
+  if (inclusiveJstDaySpan(from, to) > ABSENCE_RANGE_MAX_INCLUSIVE_DAYS) {
+    return { ok: false, error: "range_too_long" };
+  }
+  return { ok: true };
 };
 
 export const formatAbsenceRangeValidationError = (error: AbsenceRangeValidationError): string => {

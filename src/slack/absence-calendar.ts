@@ -11,6 +11,7 @@ import {
   encodeAbsenceCalendarPageValue,
   formatAbsenceRangeValidationError,
   isSlackChannelId,
+  validateAbsenceCalendarPageTurn,
   validateAbsenceRange,
   type AbsenceCalendarPageQuery,
   type AbsenceRangeValidationError
@@ -21,6 +22,8 @@ import { ADMIN_EPHEMERAL_LIST_MAX } from "./admin-constants";
 import {
   deliverAdminEphemeralReply,
   formatAdminEphemeralMessage,
+  normalizeAdminEphemeralReply,
+  postAdminEphemeralToResponseUrl,
   type AdminEphemeralReply
 } from "./admin-format";
 import { slackApi } from "./api";
@@ -101,6 +104,27 @@ const calendarPaginationValue = (
   query: Omit<AbsenceCalendarPageQuery, "page">,
   page: number
 ): string => encodeAbsenceCalendarPageValue({ ...query, page });
+
+const deliverCalendarEphemeralPageReply = async (
+  config: AppConfig,
+  params: {
+    userId: string;
+    responseUrl?: string;
+    channelId?: string;
+  },
+  reply: AdminEphemeralReply | string
+): Promise<void> => {
+  const normalized = normalizeAdminEphemeralReply(reply);
+  if (params.responseUrl) {
+    const replaced = await postAdminEphemeralToResponseUrl(params.responseUrl, normalized, {
+      replaceOriginal: true
+    });
+    if (replaced) return;
+    const posted = await postAdminEphemeralToResponseUrl(params.responseUrl, normalized);
+    if (posted) return;
+  }
+  await deliverAdminEphemeralReply(config, params, normalized);
+};
 
 const buildCalendarPaginationBlocks = (
   text: string,
@@ -365,20 +389,43 @@ export const handleAbsenceCalendarPageInteraction = async (
     return { handled: false };
   }
 
+  const deliverParams = {
+    userId: params.userId,
+    responseUrl: params.responseUrl,
+    channelId: params.channelId
+  };
+
   const decoded = decodeAbsenceCalendarPageValue(params.pageValue);
   if (!decoded || decoded.userId !== params.userId) {
-    return { handled: true };
+    return {
+      handled: true,
+      followUp: async () => {
+        await deliverCalendarEphemeralPageReply(
+          config,
+          deliverParams,
+          "ページ情報の読み取りに失敗しました。もう一度 /pasr calendar を実行してください。"
+        );
+      }
+    };
   }
 
-  const { day: todayJst } = getJstDateParts();
-  const validation = validateAbsenceRange(decoded.from, decoded.to, todayJst);
+  const validation = validateAbsenceCalendarPageTurn(decoded.from, decoded.to);
   if (!validation.ok || !isSlackChannelId(decoded.channelId)) {
-    return { handled: true };
+    const message = !validation.ok
+      ? formatAbsenceRangeValidationError(validation.error)
+      : "チャンネルの指定が正しくありません。";
+    return {
+      handled: true,
+      followUp: async () => {
+        await deliverCalendarEphemeralPageReply(config, deliverParams, message);
+      }
+    };
   }
 
   return {
     handled: true,
     followUp: async () => {
+      const { day: todayJst } = getJstDateParts();
       const reply = await buildAbsenceCalendarReply(config, {
         userId: decoded.userId,
         from: decoded.from,
@@ -387,16 +434,7 @@ export const handleAbsenceCalendarPageInteraction = async (
         page: decoded.page,
         todayJst
       });
-      await deliverAdminEphemeralReply(
-        config,
-        {
-          userId: params.userId,
-          responseUrl: params.responseUrl,
-          channelId: params.channelId,
-          replaceOriginal: true
-        },
-        reply
-      );
+      await deliverCalendarEphemeralPageReply(config, deliverParams, reply);
     }
   };
 };
