@@ -122,6 +122,7 @@ export const postAdminEphemeralToResponseUrl = async (
       headers: { "Content-Type": "application/json; charset=utf-8" },
       body: JSON.stringify(buildAdminEphemeralPostBody(reply, options))
     });
+    const body = await response.text();
     if (!response.ok) {
       console.warn(
         JSON.stringify({
@@ -129,10 +130,30 @@ export const postAdminEphemeralToResponseUrl = async (
           event: options?.replaceOriginal
             ? "admin_ephemeral_replace_failed"
             : "admin_ephemeral_post_failed",
-          status: response.status
+          status: response.status,
+          body: body.slice(0, 500)
         })
       );
       return false;
+    }
+    if (body.trim() === "ok") return true;
+    try {
+      const parsed = JSON.parse(body) as { ok?: boolean; error?: string };
+      if (parsed.ok === false) {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: options?.replaceOriginal
+              ? "admin_ephemeral_replace_failed"
+              : "admin_ephemeral_post_failed",
+            slack_error: parsed.error,
+            body: body.slice(0, 500)
+          })
+        );
+        return false;
+      }
+    } catch {
+      // Non-JSON success bodies are treated as ok when HTTP status is 2xx.
     }
     return true;
   } catch (error) {

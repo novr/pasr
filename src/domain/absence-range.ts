@@ -15,6 +15,7 @@ export type AbsenceCalendarPageQuery = {
   from: string;
   to: string;
   channelId: string;
+  deliverChannelId?: string;
   page: number;
 };
 
@@ -76,11 +77,16 @@ export const decodeAbsenceCalendarPageValue = (raw: string): AbsenceCalendarPage
       return undefined;
     }
     if (!parsed.userId) return undefined;
+    const deliverChannelId =
+      typeof parsed.deliverChannelId === "string" && parsed.deliverChannelId.length > 0
+        ? parsed.deliverChannelId
+        : undefined;
     return {
       userId: parsed.userId,
       from: parsed.from,
       to: parsed.to,
       channelId: parsed.channelId,
+      deliverChannelId,
       page
     };
   } catch {
