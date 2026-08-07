@@ -76,7 +76,7 @@ describe("buildAbsenceCalendarReply", () => {
 });
 
 describe("buildAbsenceCalendarModalView", () => {
-  it("includes guidance and min_date", () => {
+  it("includes guidance and initial dates", () => {
     const view = buildAbsenceCalendarModalView({
       userId: "U1",
       responseUrl: "https://hooks.example",
@@ -89,9 +89,10 @@ describe("buildAbsenceCalendarModalView", () => {
     const context = blocks[0]?.elements as Array<{ text?: string }>;
     expect(context[0]?.text).toContain("予定");
     const startBlock = blocks.find((block) => block.block_id === START_BLOCK_ID) as {
-      element?: { min_date?: string };
+      element?: { initial_date?: string; min_date?: string };
     };
-    expect(startBlock.element?.min_date).toBe("2026-08-05");
+    expect(startBlock.element?.initial_date).toBe("2026-08-05");
+    expect(startBlock.element?.min_date).toBeUndefined();
     const channelBlock = blocks.find((block) => block.block_id === CHANNEL_BLOCK_ID) as {
       element?: { filter?: { include?: string[] } };
     };

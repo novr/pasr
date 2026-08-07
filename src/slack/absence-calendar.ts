@@ -226,7 +226,7 @@ export const buildAbsenceCalendarModalView = (params: {
           type: "datepicker",
           action_id: "start_date",
           initial_date: params.todayJst,
-          min_date: params.todayJst
+          placeholder: { type: "plain_text", text: "開始日を選択" }
         }
       },
       {
@@ -237,7 +237,7 @@ export const buildAbsenceCalendarModalView = (params: {
           type: "datepicker",
           action_id: "end_date",
           initial_date: params.todayJst,
-          min_date: params.todayJst
+          placeholder: { type: "plain_text", text: "終了日を選択" }
         }
       },
       {
