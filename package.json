@@ -9,6 +9,7 @@
     "debug:mention-ai": "node --experimental-strip-types scripts/debug-mention-ai.ts",
     "generate:jp-holidays": "node --experimental-strip-types scripts/generate-jp-holidays.ts",
     "deploy": "wrangler deploy --keep-vars",
+    "deploy:build-notify": "wrangler deploy -c workers/build-notify/wrangler.jsonc",
     "types": "wrangler types",
     "check": "tsc --noEmit",
     "test": "vitest run",
