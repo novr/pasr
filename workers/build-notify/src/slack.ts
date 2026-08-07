@@ -11,6 +11,9 @@ import { PASR_WORKER_NAME, type CloudflareEvent } from "./types";
 
 type SlackBlock = Record<string, unknown>;
 
+const escapeSlackMrkdwn = (text: string): string =>
+  text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 const sectionBlock = (
   text: string,
   buttonText?: string,
@@ -48,7 +51,7 @@ const contextElements = (event: CloudflareEvent): Array<{ type: "mrkdwn"; text: 
   }
   const authorName = extractAuthorName(meta?.author);
   if (authorName) {
-    elements.push({ type: "mrkdwn", text: `*Author:* ${authorName}` });
+    elements.push({ type: "mrkdwn", text: `*Author:* ${escapeSlackMrkdwn(authorName)}` });
   }
   return elements;
 };

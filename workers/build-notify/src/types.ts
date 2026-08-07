@@ -2,7 +2,7 @@ export const PASR_WORKER_NAME = "pasr-absence-notifier";
 
 export interface Env {
   SLACK_WEBHOOK_URL: string;
-  CLOUDFLARE_API_TOKEN: string;
+  CLOUDFLARE_API_TOKEN?: string;
 }
 
 export interface CloudflareEvent {

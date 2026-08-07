@@ -43,6 +43,17 @@ export const fetchBuildUrls = async (
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/subdomain`,
       { headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` } }
     );
+    if (!subRes.ok) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "build_notify_fetch_subdomain_failed",
+          status: subRes.status,
+          build_uuid: event.payload.buildUuid
+        })
+      );
+      return { previewUrl: null, liveUrl: null };
+    }
     const subData = (await subRes.json()) as SubdomainResponse;
     if (subData.result?.subdomain) {
       return {
