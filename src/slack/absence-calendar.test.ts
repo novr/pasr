@@ -347,7 +347,7 @@ describe("handleAbsenceCalendarPageInteraction", () => {
     vi.unstubAllGlobals();
   });
 
-  it("replaces ephemeral on next page click", async () => {
+  it("posts ephemeral and deletes previous on next page click", async () => {
     const config = createTestConfig(createMockKv());
     for (let index = 0; index < 15; index += 1) {
       await createAbsence(config, {
@@ -387,6 +387,7 @@ describe("handleAbsenceCalendarPageInteraction", () => {
     );
     expect(nextButton?.value).toBeTypeOf("string");
 
+    postUserFacingMessageMock.mockClear();
     const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
     vi.stubGlobal("fetch", fetchMock);
     const result = await handleAbsenceCalendarPageInteraction(config, {
@@ -398,15 +399,20 @@ describe("handleAbsenceCalendarPageInteraction", () => {
     });
     expect(result.followUp).toBeTypeOf("function");
     await result.followUp?.();
+    expect(postUserFacingMessageMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({
+        channelId: "C012RUN",
+        userId: "U1",
+        text: expect.stringContaining("ページ 2/2")
+      })
+    );
     expect(fetchMock).toHaveBeenCalledWith(
       "https://hooks.slack.com/actions/T/1/2",
       expect.objectContaining({
-        body: expect.stringContaining("replace_original")
+        body: expect.stringContaining("delete_original")
       })
     );
-    const [, requestInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    const body = JSON.parse(requestInit.body as string) as { text?: string };
-    expect(body.text).toContain("ページ 2/2");
     vi.unstubAllGlobals();
   });
 
@@ -475,7 +481,7 @@ describe("handleAbsenceCalendarPageInteraction", () => {
     vi.unstubAllGlobals();
   });
 
-  it("prefers post_ephemeral over response_url when replace_original fails", async () => {
+  it("posts ephemeral first even when delete_original fails", async () => {
     const config = createTestConfig(createMockKv());
     for (let index = 0; index < 15; index += 1) {
       await createAbsence(config, {

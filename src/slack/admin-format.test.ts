@@ -87,6 +87,12 @@ describe("buildAdminEphemeralPostBody", () => {
     expect(blocks[0].type).toBe("section");
     expect(blocks[0].text).toEqual({ type: "mrkdwn", text: "list body" });
   });
+
+  it("includes delete_original when requested", () => {
+    const body = buildAdminEphemeralPostBody({ text: "" }, { deleteOriginal: true });
+    expect(body.delete_original).toBe(true);
+    expect(body.replace_original).toBeUndefined();
+  });
 });
 
 describe("buildAdminEphemeralBlocks", () => {

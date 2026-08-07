@@ -125,16 +125,6 @@ const deliverCalendarEphemeralPageReply = async (
     deliver_channel_id: params.channelId ?? ""
   };
 
-  if (params.responseUrl) {
-    const replaced = await postAdminEphemeralToResponseUrl(params.responseUrl, normalized, {
-      replaceOriginal: true
-    });
-    if (replaced) {
-      console.log(JSON.stringify({ level: "info", event: "calendar_page_delivery", ...logBase, method: "replace_original" }));
-      return;
-    }
-  }
-
   if (params.channelId) {
     try {
       await postUserFacingMessage(config, {
@@ -143,6 +133,11 @@ const deliverCalendarEphemeralPageReply = async (
         text: normalized.text,
         blocks: normalized.blocks
       });
+      if (params.responseUrl) {
+        await postAdminEphemeralToResponseUrl(params.responseUrl, { text: "" }, {
+          deleteOriginal: true
+        });
+      }
       console.log(JSON.stringify({ level: "info", event: "calendar_page_delivery", ...logBase, method: "post_ephemeral" }));
       return;
     } catch (error) {
@@ -158,6 +153,13 @@ const deliverCalendarEphemeralPageReply = async (
   }
 
   if (params.responseUrl) {
+    const replaced = await postAdminEphemeralToResponseUrl(params.responseUrl, normalized, {
+      replaceOriginal: true
+    });
+    if (replaced) {
+      console.log(JSON.stringify({ level: "info", event: "calendar_page_delivery", ...logBase, method: "replace_original" }));
+      return;
+    }
     const posted = await postAdminEphemeralToResponseUrl(params.responseUrl, normalized);
     if (posted) {
       console.log(JSON.stringify({ level: "info", event: "calendar_page_delivery", ...logBase, method: "response_url_post" }));

@@ -91,6 +91,7 @@ export const normalizeAdminEphemeralReply = (
 
 export type AdminEphemeralPostOptions = {
   replaceOriginal?: boolean;
+  deleteOriginal?: boolean;
 };
 
 export const buildAdminEphemeralPostBody = (
@@ -104,6 +105,9 @@ export const buildAdminEphemeralPostBody = (
   };
   if (options?.replaceOriginal) {
     body.replace_original = true;
+  }
+  if (options?.deleteOriginal) {
+    body.delete_original = true;
   }
   if (normalized.blocks) {
     body.blocks = normalized.blocks;
