@@ -57,6 +57,27 @@ curl https://<worker>/health
 
 deploy 後、Cloudflare Dashboard の **Bindings** が `wrangler.jsonc` と一致することを確認する。
 
+### Workers Builds → Slack（任意・初回のみ）
+
+`pasr-absence-notifier` の Builds 成功/失敗を ops チャンネルへ通知する Queue consumer（`workers/build-notify/`）。PASR 本体の deploy には含まれない。Account ID の Variable は不要（イベントの `metadata.accountId` を使用）。
+
+1. `npx wrangler queues create builds-event-subscriptions`（**consumer deploy 前に必須**）
+2. Slack **Incoming Webhook**（ops チャンネル）を作成
+3. `npm run deploy:build-notify`
+4. `pasr-builds-notify` に Secret: `SLACK_WEBHOOK_URL`（必須）。任意で `CLOUDFLARE_API_TOKEN`（Workers CI Read + Workers Scripts Read。Live URL・失敗ログ抜粋用）
+5. Event Subscription（`pasr-absence-notifier` 向け。Worker ごとに 1 本）:
+
+```bash
+npx wrangler queues subscription create builds-event-subscriptions \
+  --source workersBuilds.worker \
+  --events build.succeeded,build.failed \
+  --worker-name pasr-absence-notifier
+```
+
+確認: `npx wrangler queues subscription list builds-event-subscriptions`
+
+ログ: 成功 `build_notify_sent`、Slack 失敗 `build_notify_slack_failed`（Queue retry）。
+
 ローカル確認: `npm run dev` 起動後、`GET /health`、Bearer 付き `POST /run`、`GET /__scheduled`。
 
 ## 運用

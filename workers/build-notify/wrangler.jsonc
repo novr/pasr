@@ -1,0 +1,19 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "pasr-builds-notify",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-19",
+  "observability": {
+    "enabled": true
+  },
+  "queues": {
+    "consumers": [
+      {
+        "queue": "builds-event-subscriptions",
+        "max_batch_size": 10,
+        "max_batch_timeout": 30,
+        "max_retries": 3
+      }
+    ]
+  }
+}
