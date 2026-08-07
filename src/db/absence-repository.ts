@@ -185,17 +185,21 @@ export const listAbsencesOverlappingRangeForChannel = async (
   fromJst: string,
   toJst: string,
   channelId: string,
-  options: { limit: number; offset: number }
+  options?: { limit: number; offset: number }
 ): Promise<AbsenceRecord[]> => {
   if (!isSlackChannelId(channelId)) return [];
+  const limitClause = options ? " LIMIT ? OFFSET ?" : "";
   const result = await getDb(config)
     .prepare(
       `SELECT * FROM absences
        WHERE start_date <= ? AND end_date >= ? AND ${NOTIFY_CHANNEL_JSON_MATCH_SQL}
-       ORDER BY start_date ASC, id ASC
-       LIMIT ? OFFSET ?`
+       ORDER BY start_date ASC, id ASC${limitClause}`
     )
-    .bind(toJst, fromJst, channelId, options.limit, options.offset)
+    .bind(
+      ...(options
+        ? [toJst, fromJst, channelId, options.limit, options.offset]
+        : [toJst, fromJst, channelId])
+    )
     .all<AbsenceRow>();
   return (result.results ?? []).map(rowToAbsenceRecord);
 };

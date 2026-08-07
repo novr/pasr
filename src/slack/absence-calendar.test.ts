@@ -1,7 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { createAbsence } from "../db/absence-repository";
 import { createMockKv, createTestConfig } from "../test/mock-kv";
-import { ADMIN_EPHEMERAL_LIST_MAX } from "./admin-constants";
 import type { AdminEphemeralReply } from "./admin-format";
 import { ABSENCE_CALENDAR_PAGE_ACTION_ID } from "./action-ids";
 import {
@@ -28,14 +27,24 @@ describe("buildAbsenceCalendarReply", () => {
     vi.useRealTimers();
   });
 
-  it("lists channel absences in range with pagination", async () => {
+  it("lists channel absences grouped by day with pagination", async () => {
     const config = createTestConfig(createMockKv());
-    for (let index = 0; index < ADMIN_EPHEMERAL_LIST_MAX + 1; index += 1) {
+    for (let index = 0; index < 15; index += 1) {
       await createAbsence(config, {
         itemId: `A${index}`,
         targetUser: `U${index}`,
         startDate: "2026-08-10",
         endDate: "2026-08-10",
+        notifyChannels: ["CNOTIFY"],
+        notifyUsers: []
+      });
+    }
+    for (let index = 0; index < 15; index += 1) {
+      await createAbsence(config, {
+        itemId: `B${index}`,
+        targetUser: `V${index}`,
+        startDate: "2026-08-11",
+        endDate: "2026-08-11",
         notifyChannels: ["CNOTIFY"],
         notifyUsers: []
       });
@@ -49,16 +58,83 @@ describe("buildAbsenceCalendarReply", () => {
       page: 1,
       todayJst: "2026-08-05"
     });
-    expect(replyText(reply)).toContain("26件");
+    expect(replyText(reply)).toContain("30件 / 2日");
     expect(replyText(reply)).toContain("ページ 1/2");
+    expect(replyText(reply)).toContain("*2026-08-10 (月)*");
+    expect(replyText(reply)).not.toContain("*2026-08-11");
     if (typeof reply !== "string" && reply.blocks) {
       const actions = reply.blocks.find((block) => block.type === "actions");
-      expect(actions).toBeTruthy();
       const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find(
-        (element) => element.action_id === ABSENCE_CALENDAR_PAGE_ACTION_ID && element.value !== "1"
+        (element) => element.text && String((element.text as { text?: string }).text).includes("次ページ")
       );
       expect(nextButton?.value).toContain("CNOTIFY");
+      expect(String((nextButton?.text as { text?: string })?.text)).toContain("15 件");
     }
+  });
+
+  it("expands multi-day absences under each date heading", async () => {
+    const config = createTestConfig(createMockKv());
+    await createAbsence(config, {
+      itemId: "A1",
+      targetUser: "UALICE",
+      startDate: "2026-08-10",
+      endDate: "2026-08-12",
+      notifyChannels: ["CNOTIFY"],
+      notifyUsers: [],
+      note: "通院"
+    });
+
+    const reply = await buildAbsenceCalendarReply(config, {
+      userId: "U1",
+      from: "2026-08-10",
+      to: "2026-08-12",
+      channelId: "CNOTIFY",
+      page: 1,
+      todayJst: "2026-08-05"
+    });
+    const text = replyText(reply);
+    expect(text).toContain("1件 / 3日");
+    expect(text).toContain("*2026-08-10 (月)*");
+    expect(text).toContain("*2026-08-11 (火)*");
+    expect(text).toContain("*2026-08-12 (水)*");
+    expect(text).toContain("<@UALICE> 通院");
+  });
+
+  it("starts page two on the next day group", async () => {
+    const config = createTestConfig(createMockKv());
+    for (let index = 0; index < 15; index += 1) {
+      await createAbsence(config, {
+        itemId: `A${index}`,
+        targetUser: `U${index}`,
+        startDate: "2026-08-10",
+        endDate: "2026-08-10",
+        notifyChannels: ["CNOTIFY"],
+        notifyUsers: []
+      });
+    }
+    for (let index = 0; index < 15; index += 1) {
+      await createAbsence(config, {
+        itemId: `B${index}`,
+        targetUser: `V${index}`,
+        startDate: "2026-08-11",
+        endDate: "2026-08-11",
+        notifyChannels: ["CNOTIFY"],
+        notifyUsers: []
+      });
+    }
+
+    const reply = await buildAbsenceCalendarReply(config, {
+      userId: "U1",
+      from: "2026-08-05",
+      to: "2026-08-31",
+      channelId: "CNOTIFY",
+      page: 2,
+      todayJst: "2026-08-05"
+    });
+    const text = replyText(reply);
+    expect(text).toContain("ページ 2/2");
+    expect(text).toContain("*2026-08-11 (火)*");
+    expect(text).not.toContain("*2026-08-10");
   });
 
   it("rejects from before today", async () => {
