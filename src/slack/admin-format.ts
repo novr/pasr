@@ -261,25 +261,25 @@ export const formatEntityList = (entities: string[], emptyLabel: string, maxVisi
   return rest > 0 ? `${base} 他 ${rest}` : base;
 };
 
-export const formatAdminEphemeralMessage = (
+const ephemeralOverflowSuffix = (hidden: number, hiddenBeyondLines: number): string =>
+  hiddenBeyondLines > 0 && hidden > hiddenBeyondLines
+    ? `\n… 表示省略 ${hidden - hiddenBeyondLines} 件\n… 他 ${hiddenBeyondLines} 件`
+    : hiddenBeyondLines > 0
+      ? `\n… 他 ${hiddenBeyondLines} 件`
+      : hidden > 0
+        ? `\n… 表示省略 ${hidden} 件`
+        : "";
+
+export const fitEphemeralVisibleLines = (
   header: string,
   lines: string[],
   hiddenBeyondLines: number
-): string => {
-  const overflowSuffix = (hidden: number): string =>
-    hiddenBeyondLines > 0 && hidden > hiddenBeyondLines
-      ? `\n… 表示省略 ${hidden - hiddenBeyondLines} 件\n… 他 ${hiddenBeyondLines} 件`
-      : hiddenBeyondLines > 0
-        ? `\n… 他 ${hiddenBeyondLines} 件`
-        : hidden > 0
-          ? `\n… 表示省略 ${hidden} 件`
-          : "";
-
+): { visibleLines: string[]; omittedCount: number } => {
   let visibleLines: string[] = [];
   for (const line of lines) {
     const trialLines = [...visibleLines, line];
     const hidden = hiddenBeyondLines + (lines.length - trialLines.length);
-    const trial = `${header}\n${trialLines.join("\n")}${overflowSuffix(hidden)}`;
+    const trial = `${header}\n${trialLines.join("\n")}${ephemeralOverflowSuffix(hidden, hiddenBeyondLines)}`;
     if (trial.length > ADMIN_EPHEMERAL_TEXT_MAX) {
       break;
     }
@@ -289,21 +289,121 @@ export const formatAdminEphemeralMessage = (
   while (visibleLines.length > 0) {
     const hidden = hiddenBeyondLines + (lines.length - visibleLines.length);
     const parts = [header, ...visibleLines];
-    const suffix = overflowSuffix(hidden);
+    const suffix = ephemeralOverflowSuffix(hidden, hiddenBeyondLines);
     if (suffix.length > 0) {
       parts.push(suffix.trimStart());
     }
     const text = parts.join("\n");
     if (text.length <= ADMIN_EPHEMERAL_TEXT_MAX) {
-      return text;
+      return { visibleLines, omittedCount: lines.length - visibleLines.length };
     }
     visibleLines = visibleLines.slice(0, -1);
   }
 
-  const hidden = hiddenBeyondLines + lines.length;
-  const fallback = `${header}${overflowSuffix(hidden)}`;
-  if (fallback.length <= ADMIN_EPHEMERAL_TEXT_MAX) {
-    return fallback;
+  return { visibleLines: [], omittedCount: lines.length };
+};
+
+export const countEphemeralEntryLines = (lines: string[]): number =>
+  lines.filter((line) => line.startsWith("•")).length;
+
+const prependEphemeralDayHeaderIfNeeded = (
+  previousLines: string[],
+  nextLines: string[]
+): string[] => {
+  if (nextLines.length === 0 || nextLines[0]?.startsWith("*")) {
+    return nextLines;
   }
-  return header.slice(0, ADMIN_EPHEMERAL_TEXT_MAX);
+  if (!nextLines[0]?.startsWith("•")) {
+    return nextLines;
+  }
+  const lastHeader = [...previousLines].reverse().find((line) => line.startsWith("*"));
+  if (!lastHeader) {
+    return nextLines;
+  }
+  return [lastHeader, ...nextLines];
+};
+
+export const ephemeralPaginationFitHeader = (summaryHeader: string): string =>
+  `${summaryHeader} — ページ 999/999`;
+
+export const splitEphemeralLinesByTextFit = (header: string, lines: string[]): string[][] => {
+  if (lines.length === 0) {
+    return [];
+  }
+  const pages: string[][] = [];
+  let remaining = lines;
+  while (remaining.length > 0) {
+    const { visibleLines, omittedCount } = fitEphemeralVisibleLines(header, remaining, 0);
+    if (visibleLines.length === 0) {
+      pages.push([remaining[0]!]);
+      remaining = remaining.slice(1);
+      continue;
+    }
+    pages.push(visibleLines);
+    if (omittedCount === 0) {
+      break;
+    }
+    let nextRemaining = remaining.slice(visibleLines.length);
+    const showedEntryOnPage = visibleLines.some((line) => line.startsWith("•"));
+    if (showedEntryOnPage) {
+      nextRemaining = prependEphemeralDayHeaderIfNeeded(visibleLines, nextRemaining);
+    }
+    remaining = nextRemaining;
+  }
+  return pages;
+};
+
+const expandEphemeralPreliminaryPagesByTextFit = (
+  header: string,
+  preliminaryPages: string[][]
+): string[][] => {
+  const displayPages: string[][] = [];
+  for (const preliminary of preliminaryPages) {
+    displayPages.push(...splitEphemeralLinesByTextFit(header, preliminary));
+  }
+  return displayPages.length > 0 ? displayPages : [[]];
+};
+
+export type EphemeralDisplayPaginationResult = {
+  currentPage: number;
+  totalPages: number;
+  pageLines: string[];
+  remainingEntryCount: number;
+};
+
+export const paginateEphemeralDisplayPages = (
+  summaryHeader: string,
+  preliminaryPages: string[][],
+  requestedPage: number
+): EphemeralDisplayPaginationResult => {
+  const fitHeader = ephemeralPaginationFitHeader(summaryHeader);
+  const displayPages = expandEphemeralPreliminaryPagesByTextFit(fitHeader, preliminaryPages);
+  const totalPages = Math.max(1, displayPages.length);
+  const currentPage = normalizeAdminPage(requestedPage, totalPages);
+  const pageLines = displayPages[currentPage - 1] ?? [];
+  const remainingEntryCount = countEphemeralEntryLines(displayPages.slice(currentPage).flat());
+  return { currentPage, totalPages, pageLines, remainingEntryCount };
+};
+
+export const formatAdminEphemeralMessage = (
+  header: string,
+  lines: string[],
+  hiddenBeyondLines: number
+): string => {
+  const { visibleLines, omittedCount } = fitEphemeralVisibleLines(header, lines, hiddenBeyondLines);
+  if (visibleLines.length === 0 && omittedCount > 0) {
+    const hidden = hiddenBeyondLines + omittedCount;
+    const fallback = `${header}${ephemeralOverflowSuffix(hidden, hiddenBeyondLines)}`;
+    if (fallback.length <= ADMIN_EPHEMERAL_TEXT_MAX) {
+      return fallback;
+    }
+    return header.slice(0, ADMIN_EPHEMERAL_TEXT_MAX);
+  }
+  const hidden = hiddenBeyondLines + omittedCount;
+  const parts = [header, ...visibleLines];
+  const suffix = ephemeralOverflowSuffix(hidden, hiddenBeyondLines);
+  if (suffix.length > 0) {
+    parts.push(suffix.trimStart());
+  }
+  return parts.join("\n");
 };

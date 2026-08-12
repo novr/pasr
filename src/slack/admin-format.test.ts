@@ -19,10 +19,13 @@ import {
   deliverAdminEphemeralReply,
   deliverEphemeralPageReply,
   ephemeralPaginationBlockId,
+  ephemeralPaginationFitHeader,
   formatAdminEphemeralMessage,
   formatEntityList,
   normalizeAdminEphemeralReply,
-  postAdminEphemeralToResponseUrl
+  paginateEphemeralDisplayPages,
+  postAdminEphemeralToResponseUrl,
+  splitEphemeralLinesByTextFit
 } from "./admin-format";
 
 describe("formatEntityList", () => {
@@ -54,6 +57,46 @@ describe("formatAdminEphemeralMessage", () => {
     const lines = Array.from({ length: 5 }, (_, index) => `line${index + 1}`);
     const text = formatAdminEphemeralMessage("header", lines, 3);
     expect(text).toContain("… 他 3 件");
+    expect(text).not.toContain("表示省略");
+  });
+});
+
+describe("splitEphemeralLinesByTextFit", () => {
+  it("moves overflow lines to the next page instead of omitting them", () => {
+    const longLine = `• ${"x".repeat(ADMIN_EPHEMERAL_TEXT_MAX - 20)}`;
+    const pages = splitEphemeralLinesByTextFit("header", [
+      longLine,
+      "• short",
+      "• tail"
+    ]);
+    expect(pages).toHaveLength(2);
+    expect(pages[0]).toHaveLength(1);
+    expect(pages[1]).toEqual(["• short", "• tail"]);
+  });
+
+  it("advances past a day header when the first entry does not fit", () => {
+    const pages = splitEphemeralLinesByTextFit(ephemeralPaginationFitHeader("summary"), [
+      "*2026-08-10 (月)*",
+      `• ${"a".repeat(2765)}`,
+      "• short"
+    ]);
+    expect(pages.length).toBeGreaterThan(1);
+    expect(pages.flat()).toContain("• short");
+  });
+});
+
+describe("paginateEphemeralDisplayPages", () => {
+  it("expands preliminary pages when text does not fit", () => {
+    const longLine = `• ${"y".repeat(ADMIN_EPHEMERAL_TEXT_MAX - 20)}`;
+    const result = paginateEphemeralDisplayPages(
+      "header",
+      [[longLine, "• second", "• third"]],
+      2
+    );
+    expect(result.totalPages).toBe(2);
+    expect(result.pageLines).toEqual(["• second", "• third"]);
+    expect(result.remainingEntryCount).toBe(0);
+    const text = formatAdminEphemeralMessage("header — ページ 2/2", result.pageLines, 0);
     expect(text).not.toContain("表示省略");
   });
 });

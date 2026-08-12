@@ -9,13 +9,11 @@ import { getJstDateParts } from "../domain/jst-date";
 import { ADMIN_ABSENCES_PAGE_ACTION_ID } from "./action-ids";
 import { ADMIN_EPHEMERAL_LIST_MAX } from "./admin-constants";
 import {
-  adminListPagination,
   buildAdminEphemeralBlocks,
-  computeAdminTotalPages,
   deliverEphemeralPageReply,
   formatAdminEphemeralMessage,
   formatEntityList,
-  normalizeAdminPage,
+  paginateEphemeralDisplayPages,
   type AdminEphemeralReply
 } from "./admin-format";
 import type { SlackCommandPayload } from "./command";
@@ -50,26 +48,24 @@ export const buildAbsencesTodayReply = async (
     return headerBase;
   }
 
-  const totalPages = computeAdminTotalPages(totalCount);
-  const currentPage = normalizeAdminPage(page, totalPages);
-  const offset = (currentPage - 1) * ADMIN_EPHEMERAL_LIST_MAX;
-  const records = await listAbsencesActiveOnDate(config, todayJst, {
-    limit: ADMIN_EPHEMERAL_LIST_MAX,
-    offset
+  const preliminaryPages: string[][] = [];
+  for (let offset = 0; offset < totalCount; offset += ADMIN_EPHEMERAL_LIST_MAX) {
+    const records = await listAbsencesActiveOnDate(config, todayJst, {
+      limit: ADMIN_EPHEMERAL_LIST_MAX,
+      offset
+    });
+    preliminaryPages.push(records.map((record) => formatAbsenceLine(record)));
+  }
+  const display = paginateEphemeralDisplayPages(headerBase, preliminaryPages, page);
+  const header = `${headerBase} — ページ ${display.currentPage}/${display.totalPages}`;
+  const text = formatAdminEphemeralMessage(header, display.pageLines, 0);
+  const blocks = buildAdminEphemeralBlocks(text, {
+    actionId: ADMIN_ABSENCES_PAGE_ACTION_ID,
+    blockIdPrefix: "pasr_admin_absences_pagination",
+    page: display.currentPage,
+    totalPages: display.totalPages,
+    remainingEntryCount: display.remainingEntryCount
   });
-  const header = `${headerBase} — ページ ${currentPage}/${totalPages}`;
-  const lines = records.map((record) => formatAbsenceLine(record));
-  const text = formatAdminEphemeralMessage(header, lines, 0);
-  const blocks = buildAdminEphemeralBlocks(
-    text,
-    adminListPagination({
-      actionId: ADMIN_ABSENCES_PAGE_ACTION_ID,
-      blockIdPrefix: "pasr_admin_absences_pagination",
-      page: currentPage,
-      totalPages,
-      totalCount
-    })
-  );
   return blocks ? { text, blocks } : { text };
 };
 

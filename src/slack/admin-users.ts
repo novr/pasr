@@ -11,13 +11,11 @@ import { formatRegistrationNotifyModeLabel } from "../domain/absence-registratio
 import { ADMIN_USERS_PAGE_ACTION_ID } from "./action-ids";
 import { ADMIN_EPHEMERAL_LIST_MAX } from "./admin-constants";
 import {
-  adminListPagination,
   buildAdminEphemeralBlocks,
-  computeAdminTotalPages,
   deliverEphemeralPageReply,
   formatAdminEphemeralMessage,
   formatEntityList,
-  normalizeAdminPage,
+  paginateEphemeralDisplayPages,
   type AdminEphemeralReply
 } from "./admin-format";
 import type { SlackCommandPayload } from "./command";
@@ -94,35 +92,36 @@ export const buildUsersListReply = async (
 
   const statusPrefsEnabled =
     isStatusOAuthEnabled(config) && (await checkMemberMasterStatusPrefsSchema(config)) === "ok";
-  const totalPages = computeAdminTotalPages(totalCount);
-  const currentPage = normalizeAdminPage(page, totalPages);
-  const offset = (currentPage - 1) * ADMIN_EPHEMERAL_LIST_MAX;
-  const records = await listMemberMasterRecords(config, {
-    limit: ADMIN_EPHEMERAL_LIST_MAX,
-    offset
+  const preliminaryPages: string[][] = [];
+  for (let offset = 0; offset < totalCount; offset += ADMIN_EPHEMERAL_LIST_MAX) {
+    const records = await listMemberMasterRecords(config, {
+      limit: ADMIN_EPHEMERAL_LIST_MAX,
+      offset
+    });
+    const oauthLabels = await resolveOAuthLabel(config, records);
+    preliminaryPages.push(
+      records.map((master) =>
+        formatUserLine(
+          master,
+          oauthLabels.get(master.targetUser) ?? "n/a",
+          statusPrefsEnabled
+            ? formatStatusPrefsLabel(master, config.statusDefaultText, config.statusEmoji)
+            : undefined
+        )
+      )
+    );
+  }
+  const summaryHeader = `PASR 登録ユーザー (active ${activeCount} / 全 ${totalCount})`;
+  const display = paginateEphemeralDisplayPages(summaryHeader, preliminaryPages, page);
+  const header = `${summaryHeader} — ページ ${display.currentPage}/${display.totalPages}`;
+  const text = formatAdminEphemeralMessage(header, display.pageLines, 0);
+  const blocks = buildAdminEphemeralBlocks(text, {
+    actionId: ADMIN_USERS_PAGE_ACTION_ID,
+    blockIdPrefix: "pasr_admin_users_pagination",
+    page: display.currentPage,
+    totalPages: display.totalPages,
+    remainingEntryCount: display.remainingEntryCount
   });
-  const oauthLabels = await resolveOAuthLabel(config, records);
-  const lines = records.map((master) =>
-    formatUserLine(
-      master,
-      oauthLabels.get(master.targetUser) ?? "n/a",
-      statusPrefsEnabled
-        ? formatStatusPrefsLabel(master, config.statusDefaultText, config.statusEmoji)
-        : undefined
-    )
-  );
-  const header = `PASR 登録ユーザー (active ${activeCount} / 全 ${totalCount}) — ページ ${currentPage}/${totalPages}`;
-  const text = formatAdminEphemeralMessage(header, lines, 0);
-  const blocks = buildAdminEphemeralBlocks(
-    text,
-    adminListPagination({
-      actionId: ADMIN_USERS_PAGE_ACTION_ID,
-      blockIdPrefix: "pasr_admin_users_pagination",
-      page: currentPage,
-      totalPages,
-      totalCount
-    })
-  );
   return blocks ? { text, blocks } : { text };
 };
 

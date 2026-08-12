@@ -134,6 +134,14 @@ const buildAbsenceCalendarPages = (
   return pages;
 };
 
+export const paginateAllAbsenceCalendarLinePages = (
+  groups: AbsenceCalendarDayGroup[],
+  pageSize: number
+): string[][] => {
+  const pages = buildAbsenceCalendarPages(explodeOversizedDayGroups(groups, pageSize), pageSize);
+  return pages.map((pageGroups) => flattenAbsenceCalendarDayGroups(pageGroups));
+};
+
 export const paginateAbsenceCalendarDayGroups = (
   groups: AbsenceCalendarDayGroup[],
   page: number,
