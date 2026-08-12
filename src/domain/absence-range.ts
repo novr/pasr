@@ -2,8 +2,6 @@ import { addJstDays, isValidJstDateString } from "./jst-date";
 
 export const ABSENCE_RANGE_MAX_INCLUSIVE_DAYS = 92;
 export const SLACK_CHANNEL_ID_PATTERN = /^C[A-Z0-9]+$/i;
-export const SLACK_DELIVER_CHANNEL_ID_PATTERN = /^(C|D)[A-Z0-9]+$/i;
-export const SLACK_BUTTON_VALUE_MAX = 2000;
 
 export type AbsenceRangeValidationError =
   | "invalid_from"
@@ -12,23 +10,7 @@ export type AbsenceRangeValidationError =
   | "from_after_to"
   | "range_too_long";
 
-export type AbsenceCalendarPageQuery = {
-  userId: string;
-  from: string;
-  to: string;
-  channelId: string;
-  deliverChannelId?: string;
-  page: number;
-};
-
 export const isSlackChannelId = (value: string): boolean => SLACK_CHANNEL_ID_PATTERN.test(value);
-
-export const isSlackDeliverChannelId = (value: string | undefined): value is string =>
-  typeof value === "string" && SLACK_DELIVER_CHANNEL_ID_PATTERN.test(value);
-
-export const resolveSlackDeliverChannelId = (
-  ...candidates: Array<string | undefined>
-): string | undefined => candidates.find(isSlackDeliverChannelId);
 
 export const inclusiveJstDaySpan = (from: string, to: string): number => {
   if (!isValidJstDateString(from) || !isValidJstDateString(to) || from > to) return 0;
@@ -50,77 +32,6 @@ export const validateAbsenceRange = (
   if (!isValidJstDateString(from)) return { ok: false, error: "invalid_from" };
   if (!isValidJstDateString(to)) return { ok: false, error: "invalid_to" };
   if (from < todayJst) return { ok: false, error: "from_before_today" };
-  if (from > to) return { ok: false, error: "from_after_to" };
-  if (inclusiveJstDaySpan(from, to) > ABSENCE_RANGE_MAX_INCLUSIVE_DAYS) {
-    return { ok: false, error: "range_too_long" };
-  }
-  return { ok: true };
-};
-
-export const encodeAbsenceCalendarPageValue = (query: AbsenceCalendarPageQuery): string => {
-  const payload: AbsenceCalendarPageQuery = {
-    ...query,
-    deliverChannelId: isSlackDeliverChannelId(query.deliverChannelId)
-      ? query.deliverChannelId
-      : undefined
-  };
-  const encoded = JSON.stringify(payload);
-  if (encoded.length <= SLACK_BUTTON_VALUE_MAX) return encoded;
-  if (payload.deliverChannelId) {
-    const withoutDeliverChannel = JSON.stringify({ ...payload, deliverChannelId: undefined });
-    if (withoutDeliverChannel.length <= SLACK_BUTTON_VALUE_MAX) return withoutDeliverChannel;
-  }
-  return encoded;
-};
-
-const parseAbsenceCalendarPageNumber = (value: unknown): number | undefined => {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.trunc(value);
-  }
-  if (typeof value === "string") {
-    const parsed = Number.parseInt(value, 10);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return undefined;
-};
-
-export const decodeAbsenceCalendarPageValue = (raw: string): AbsenceCalendarPageQuery | undefined => {
-  try {
-    const parsed = JSON.parse(raw) as Partial<AbsenceCalendarPageQuery> & { page?: unknown };
-    const page = parseAbsenceCalendarPageNumber(parsed.page);
-    if (
-      typeof parsed.userId !== "string" ||
-      typeof parsed.from !== "string" ||
-      typeof parsed.to !== "string" ||
-      typeof parsed.channelId !== "string" ||
-      page === undefined ||
-      page < 1
-    ) {
-      return undefined;
-    }
-    if (!parsed.userId) return undefined;
-    const deliverChannelId = isSlackDeliverChannelId(parsed.deliverChannelId)
-      ? parsed.deliverChannelId
-      : undefined;
-    return {
-      userId: parsed.userId,
-      from: parsed.from,
-      to: parsed.to,
-      channelId: parsed.channelId,
-      deliverChannelId,
-      page
-    };
-  } catch {
-    return undefined;
-  }
-};
-
-export const validateAbsenceCalendarPageTurn = (
-  from: string,
-  to: string
-): { ok: true } | { ok: false; error: AbsenceRangeValidationError } => {
-  if (!isValidJstDateString(from)) return { ok: false, error: "invalid_from" };
-  if (!isValidJstDateString(to)) return { ok: false, error: "invalid_to" };
   if (from > to) return { ok: false, error: "from_after_to" };
   if (inclusiveJstDaySpan(from, to) > ABSENCE_RANGE_MAX_INCLUSIVE_DAYS) {
     return { ok: false, error: "range_too_long" };

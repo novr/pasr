@@ -2,34 +2,26 @@ import type { AppConfig } from "../config";
 import { listAbsencesOverlappingRangeForChannel } from "../db/absence-repository";
 import { checkDbSchema } from "../db/schema-check";
 import {
-  groupAbsencesByJstDay,
-  paginateAllAbsenceCalendarLinePages
+  flattenAbsenceCalendarDayGroups,
+  groupAbsencesByJstDay
 } from "../domain/absence-calendar-view";
 import {
-  decodeAbsenceCalendarPageValue,
-  encodeAbsenceCalendarPageValue,
   formatAbsenceRangeValidationError,
   isSlackChannelId,
-  resolveSlackDeliverChannelId,
-  validateAbsenceCalendarPageTurn,
   validateAbsenceRange,
-  type AbsenceCalendarPageQuery,
   type AbsenceRangeValidationError
 } from "../domain/absence-range";
 import { getJstDateParts } from "../domain/jst-date";
-import { ABSENCE_CALENDAR_PAGE_ACTION_ID } from "./action-ids";
-import { ADMIN_EPHEMERAL_LIST_MAX } from "./admin-constants";
-import {
-  buildAdminEphemeralBlocks,
-  deliverAdminEphemeralReply,
-  deliverEphemeralPageReply,
-  formatAdminEphemeralMessage,
-  paginateEphemeralDisplayPages,
-  type AdminEphemeralReply
-} from "./admin-format";
+import { deliverAdminEphemeralReply } from "./admin-format";
+import { splitLinesByTextMax } from "./message-text-split";
 import { slackApi } from "./api";
 
 export const ABSENCE_CALENDAR_MODAL_CALLBACK_ID = "pasr_absence_calendar";
+
+export const CALENDAR_DM_TEXT_MAX = 12_000;
+export const CALENDAR_DM_MAX_THREAD_MESSAGES = 40;
+const CALENDAR_DM_TRUNCATION_NOTICE = "… 以降は表示を省略しました";
+const CALENDAR_DM_PART_LABEL_FIT_PREFIX = "_999/999_\n";
 
 export const START_BLOCK_ID = "start_block";
 export const END_BLOCK_ID = "end_block";
@@ -49,7 +41,6 @@ const absenceRangeErrorBlockId = (error: AbsenceRangeValidationError): string =>
 type AbsenceCalendarMetadata = {
   userId: string;
   responseUrl: string;
-  deliverChannelId: string;
 };
 
 type SlackInteractionPayload = {
@@ -57,7 +48,6 @@ type SlackInteractionPayload = {
   trigger_id?: string;
   response_url?: string;
   user?: { id?: string };
-  channel?: { id?: string };
   view?: {
     callback_id?: string;
     private_metadata?: string;
@@ -65,7 +55,6 @@ type SlackInteractionPayload = {
       values?: Record<string, Record<string, unknown>>;
     };
   };
-  actions?: Array<{ action_id?: string; value?: string }>;
 };
 
 export type AbsenceCalendarInteractionResult = {
@@ -73,6 +62,21 @@ export type AbsenceCalendarInteractionResult = {
   error?: string;
   errorBlockId?: string;
   followUp?: () => Promise<void>;
+};
+
+export type AbsenceCalendarDmDelivery = {
+  parentText: string;
+  threadTexts: string[];
+  totalCount: number;
+  truncated: boolean;
+};
+
+export type AbsenceCalendarDmDeliveryResult = {
+  parentOk: boolean;
+  threadSent: number;
+  threadFailed: number;
+  truncated: boolean;
+  emptyResult: boolean;
 };
 
 const parseDateValue = (value: unknown): string => {
@@ -93,35 +97,58 @@ const parseAbsenceCalendarMetadata = (raw: string): AbsenceCalendarMetadata | un
     if (!parsed?.userId) return undefined;
     return {
       userId: parsed.userId,
-      responseUrl: parsed.responseUrl ?? "",
-      deliverChannelId: parsed.deliverChannelId ?? ""
+      responseUrl: parsed.responseUrl ?? ""
     };
   } catch {
     return undefined;
   }
 };
 
-const calendarPaginationValue = (
-  query: Omit<AbsenceCalendarPageQuery, "page">,
-  page: number
-): string => encodeAbsenceCalendarPageValue({ ...query, page });
+const buildPartLabel = (index: number, total: number): string =>
+  total <= 1 ? "" : `_${index + 1}/${total}_\n`;
 
-export const buildAbsenceCalendarReply = async (
+const fitThreadTextForDelivery = (body: string, label: string, suffix = ""): string => {
+  const budget = CALENDAR_DM_TEXT_MAX - label.length - suffix.length;
+  if (body.length <= budget) {
+    return `${label}${body}${suffix}`;
+  }
+  return `${label}${body.slice(0, Math.max(0, budget - 1))}…${suffix}`;
+};
+
+const buildCalendarThreadTexts = (lines: string[]): { threadTexts: string[]; truncated: boolean } => {
+  const splitMax = CALENDAR_DM_TEXT_MAX - CALENDAR_DM_PART_LABEL_FIT_PREFIX.length;
+  const chunks = splitLinesByTextMax(lines, splitMax);
+  if (chunks.length <= CALENDAR_DM_MAX_THREAD_MESSAGES) {
+    return {
+      threadTexts: chunks.map((chunk, index) =>
+        fitThreadTextForDelivery(chunk, buildPartLabel(index, chunks.length))
+      ),
+      truncated: false
+    };
+  }
+
+  const limited = chunks.slice(0, CALENDAR_DM_MAX_THREAD_MESSAGES);
+  const total = limited.length;
+  return {
+    threadTexts: limited.map((chunk, index) => {
+      const label = buildPartLabel(index, total);
+      const suffix = index === total - 1 ? `\n${CALENDAR_DM_TRUNCATION_NOTICE}` : "";
+      return fitThreadTextForDelivery(chunk, label, suffix);
+    }),
+    truncated: true
+  };
+};
+
+export const buildAbsenceCalendarDmDelivery = async (
   config: AppConfig,
   params: {
-    userId: string;
+    channelId: string;
     from: string;
     to: string;
-    channelId: string;
-    deliverChannelId?: string;
-    page: number;
     todayJst: string;
-    pageTurn?: boolean;
   }
-): Promise<AdminEphemeralReply | string> => {
-  const validation = params.pageTurn
-    ? validateAbsenceCalendarPageTurn(params.from, params.to)
-    : validateAbsenceRange(params.from, params.to, params.todayJst);
+): Promise<AbsenceCalendarDmDelivery | string> => {
+  const validation = validateAbsenceRange(params.from, params.to, params.todayJst);
   if (!validation.ok) {
     return formatAbsenceRangeValidationError(validation.error);
   }
@@ -143,39 +170,124 @@ export const buildAbsenceCalendarReply = async (
   const totalCount = records.length;
   const headerBase = `<#${params.channelId}> の不在カレンダー (${params.from} 〜 ${params.to} JST)`;
   if (totalCount === 0) {
-    return `${headerBase}: 0件\n（該当なし）`;
+    return {
+      parentText: `${headerBase}: 0件\n（該当なし）`,
+      threadTexts: [],
+      totalCount,
+      truncated: false
+    };
   }
 
   const groups = groupAbsencesByJstDay(records, params.from, params.to);
   const totalDays = groups.length;
-  const summaryHeader = `${headerBase}: ${totalCount}件 / ${totalDays}日`;
-  const preliminaryPages = paginateAllAbsenceCalendarLinePages(groups, ADMIN_EPHEMERAL_LIST_MAX);
-  const display = paginateEphemeralDisplayPages(summaryHeader, preliminaryPages, params.page);
-  const header = `${summaryHeader} — ページ ${display.currentPage}/${display.totalPages}`;
-  const text = formatAdminEphemeralMessage(header, display.pageLines, 0);
-  const deliverChannelId = resolveSlackDeliverChannelId(params.deliverChannelId);
-  const paginationQuery = {
-    userId: params.userId,
-    from: params.from,
-    to: params.to,
-    channelId: params.channelId,
-    deliverChannelId
-  };
-  const blocks = buildAdminEphemeralBlocks(text, {
-    actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
-    blockIdPrefix: "pasr_calendar_pagination",
-    page: display.currentPage,
-    totalPages: display.totalPages,
-    remainingEntryCount: display.remainingEntryCount,
-    pageValue: (page) => calendarPaginationValue(paginationQuery, page)
-  });
-  return blocks ? { text, blocks } : { text };
+  const parentText = `${headerBase}: ${totalCount}件 / ${totalDays}日`;
+  const { threadTexts, truncated } = buildCalendarThreadTexts(flattenAbsenceCalendarDayGroups(groups));
+  return { parentText, threadTexts, totalCount, truncated };
+};
+
+export const buildCalendarDmAckMessage = (result: AbsenceCalendarDmDeliveryResult): string => {
+  if (!result.parentOk) {
+    return "Bot DM への送信に失敗しました。Bot をブロックしていないか確認してください。";
+  }
+  if (result.emptyResult) {
+    return "Bot DM に送りました（該当なし）。";
+  }
+  if (result.threadFailed > 0) {
+    return "Bot DM に送りましたが、一部の表示に失敗しました。DM を確認してください。";
+  }
+  if (result.truncated) {
+    return "Bot DM に送りました（表示件数の上限により省略あり）。";
+  }
+  return "Bot DM に不在カレンダーを送りました。";
+};
+
+export const deliverAbsenceCalendarToDm = async (
+  config: AppConfig,
+  params: {
+    userId: string;
+    parentText: string;
+    threadTexts: string[];
+    truncated: boolean;
+  }
+): Promise<AbsenceCalendarDmDeliveryResult> => {
+  const emptyResult = params.threadTexts.length === 0;
+  let parentOk = false;
+  let threadSent = 0;
+  let threadFailed = 0;
+  const truncated = params.truncated;
+
+  try {
+    const dmChannelId = await slackApi.openDirectMessage(config, params.userId);
+    const parentPosted = await slackApi.postChannelMessage(config, dmChannelId, params.parentText);
+    const parentTs = parentPosted.ts;
+    if (!parentTs) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "calendar_dm_delivery",
+          parent_ok: false,
+          thread_sent: 0,
+          thread_failed: params.threadTexts.length,
+          truncated
+        })
+      );
+      return { parentOk: false, threadSent: 0, threadFailed: params.threadTexts.length, truncated, emptyResult };
+    }
+    parentOk = true;
+
+    for (const threadText of params.threadTexts) {
+      try {
+        await slackApi.postChannelMessage(config, dmChannelId, threadText, undefined, parentTs);
+        threadSent += 1;
+      } catch (error) {
+        threadFailed += 1;
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "calendar_dm_delivery_thread_failed",
+            user_id: params.userId,
+            message: error instanceof Error ? error.message : String(error)
+          })
+        );
+      }
+    }
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "calendar_dm_delivery",
+        parent_ok: false,
+        thread_sent: threadSent,
+        thread_failed: threadFailed + Math.max(0, params.threadTexts.length - threadSent),
+        truncated,
+        message: error instanceof Error ? error.message : String(error)
+      })
+    );
+    return {
+      parentOk: false,
+      threadSent,
+      threadFailed: threadFailed + Math.max(0, params.threadTexts.length - threadSent),
+      truncated,
+      emptyResult
+    };
+  }
+
+  console.log(
+    JSON.stringify({
+      level: "info",
+      event: "calendar_dm_delivery",
+      parent_ok: parentOk,
+      thread_sent: threadSent,
+      thread_failed: threadFailed,
+      truncated
+    })
+  );
+  return { parentOk, threadSent, threadFailed, truncated, emptyResult };
 };
 
 export const buildAbsenceCalendarModalView = (params: {
   userId: string;
   responseUrl: string;
-  deliverChannelId: string;
   todayJst: string;
   initialChannelId?: string;
 }): Record<string, unknown> => {
@@ -194,8 +306,7 @@ export const buildAbsenceCalendarModalView = (params: {
     callback_id: ABSENCE_CALENDAR_MODAL_CALLBACK_ID,
     private_metadata: JSON.stringify({
       userId: params.userId,
-      responseUrl: params.responseUrl,
-      deliverChannelId: params.deliverChannelId
+      responseUrl: params.responseUrl
     }),
     title: { type: "plain_text", text: "不在カレンダー" },
     submit: { type: "plain_text", text: "表示" },
@@ -206,7 +317,7 @@ export const buildAbsenceCalendarModalView = (params: {
         elements: [
           {
             type: "mrkdwn",
-            text: "通知チャンネルに届け先指定された*予定*のみ表示します。終了済みの予定は日次削除のため一覧に出ません。開始日は今日以降、最大 92 日です。"
+            text: "通知チャンネルに届け先指定された*予定*のみ表示します。終了済みの予定は日次削除のため一覧に出ません。開始日は今日以降、最大 92 日です。結果は PASR Bot の DM に送られます（本人のみ・後から見返せます）。"
           }
         ]
       },
@@ -248,7 +359,6 @@ export const openAbsenceCalendarModal = async (
     triggerId: string;
     userId: string;
     responseUrl: string;
-    deliverChannelId: string;
     initialChannelId?: string;
   }
 ): Promise<void> => {
@@ -259,7 +369,6 @@ export const openAbsenceCalendarModal = async (
     buildAbsenceCalendarModalView({
       userId: params.userId,
       responseUrl: params.responseUrl,
-      deliverChannelId: params.deliverChannelId,
       todayJst,
       initialChannelId: params.initialChannelId
     })
@@ -306,99 +415,54 @@ const handleAbsenceCalendarSubmission = async (
   }
 
   const responseUrl = metadata.responseUrl || payload.response_url || "";
-  const deliverChannelId = resolveSlackDeliverChannelId(
-    metadata.deliverChannelId,
-    payload.channel?.id
-  );
 
   return {
     ok: true,
     followUp: async () => {
-      const reply = await buildAbsenceCalendarReply(config, {
-        userId: metadata.userId,
-        from,
-        to,
-        channelId,
-        deliverChannelId,
-        page: 1,
-        todayJst
-      });
-      await deliverAdminEphemeralReply(
-        config,
-        {
+      try {
+        const delivery = await buildAbsenceCalendarDmDelivery(config, {
+          channelId,
+          from,
+          to,
+          todayJst
+        });
+        if (typeof delivery === "string") {
+          await deliverAdminEphemeralReply(
+            config,
+            { userId: metadata.userId, responseUrl },
+            delivery
+          );
+          return;
+        }
+        const result = await deliverAbsenceCalendarToDm(config, {
           userId: metadata.userId,
-          responseUrl,
-          channelId: deliverChannelId
-        },
-        reply
-      );
-    }
-  };
-};
-
-export const handleAbsenceCalendarPageInteraction = async (
-  config: AppConfig,
-  params: {
-    actionId: string;
-    userId: string;
-    pageValue: string;
-    responseUrl?: string;
-    channelId?: string;
-  }
-): Promise<{ handled: boolean; followUp?: () => Promise<void> }> => {
-  if (params.actionId !== ABSENCE_CALENDAR_PAGE_ACTION_ID) {
-    return { handled: false };
-  }
-
-  const decoded = decodeAbsenceCalendarPageValue(params.pageValue);
-  const deliverChannelId = resolveSlackDeliverChannelId(params.channelId, decoded?.deliverChannelId);
-  const deliverParams = {
-    userId: params.userId,
-    responseUrl: params.responseUrl,
-    channelId: deliverChannelId
-  };
-
-  if (!decoded || decoded.userId !== params.userId) {
-    return {
-      handled: true,
-      followUp: async () => {
-        await deliverEphemeralPageReply(
+          parentText: delivery.parentText,
+          threadTexts: delivery.threadTexts,
+          truncated: delivery.truncated
+        });
+        await deliverAdminEphemeralReply(
           config,
-          deliverParams,
-          "ページ情報の読み取りに失敗しました。もう一度 /pasr calendar を実行してください。"
+          { userId: metadata.userId, responseUrl },
+          buildCalendarDmAckMessage({
+            ...result,
+            emptyResult: delivery.totalCount === 0
+          })
+        );
+      } catch (error) {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "calendar_dm_delivery_failed",
+            user_id: metadata.userId,
+            message: error instanceof Error ? error.message : String(error)
+          })
+        );
+        await deliverAdminEphemeralReply(
+          config,
+          { userId: metadata.userId, responseUrl },
+          "Bot DM への送信に失敗しました。Bot をブロックしていないか確認してください。"
         );
       }
-    };
-  }
-
-  const validation = validateAbsenceCalendarPageTurn(decoded.from, decoded.to);
-  if (!validation.ok || !isSlackChannelId(decoded.channelId)) {
-    const message = !validation.ok
-      ? formatAbsenceRangeValidationError(validation.error)
-      : "チャンネルの指定が正しくありません。";
-    return {
-      handled: true,
-      followUp: async () => {
-        await deliverEphemeralPageReply(config, deliverParams, message);
-      }
-    };
-  }
-
-  return {
-    handled: true,
-    followUp: async () => {
-      const { day: todayJst } = getJstDateParts();
-      const reply = await buildAbsenceCalendarReply(config, {
-        userId: decoded.userId,
-        from: decoded.from,
-        to: decoded.to,
-        channelId: decoded.channelId,
-        deliverChannelId: deliverChannelId,
-        page: decoded.page,
-        todayJst,
-        pageTurn: true
-      });
-      await deliverEphemeralPageReply(config, deliverParams, reply);
     }
   };
 };
