@@ -21,14 +21,13 @@ import { getJstDateParts } from "../domain/jst-date";
 import { ABSENCE_CALENDAR_PAGE_ACTION_ID } from "./action-ids";
 import { ADMIN_EPHEMERAL_LIST_MAX } from "./admin-constants";
 import {
+  buildAdminEphemeralBlocks,
   deliverAdminEphemeralReply,
+  deliverEphemeralPageReply,
   formatAdminEphemeralMessage,
-  normalizeAdminEphemeralReply,
-  postAdminEphemeralToResponseUrl,
   type AdminEphemeralReply
 } from "./admin-format";
 import { slackApi } from "./api";
-import { isImChannelId, postUserFacingMessage } from "./user-message";
 
 export const ABSENCE_CALENDAR_MODAL_CALLBACK_ID = "pasr_absence_calendar";
 
@@ -107,110 +106,6 @@ const calendarPaginationValue = (
   page: number
 ): string => encodeAbsenceCalendarPageValue({ ...query, page });
 
-const deliverCalendarEphemeralPageReply = async (
-  config: AppConfig,
-  params: {
-    userId: string;
-    responseUrl?: string;
-    channelId?: string;
-    page?: number;
-  },
-  reply: AdminEphemeralReply | string
-): Promise<void> => {
-  const normalized = normalizeAdminEphemeralReply(reply);
-  const logBase = {
-    user_id: params.userId,
-    page: params.page,
-    has_response_url: Boolean(params.responseUrl),
-    deliver_channel_id: params.channelId ?? ""
-  };
-
-  if (params.channelId && !isImChannelId(params.channelId)) {
-    try {
-      await postUserFacingMessage(config, {
-        channelId: params.channelId,
-        userId: params.userId,
-        text: normalized.text,
-        blocks: normalized.blocks
-      });
-      if (params.responseUrl) {
-        const deleted = await postAdminEphemeralToResponseUrl(params.responseUrl, { text: "" }, {
-          deleteOriginal: true
-        });
-        if (!deleted) {
-          console.warn(
-            JSON.stringify({
-              level: "warn",
-              event: "calendar_page_delete_original_failed",
-              ...logBase
-            })
-          );
-        }
-      }
-      console.log(JSON.stringify({ level: "info", event: "calendar_page_delivery", ...logBase, method: "post_ephemeral" }));
-      return;
-    } catch (error) {
-      console.warn(
-        JSON.stringify({
-          level: "warn",
-          event: "calendar_page_post_ephemeral_failed",
-          ...logBase,
-          message: error instanceof Error ? error.message : String(error)
-        })
-      );
-    }
-  }
-
-  if (params.responseUrl) {
-    const replaced = await postAdminEphemeralToResponseUrl(params.responseUrl, normalized, {
-      replaceOriginal: true
-    });
-    if (replaced) {
-      console.log(JSON.stringify({ level: "info", event: "calendar_page_delivery", ...logBase, method: "replace_original" }));
-      return;
-    }
-    const posted = await postAdminEphemeralToResponseUrl(params.responseUrl, normalized);
-    if (posted) {
-      console.log(JSON.stringify({ level: "info", event: "calendar_page_delivery", ...logBase, method: "response_url_post" }));
-      return;
-    }
-  }
-
-  console.warn(JSON.stringify({ level: "warn", event: "calendar_page_delivery_failed", ...logBase }));
-};
-
-const buildCalendarPaginationBlocks = (
-  text: string,
-  query: Omit<AbsenceCalendarPageQuery, "page">,
-  page: number,
-  totalPages: number,
-  remainingEntryCount: number
-): Array<Record<string, unknown>> | undefined => {
-  if (totalPages <= 1) return undefined;
-  const elements: Array<Record<string, unknown>> = [];
-  if (page > 1) {
-    elements.push({
-      type: "button",
-      action_id: ABSENCE_CALENDAR_PAGE_ACTION_ID,
-      text: { type: "plain_text", text: `← ${page - 1}` },
-      value: calendarPaginationValue(query, page - 1)
-    });
-  }
-  if (page < totalPages && remainingEntryCount > 0) {
-    elements.push({
-      type: "button",
-      action_id: ABSENCE_CALENDAR_PAGE_ACTION_ID,
-      text: { type: "plain_text", text: `次ページ（${remainingEntryCount} 件）→` },
-      value: calendarPaginationValue(query, page + 1)
-    });
-  }
-  if (elements.length === 0) return undefined;
-  return [
-    { type: "section", text: { type: "mrkdwn", text } },
-    { type: "actions", block_id: "pasr_calendar_pagination", elements }
-  ];
-};
-
 export const buildAbsenceCalendarReply = async (
   config: AppConfig,
   params: {
@@ -258,19 +153,21 @@ export const buildAbsenceCalendarReply = async (
   const lines = flattenAbsenceCalendarDayGroups(pagination.pageGroups);
   const text = formatAdminEphemeralMessage(header, lines, 0);
   const deliverChannelId = resolveSlackDeliverChannelId(params.deliverChannelId);
-  const blocks = buildCalendarPaginationBlocks(
-    text,
-    {
-      userId: params.userId,
-      from: params.from,
-      to: params.to,
-      channelId: params.channelId,
-      deliverChannelId
-    },
-    pagination.currentPage,
-    pagination.totalPages,
-    pagination.remainingEntryCount
-  );
+  const paginationQuery = {
+    userId: params.userId,
+    from: params.from,
+    to: params.to,
+    channelId: params.channelId,
+    deliverChannelId
+  };
+  const blocks = buildAdminEphemeralBlocks(text, {
+    actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
+    blockIdPrefix: "pasr_calendar_pagination",
+    page: pagination.currentPage,
+    totalPages: pagination.totalPages,
+    remainingEntryCount: pagination.remainingEntryCount,
+    pageValue: (page) => calendarPaginationValue(paginationQuery, page)
+  });
   return blocks ? { text, blocks } : { text };
 };
 
@@ -457,15 +354,14 @@ export const handleAbsenceCalendarPageInteraction = async (
   const deliverParams = {
     userId: params.userId,
     responseUrl: params.responseUrl,
-    channelId: deliverChannelId,
-    page: decoded?.page
+    channelId: deliverChannelId
   };
 
   if (!decoded || decoded.userId !== params.userId) {
     return {
       handled: true,
       followUp: async () => {
-        await deliverCalendarEphemeralPageReply(
+        await deliverEphemeralPageReply(
           config,
           deliverParams,
           "ページ情報の読み取りに失敗しました。もう一度 /pasr calendar を実行してください。"
@@ -482,7 +378,7 @@ export const handleAbsenceCalendarPageInteraction = async (
     return {
       handled: true,
       followUp: async () => {
-        await deliverCalendarEphemeralPageReply(config, deliverParams, message);
+        await deliverEphemeralPageReply(config, deliverParams, message);
       }
     };
   }
@@ -501,7 +397,7 @@ export const handleAbsenceCalendarPageInteraction = async (
         todayJst,
         pageTurn: true
       });
-      await deliverCalendarEphemeralPageReply(config, { ...deliverParams, page: decoded.page }, reply);
+      await deliverEphemeralPageReply(config, deliverParams, reply);
     }
   };
 };

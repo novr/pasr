@@ -10,61 +10,79 @@ export const computeAdminTotalPages = (totalCount: number): number =>
 export const normalizeAdminPage = (page: number, totalPages: number): number =>
   Math.min(Math.max(1, page), totalPages);
 
+export const computeAdminRemainingEntryCount = (page: number, totalCount: number): number =>
+  Math.max(0, totalCount - page * ADMIN_EPHEMERAL_LIST_MAX);
+
+export const ephemeralPaginationBlockId = (blockIdPrefix: string, page: number): string =>
+  `${blockIdPrefix}_p${page}`;
+
 const adminEphemeralSectionBlock = (text: string): Record<string, unknown> => ({
   type: "section",
   text: { type: "mrkdwn", text }
 });
 
-const buildAdminPaginationActions = (
-  actionId: string,
-  blockId: string,
-  page: number,
-  totalPages: number,
-  totalCount: number
+const defaultEphemeralPageValue = (page: number): string => String(page);
+
+export type EphemeralPaginationSpec = {
+  actionId: string;
+  blockIdPrefix: string;
+  page: number;
+  totalPages: number;
+  remainingEntryCount: number;
+  pageValue?: (page: number) => string;
+};
+
+export const adminListPagination = (
+  params: Omit<EphemeralPaginationSpec, "remainingEntryCount" | "pageValue"> & {
+    totalCount: number;
+  }
+): EphemeralPaginationSpec => ({
+  actionId: params.actionId,
+  blockIdPrefix: params.blockIdPrefix,
+  page: params.page,
+  totalPages: params.totalPages,
+  remainingEntryCount: computeAdminRemainingEntryCount(params.page, params.totalCount)
+});
+
+export const buildEphemeralPaginationActions = (
+  spec: EphemeralPaginationSpec
 ): Array<Record<string, unknown>> | undefined => {
-  if (totalPages <= 1) return undefined;
+  const pageValue = spec.pageValue ?? defaultEphemeralPageValue;
+  if (spec.totalPages <= 1) return undefined;
   const elements: Array<Record<string, unknown>> = [];
-  if (page > 1) {
+  if (spec.page > 1) {
     elements.push({
       type: "button",
-      action_id: actionId,
-      text: { type: "plain_text", text: `← ${page - 1}` },
-      value: String(page - 1)
+      action_id: spec.actionId,
+      text: { type: "plain_text", text: `← ${spec.page - 1}` },
+      value: pageValue(spec.page - 1)
     });
   }
-  const shownThrough = page * ADMIN_EPHEMERAL_LIST_MAX;
-  const remaining = Math.max(0, totalCount - shownThrough);
-  if (page < totalPages && remaining > 0) {
+  if (spec.page < spec.totalPages && spec.remainingEntryCount > 0) {
     elements.push({
       type: "button",
-      action_id: actionId,
-      text: { type: "plain_text", text: `次ページ（${remaining} 件）→` },
-      value: String(page + 1)
+      action_id: spec.actionId,
+      text: { type: "plain_text", text: `次ページ（${spec.remainingEntryCount} 件）→` },
+      value: pageValue(spec.page + 1)
     });
   }
   if (elements.length === 0) return undefined;
-  return [{ type: "actions", block_id: blockId, elements }];
+  return [
+    {
+      type: "actions",
+      block_id: ephemeralPaginationBlockId(spec.blockIdPrefix, spec.page),
+      elements
+    }
+  ];
 };
 
-export type AdminEphemeralPagination = {
-  actionId: string;
-  blockId: string;
-  page: number;
-  totalPages: number;
-  totalCount: number;
-};
+export type AdminEphemeralPagination = EphemeralPaginationSpec;
 
 export const buildAdminEphemeralBlocks = (
   text: string,
-  pagination: AdminEphemeralPagination
+  pagination: EphemeralPaginationSpec
 ): Array<Record<string, unknown>> | undefined => {
-  const actions = buildAdminPaginationActions(
-    pagination.actionId,
-    pagination.blockId,
-    pagination.page,
-    pagination.totalPages,
-    pagination.totalCount
-  );
+  const actions = buildEphemeralPaginationActions(pagination);
   if (!actions) return undefined;
   return [adminEphemeralSectionBlock(text), ...actions];
 };
@@ -214,6 +232,25 @@ export const deliverAdminEphemeralReply = async (
       );
     }
   }
+};
+
+export const deliverEphemeralPageReply = async (
+  config: AppConfig,
+  params: {
+    userId: string;
+    responseUrl?: string;
+    channelId?: string;
+  },
+  reply: AdminEphemeralReply | string
+): Promise<void> => {
+  const normalized = normalizeAdminEphemeralReply(reply);
+  if (params.responseUrl) {
+    const replaced = await postAdminEphemeralToResponseUrl(params.responseUrl, normalized, {
+      replaceOriginal: true
+    });
+    if (replaced) return;
+  }
+  await deliverAdminEphemeralReply(config, params, reply);
 };
 
 export const formatEntityList = (entities: string[], emptyLabel: string, maxVisible = 2): string => {

@@ -30,6 +30,8 @@ import {
 const replyText = (reply: AdminEphemeralReply | string): string =>
   typeof reply === "string" ? reply : reply.text;
 
+const okFetchResponse = (): Response => ({ ok: true, text: async () => "ok" }) as Response;
+
 describe("buildAbsenceCalendarReply", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -38,6 +40,39 @@ describe("buildAbsenceCalendarReply", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("paginates when a single day exceeds page size", async () => {
+    const config = createTestConfig(createMockKv());
+    for (let index = 0; index < 30; index += 1) {
+      await createAbsence(config, {
+        itemId: `A${index}`,
+        targetUser: `U${index}`,
+        startDate: "2026-08-10",
+        endDate: "2026-08-10",
+        notifyChannels: ["CNOTIFY"],
+        notifyUsers: []
+      });
+    }
+
+    const reply = await buildAbsenceCalendarReply(config, {
+      userId: "U1",
+      from: "2026-08-05",
+      to: "2026-08-31",
+      channelId: "CNOTIFY",
+      page: 1,
+      todayJst: "2026-08-05"
+    });
+    expect(replyText(reply)).toContain("30件 / 1日");
+    expect(replyText(reply)).toContain("ページ 1/2");
+    if (typeof reply !== "string" && reply.blocks) {
+      const actions = reply.blocks.find((block) => block.type === "actions");
+      expect(actions?.block_id).toBe("pasr_calendar_pagination_p1");
+      const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find((element) =>
+        String((element.text as { text?: string })?.text).includes("次ページ")
+      );
+      expect(String((nextButton?.text as { text?: string })?.text)).toContain("5 件");
+    }
   });
 
   it("lists channel absences grouped by day with pagination", async () => {
@@ -77,6 +112,7 @@ describe("buildAbsenceCalendarReply", () => {
     expect(replyText(reply)).not.toContain("*2026-08-11");
     if (typeof reply !== "string" && reply.blocks) {
       const actions = reply.blocks.find((block) => block.type === "actions");
+      expect(actions?.block_id).toBe("pasr_calendar_pagination_p1");
       const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find(
         (element) => element.text && String((element.text as { text?: string }).text).includes("次ページ")
       );
@@ -313,7 +349,7 @@ describe("handleAbsenceCalendarPageInteraction", () => {
 
   it("reports an error on invalid page value", async () => {
     const config = createTestConfig(createMockKv());
-    const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
+    const fetchMock = vi.fn(async () => okFetchResponse());
     vi.stubGlobal("fetch", fetchMock);
     const result = await handleAbsenceCalendarPageInteraction(config, {
       actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
@@ -330,7 +366,7 @@ describe("handleAbsenceCalendarPageInteraction", () => {
 
   it("allows page turns even when from is before today", async () => {
     const config = createTestConfig(createMockKv());
-    const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
+    const fetchMock = vi.fn(async () => okFetchResponse());
     vi.stubGlobal("fetch", fetchMock);
     const result = await handleAbsenceCalendarPageInteraction(config, {
       actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
@@ -351,7 +387,7 @@ describe("handleAbsenceCalendarPageInteraction", () => {
     vi.unstubAllGlobals();
   });
 
-  it("posts ephemeral and deletes previous on next page click", async () => {
+  it("replaces ephemeral on next page click", async () => {
     const config = createTestConfig(createMockKv());
     for (let index = 0; index < 15; index += 1) {
       await createAbsence(config, {
@@ -392,7 +428,7 @@ describe("handleAbsenceCalendarPageInteraction", () => {
     expect(nextButton?.value).toBeTypeOf("string");
 
     postUserFacingMessageMock.mockClear();
-    const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
+    const fetchMock = vi.fn(async () => okFetchResponse());
     vi.stubGlobal("fetch", fetchMock);
     const result = await handleAbsenceCalendarPageInteraction(config, {
       actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
@@ -403,23 +439,33 @@ describe("handleAbsenceCalendarPageInteraction", () => {
     });
     expect(result.followUp).toBeTypeOf("function");
     await result.followUp?.();
-    expect(postUserFacingMessageMock).toHaveBeenCalledWith(
-      config,
+    expect(postUserFacingMessageMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://hooks.slack.com/actions/T/1/2",
       expect.objectContaining({
-        channelId: "C012RUN",
-        userId: "U1",
-        text: expect.stringContaining("ページ 2/2")
+        body: expect.stringContaining("replace_original")
       })
     );
     expect(fetchMock).toHaveBeenCalledWith(
       "https://hooks.slack.com/actions/T/1/2",
       expect.objectContaining({
-        body: JSON.stringify({
-          response_type: "ephemeral",
-          delete_original: true
-        })
+        body: expect.stringContaining("ページ 2/2")
       })
     );
+    const page2 = await buildAbsenceCalendarReply(config, {
+      userId: "U1",
+      from: "2026-08-05",
+      to: "2026-08-31",
+      channelId: "CNOTIFY",
+      page: 2,
+      todayJst: "2026-08-05",
+      pageTurn: true
+    });
+    const page2Actions =
+      typeof page2 !== "string" && page2.blocks
+        ? page2.blocks.find((block) => block.type === "actions")
+        : undefined;
+    expect(page2Actions?.block_id).toBe("pasr_calendar_pagination_p2");
     vi.unstubAllGlobals();
   });
 
@@ -467,7 +513,7 @@ describe("handleAbsenceCalendarPageInteraction", () => {
 
   it("reports an error when page value userId does not match actor", async () => {
     const config = createTestConfig(createMockKv());
-    const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
+    const fetchMock = vi.fn(async () => okFetchResponse());
     vi.stubGlobal("fetch", fetchMock);
     const result = await handleAbsenceCalendarPageInteraction(config, {
       actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
@@ -488,7 +534,7 @@ describe("handleAbsenceCalendarPageInteraction", () => {
     vi.unstubAllGlobals();
   });
 
-  it("posts ephemeral first even when delete_original fails", async () => {
+  it("falls back to channel post when replace_original fails", async () => {
     const config = createTestConfig(createMockKv());
     for (let index = 0; index < 15; index += 1) {
       await createAbsence(config, {
@@ -529,14 +575,7 @@ describe("handleAbsenceCalendarPageInteraction", () => {
     );
 
     postUserFacingMessageMock.mockClear();
-    const fetchMock = vi.fn(
-      async () =>
-        ({
-          ok: false,
-          status: 500,
-          text: async () => ""
-        }) as Response
-    );
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 500, text: async () => "" }) as Response);
     vi.stubGlobal("fetch", fetchMock);
     const result = await handleAbsenceCalendarPageInteraction(config, {
       actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
@@ -546,74 +585,18 @@ describe("handleAbsenceCalendarPageInteraction", () => {
       channelId: "C012RUN"
     });
     await result.followUp?.();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(postUserFacingMessageMock).toHaveBeenCalledWith(
-      config,
-      expect.objectContaining({
-        channelId: "C012RUN",
-        userId: "U1"
-      })
-    );
-    vi.unstubAllGlobals();
-  });
-
-  it("falls back to replace_original when post_ephemeral fails", async () => {
-    const config = createTestConfig(createMockKv());
-    for (let index = 0; index < 15; index += 1) {
-      await createAbsence(config, {
-        itemId: `A${index}`,
-        targetUser: `U${index}`,
-        startDate: "2026-08-10",
-        endDate: "2026-08-10",
-        notifyChannels: ["CNOTIFY"],
-        notifyUsers: []
-      });
-    }
-    for (let index = 0; index < 15; index += 1) {
-      await createAbsence(config, {
-        itemId: `B${index}`,
-        targetUser: `V${index}`,
-        startDate: "2026-08-11",
-        endDate: "2026-08-11",
-        notifyChannels: ["CNOTIFY"],
-        notifyUsers: []
-      });
-    }
-
-    const page1 = await buildAbsenceCalendarReply(config, {
-      userId: "U1",
-      from: "2026-08-05",
-      to: "2026-08-31",
-      channelId: "CNOTIFY",
-      deliverChannelId: "C012RUN",
-      page: 1,
-      todayJst: "2026-08-05"
-    });
-    const actions =
-      typeof page1 !== "string" && page1.blocks
-        ? page1.blocks.find((block) => block.type === "actions")
-        : undefined;
-    const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find((element) =>
-      String((element.text as { text?: string })?.text).includes("次ページ")
-    );
-
-    postUserFacingMessageMock.mockClear();
-    postUserFacingMessageMock.mockRejectedValueOnce(new Error("postEphemeral failed"));
-    const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
-    vi.stubGlobal("fetch", fetchMock);
-    const result = await handleAbsenceCalendarPageInteraction(config, {
-      actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
-      userId: "U1",
-      pageValue: String(nextButton?.value),
-      responseUrl: "https://hooks.slack.com/actions/T/1/2",
-      channelId: "C012RUN"
-    });
-    await result.followUp?.();
-    expect(postUserFacingMessageMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
       "https://hooks.slack.com/actions/T/1/2",
       expect.objectContaining({
         body: expect.stringContaining("replace_original")
+      })
+    );
+    expect(postUserFacingMessageMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({
+        channelId: "C012RUN",
+        userId: "U1",
+        text: expect.stringContaining("ページ 2/2")
       })
     );
     vi.unstubAllGlobals();
@@ -660,7 +643,7 @@ describe("handleAbsenceCalendarPageInteraction", () => {
     );
 
     postUserFacingMessageMock.mockClear();
-    const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
+    const fetchMock = vi.fn(async () => okFetchResponse());
     vi.stubGlobal("fetch", fetchMock);
     const result = await handleAbsenceCalendarPageInteraction(config, {
       actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
