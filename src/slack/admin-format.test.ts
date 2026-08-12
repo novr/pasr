@@ -12,9 +12,13 @@ vi.mock("./user-message", () => ({
 
 import {
   ADMIN_EPHEMERAL_TEXT_MAX,
+  adminListPagination,
   buildAdminEphemeralBlocks,
   buildAdminEphemeralPostBody,
+  buildEphemeralPaginationActions,
   deliverAdminEphemeralReply,
+  deliverEphemeralPageReply,
+  ephemeralPaginationBlockId,
   formatAdminEphemeralMessage,
   formatEntityList,
   normalizeAdminEphemeralReply,
@@ -102,30 +106,85 @@ describe("buildAdminEphemeralPostBody", () => {
 describe("buildAdminEphemeralBlocks", () => {
   it("includes section text when pagination is needed", () => {
     const body = "header\n• <@U1> active";
-    const blocks = buildAdminEphemeralBlocks(body, {
-      actionId: "pasr_admin_users_page",
-      blockId: "pasr_admin_users_pagination",
-      page: 1,
-      totalPages: 2,
-      totalCount: ADMIN_EPHEMERAL_LIST_MAX + 1
-    });
+    const blocks = buildAdminEphemeralBlocks(
+      body,
+      adminListPagination({
+        actionId: "pasr_admin_users_page",
+        blockIdPrefix: "pasr_admin_users_pagination",
+        page: 1,
+        totalPages: 2,
+        totalCount: ADMIN_EPHEMERAL_LIST_MAX + 1
+      })
+    );
     expect(blocks).toBeDefined();
     const section = blocks?.[0] as { type?: string; text?: { text?: string } };
     expect(section.type).toBe("section");
     expect(section.text?.text).toBe(body);
     expect(blocks?.[1]?.type).toBe("actions");
+    expect(blocks?.[1]?.block_id).toBe(ephemeralPaginationBlockId("pasr_admin_users_pagination", 1));
   });
 
   it("returns undefined for single page", () => {
     expect(
-      buildAdminEphemeralBlocks("body", {
-        actionId: "action",
-        blockId: "block",
-        page: 1,
-        totalPages: 1,
-        totalCount: 1
-      })
+      buildAdminEphemeralBlocks(
+        "body",
+        adminListPagination({
+          actionId: "action",
+          blockIdPrefix: "block",
+          page: 1,
+          totalPages: 1,
+          totalCount: 1
+        })
+      )
     ).toBeUndefined();
+  });
+});
+
+describe("buildEphemeralPaginationActions", () => {
+  it("encodes custom page values", () => {
+    const actions = buildEphemeralPaginationActions({
+      actionId: "pasr_calendar_page",
+      blockIdPrefix: "pasr_calendar_pagination",
+      page: 1,
+      totalPages: 2,
+      remainingEntryCount: 5,
+      pageValue: (page) => `encoded:${page}`
+    });
+    const elements = (actions?.[0] as { elements?: Array<{ value?: string }> })?.elements;
+    expect(elements?.[0]?.value).toBe("encoded:2");
+  });
+});
+
+describe("deliverEphemeralPageReply", () => {
+  it("prefers replace_original and falls back to channel post", async () => {
+    postUserFacingMessageMock.mockClear();
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 500 }) as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    const config = createTestConfig(createMockKv());
+
+    await deliverEphemeralPageReply(
+      config,
+      {
+        userId: "U1",
+        responseUrl: "https://hooks.slack.com/actions/T/1/2",
+        channelId: "C1"
+      },
+      "page 2"
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://hooks.slack.com/actions/T/1/2",
+      expect.objectContaining({
+        body: expect.stringContaining("replace_original")
+      })
+    );
+    expect(postUserFacingMessageMock).toHaveBeenCalledWith(config, {
+      channelId: "C1",
+      userId: "U1",
+      text: "page 2",
+      blocks: undefined
+    });
+    vi.unstubAllGlobals();
   });
 });
 

@@ -9,9 +9,10 @@ import { getJstDateParts } from "../domain/jst-date";
 import { ADMIN_ABSENCES_PAGE_ACTION_ID } from "./action-ids";
 import { ADMIN_EPHEMERAL_LIST_MAX } from "./admin-constants";
 import {
+  adminListPagination,
   buildAdminEphemeralBlocks,
   computeAdminTotalPages,
-  deliverAdminEphemeralReply,
+  deliverEphemeralPageReply,
   formatAdminEphemeralMessage,
   formatEntityList,
   normalizeAdminPage,
@@ -59,13 +60,16 @@ export const buildAbsencesTodayReply = async (
   const header = `${headerBase} — ページ ${currentPage}/${totalPages}`;
   const lines = records.map((record) => formatAbsenceLine(record));
   const text = formatAdminEphemeralMessage(header, lines, 0);
-  const blocks = buildAdminEphemeralBlocks(text, {
-    actionId: ADMIN_ABSENCES_PAGE_ACTION_ID,
-    blockId: "pasr_admin_absences_pagination",
-    page: currentPage,
-    totalPages,
-    totalCount
-  });
+  const blocks = buildAdminEphemeralBlocks(
+    text,
+    adminListPagination({
+      actionId: ADMIN_ABSENCES_PAGE_ACTION_ID,
+      blockIdPrefix: "pasr_admin_absences_pagination",
+      page: currentPage,
+      totalPages,
+      totalCount
+    })
+  );
   return blocks ? { text, blocks } : { text };
 };
 
@@ -99,7 +103,7 @@ export const handleAdminAbsencesPageInteraction = async (
     handled: true,
     followUp: async () => {
       const reply = await buildAbsencesTodayReply(config, page);
-      await deliverAdminEphemeralReply(config, { ...params, replaceOriginal: true }, reply);
+      await deliverEphemeralPageReply(config, params, reply);
     }
   };
 };

@@ -42,6 +42,39 @@ describe("buildAbsenceCalendarReply", () => {
     vi.useRealTimers();
   });
 
+  it("paginates when a single day exceeds page size", async () => {
+    const config = createTestConfig(createMockKv());
+    for (let index = 0; index < 30; index += 1) {
+      await createAbsence(config, {
+        itemId: `A${index}`,
+        targetUser: `U${index}`,
+        startDate: "2026-08-10",
+        endDate: "2026-08-10",
+        notifyChannels: ["CNOTIFY"],
+        notifyUsers: []
+      });
+    }
+
+    const reply = await buildAbsenceCalendarReply(config, {
+      userId: "U1",
+      from: "2026-08-05",
+      to: "2026-08-31",
+      channelId: "CNOTIFY",
+      page: 1,
+      todayJst: "2026-08-05"
+    });
+    expect(replyText(reply)).toContain("30件 / 1日");
+    expect(replyText(reply)).toContain("ページ 1/2");
+    if (typeof reply !== "string" && reply.blocks) {
+      const actions = reply.blocks.find((block) => block.type === "actions");
+      expect(actions?.block_id).toBe("pasr_calendar_pagination_p1");
+      const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find((element) =>
+        String((element.text as { text?: string })?.text).includes("次ページ")
+      );
+      expect(String((nextButton?.text as { text?: string })?.text)).toContain("5 件");
+    }
+  });
+
   it("lists channel absences grouped by day with pagination", async () => {
     const config = createTestConfig(createMockKv());
     for (let index = 0; index < 15; index += 1) {
