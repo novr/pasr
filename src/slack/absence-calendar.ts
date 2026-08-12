@@ -2,9 +2,8 @@ import type { AppConfig } from "../config";
 import { listAbsencesOverlappingRangeForChannel } from "../db/absence-repository";
 import { checkDbSchema } from "../db/schema-check";
 import {
-  flattenAbsenceCalendarDayGroups,
   groupAbsencesByJstDay,
-  paginateAbsenceCalendarDayGroups
+  paginateAllAbsenceCalendarLinePages
 } from "../domain/absence-calendar-view";
 import {
   decodeAbsenceCalendarPageValue,
@@ -25,6 +24,7 @@ import {
   deliverAdminEphemeralReply,
   deliverEphemeralPageReply,
   formatAdminEphemeralMessage,
+  paginateEphemeralDisplayPages,
   type AdminEphemeralReply
 } from "./admin-format";
 import { slackApi } from "./api";
@@ -148,10 +148,11 @@ export const buildAbsenceCalendarReply = async (
 
   const groups = groupAbsencesByJstDay(records, params.from, params.to);
   const totalDays = groups.length;
-  const pagination = paginateAbsenceCalendarDayGroups(groups, params.page, ADMIN_EPHEMERAL_LIST_MAX);
-  const header = `${headerBase}: ${totalCount}件 / ${totalDays}日 — ページ ${pagination.currentPage}/${pagination.totalPages}`;
-  const lines = flattenAbsenceCalendarDayGroups(pagination.pageGroups);
-  const text = formatAdminEphemeralMessage(header, lines, 0);
+  const summaryHeader = `${headerBase}: ${totalCount}件 / ${totalDays}日`;
+  const preliminaryPages = paginateAllAbsenceCalendarLinePages(groups, ADMIN_EPHEMERAL_LIST_MAX);
+  const display = paginateEphemeralDisplayPages(summaryHeader, preliminaryPages, params.page);
+  const header = `${summaryHeader} — ページ ${display.currentPage}/${display.totalPages}`;
+  const text = formatAdminEphemeralMessage(header, display.pageLines, 0);
   const deliverChannelId = resolveSlackDeliverChannelId(params.deliverChannelId);
   const paginationQuery = {
     userId: params.userId,
@@ -163,9 +164,9 @@ export const buildAbsenceCalendarReply = async (
   const blocks = buildAdminEphemeralBlocks(text, {
     actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
     blockIdPrefix: "pasr_calendar_pagination",
-    page: pagination.currentPage,
-    totalPages: pagination.totalPages,
-    remainingEntryCount: pagination.remainingEntryCount,
+    page: display.currentPage,
+    totalPages: display.totalPages,
+    remainingEntryCount: display.remainingEntryCount,
     pageValue: (page) => calendarPaginationValue(paginationQuery, page)
   });
   return blocks ? { text, blocks } : { text };

@@ -220,6 +220,52 @@ describe("buildAbsenceCalendarReply", () => {
     });
     expect(replyText(reply)).toContain("今日以降");
   });
+
+  it("splits long lines across display pages without omitting entries", async () => {
+    const config = createTestConfig(createMockKv());
+    const longNote = "x".repeat(500);
+    for (let index = 0; index < 8; index += 1) {
+      await createAbsence(config, {
+        itemId: `A${index}`,
+        targetUser: `U${index}`,
+        startDate: "2026-08-10",
+        endDate: "2026-08-10",
+        notifyChannels: ["CNOTIFY"],
+        notifyUsers: [],
+        note: longNote
+      });
+    }
+
+    const page1 = await buildAbsenceCalendarReply(config, {
+      userId: "U1",
+      from: "2026-08-05",
+      to: "2026-08-31",
+      channelId: "CNOTIFY",
+      page: 1,
+      todayJst: "2026-08-05"
+    });
+    expect(replyText(page1)).not.toContain("表示省略");
+    if (typeof page1 !== "string" && page1.blocks) {
+      const nextButton = (
+        page1.blocks.find((block) => block.type === "actions")?.elements as Array<
+          Record<string, unknown>
+        >
+      )?.find((element) => String((element.text as { text?: string })?.text).includes("次ページ"));
+      expect(nextButton).toBeDefined();
+    }
+
+    const page2 = await buildAbsenceCalendarReply(config, {
+      userId: "U1",
+      from: "2026-08-05",
+      to: "2026-08-31",
+      channelId: "CNOTIFY",
+      page: 2,
+      todayJst: "2026-08-05",
+      pageTurn: true
+    });
+    expect(replyText(page2)).not.toContain("表示省略");
+    expect(replyText(page2)).toContain("<@U7>");
+  });
 });
 
 describe("buildAbsenceCalendarModalView", () => {
