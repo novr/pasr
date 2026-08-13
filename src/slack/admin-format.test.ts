@@ -186,8 +186,8 @@ describe("buildAdminEphemeralBlocks", () => {
 describe("buildEphemeralPaginationActions", () => {
   it("encodes custom page values", () => {
     const actions = buildEphemeralPaginationActions({
-      actionId: "pasr_calendar_page",
-      blockIdPrefix: "pasr_calendar_pagination",
+      actionId: "pasr_admin_users_page",
+      blockIdPrefix: "pasr_admin_users_pagination",
       page: 1,
       totalPages: 2,
       remainingEntryCount: 5,

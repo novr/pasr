@@ -189,7 +189,7 @@ const buildHelpText = (): string =>
     "/pasr help - ユーザ向けコマンドの使い方表示",
     "/pasr settings - 自分の通知・Status 設定を表示・編集",
     "/pasr list - 自分の不在予定一覧（編集・削除）",
-    "/pasr calendar - 通知チャンネルの期間別不在一覧（閲覧）",
+    "/pasr calendar - 通知チャンネルの期間別不在一覧（Bot DM に送信）",
     "/pasr update - /pasr list と同じ",
     "/pasr update YYYY-MM-DD - 開始日指定で不在予定を編集",
     "/pasr register - 自分の不在予定を登録"
@@ -287,7 +287,6 @@ const handleSelfImmediateText = async (
             triggerId: payload.triggerId,
             userId: payload.userId,
             responseUrl: payload.responseUrl,
-            deliverChannelId: payload.channelId,
             initialChannelId: isSlackChannelId(payload.channelId) ? payload.channelId : undefined
           });
         }

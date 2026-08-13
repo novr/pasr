@@ -21,7 +21,7 @@ const APP_HOME_USAGE_LINES = [
   "*使い方*",
   "• `/pasr register` — 不在予定を登録",
   "• `/pasr list` — 自分の予定一覧・編集・削除",
-  "• `/pasr calendar` — 通知チャンネルの期間別不在一覧（閲覧）",
+  "• `/pasr calendar` — 通知チャンネルの期間別不在一覧（Bot DM に送信）",
   `• \`/pasr settings\` — ${APP_HOME_SETTINGS_BUTTON_TEXT}`,
   "• Messages タブから自然文（例: `明日 通院`）でも登録できます"
 ];

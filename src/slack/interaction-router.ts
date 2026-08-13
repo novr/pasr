@@ -11,8 +11,7 @@ import { handleAbsenceListInteraction } from "./absence-list";
 import { handleAbsenceRegisterInteraction } from "./absence-register";
 import {
   ABSENCE_CALENDAR_MODAL_CALLBACK_ID,
-  handleAbsenceCalendarInteraction,
-  handleAbsenceCalendarPageInteraction
+  handleAbsenceCalendarInteraction
 } from "./absence-calendar";
 import { handleAbsenceMentionInteraction, isMentionAction } from "./absence-mention";
 import { handleAppHomeInteraction } from "./app-home";
@@ -165,16 +164,6 @@ export const handleSlackInteraction = async (
     });
     if (absencesPageResult.handled) {
       return { ok: true, followUp: absencesPageResult.followUp };
-    }
-    const calendarPageResult = await handleAbsenceCalendarPageInteraction(config, {
-      actionId,
-      userId,
-      pageValue: payload.actions?.[0]?.value ?? "",
-      responseUrl: payload.response_url,
-      channelId
-    });
-    if (calendarPageResult.handled) {
-      return { ok: true, followUp: calendarPageResult.followUp };
     }
     const disconnectResult = await handleStatusOAuthDisconnectAction(config, {
       actionId,

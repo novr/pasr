@@ -2,8 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AbsenceRecord } from "./absence";
 import {
   flattenAbsenceCalendarDayGroups,
-  groupAbsencesByJstDay,
-  paginateAbsenceCalendarDayGroups
+  groupAbsencesByJstDay
 } from "./absence-calendar-view";
 
 const record = (params: {
@@ -66,49 +65,5 @@ describe("flattenAbsenceCalendarDayGroups", () => {
     ]);
     expect(lines[0]).toBe("*2026-08-10 (月)*");
     expect(lines[1]).toBe("• <@U1> 通院");
-  });
-});
-
-describe("paginateAbsenceCalendarDayGroups", () => {
-  const buildGroups = (dayCount: number, entriesPerDay: number) =>
-    Array.from({ length: dayCount }, (_, dayIndex) => ({
-      date: `2026-08-${String(10 + dayIndex).padStart(2, "0")}`,
-      entries: Array.from({ length: entriesPerDay }, (_, entryIndex) => ({
-        itemId: `A${dayIndex}-${entryIndex}`,
-        targetUser: `U${dayIndex}-${entryIndex}`
-      }))
-    }));
-
-  it("does not split a day group across pages", () => {
-    const groups = buildGroups(2, 15);
-    const page1 = paginateAbsenceCalendarDayGroups(groups, 1, 25);
-    const page2 = paginateAbsenceCalendarDayGroups(groups, 2, 25);
-    expect(page1.totalPages).toBe(2);
-    expect(page1.pageGroups).toHaveLength(1);
-    expect(page1.pageGroups[0]?.date).toBe("2026-08-10");
-    expect(page2.pageGroups[0]?.date).toBe("2026-08-11");
-  });
-
-  it("keeps a busy day on a single page when it exceeds page size", () => {
-    const groups = buildGroups(1, 30);
-    const page1 = paginateAbsenceCalendarDayGroups(groups, 1, 25);
-    const page2 = paginateAbsenceCalendarDayGroups(groups, 2, 25);
-    expect(page1.totalPages).toBe(2);
-    expect(page1.pageGroups[0]?.entries).toHaveLength(25);
-    expect(page2.pageGroups[0]?.entries).toHaveLength(5);
-    expect(page1.remainingEntryCount).toBe(5);
-  });
-
-  it("normalizes out-of-range page numbers", () => {
-    const groups = buildGroups(2, 15);
-    const result = paginateAbsenceCalendarDayGroups(groups, 99, 25);
-    expect(result.currentPage).toBe(2);
-    expect(result.pageGroups[0]?.date).toBe("2026-08-11");
-  });
-
-  it("reports remaining entry count for the next page button", () => {
-    const groups = buildGroups(2, 15);
-    const page1 = paginateAbsenceCalendarDayGroups(groups, 1, 25);
-    expect(page1.remainingEntryCount).toBe(15);
   });
 });

@@ -13,15 +13,6 @@ export type AbsenceCalendarDayGroup = {
   entries: AbsenceCalendarDayEntry[];
 };
 
-export type AbsenceCalendarPaginationResult = {
-  pageGroups: AbsenceCalendarDayGroup[];
-  currentPage: number;
-  totalPages: number;
-  totalDays: number;
-  totalEntryCount: number;
-  remainingEntryCount: number;
-};
-
 export const formatAbsenceCalendarDayHeader = (date: string): string =>
   `*${date} (${formatJstWeekdayShort(date)})*`;
 
@@ -74,101 +65,4 @@ export const flattenAbsenceCalendarDayGroups = (groups: AbsenceCalendarDayGroup[
     }
   }
   return lines;
-};
-
-const explodeOversizedDayGroups = (
-  groups: AbsenceCalendarDayGroup[],
-  pageSize: number
-): AbsenceCalendarDayGroup[] => {
-  const exploded: AbsenceCalendarDayGroup[] = [];
-  for (const group of groups) {
-    if (group.entries.length <= pageSize) {
-      exploded.push(group);
-      continue;
-    }
-    for (let offset = 0; offset < group.entries.length; offset += pageSize) {
-      exploded.push({
-        date: group.date,
-        entries: group.entries.slice(offset, offset + pageSize)
-      });
-    }
-  }
-  return exploded;
-};
-
-const buildAbsenceCalendarPages = (
-  groups: AbsenceCalendarDayGroup[],
-  pageSize: number
-): AbsenceCalendarDayGroup[][] => {
-  const pages: AbsenceCalendarDayGroup[][] = [];
-  let currentPage: AbsenceCalendarDayGroup[] = [];
-  let currentEntryCount = 0;
-
-  const flushCurrentPage = (): void => {
-    if (currentPage.length === 0) return;
-    pages.push(currentPage);
-    currentPage = [];
-    currentEntryCount = 0;
-  };
-
-  for (const group of groups) {
-    const groupSize = group.entries.length;
-    if (currentPage.length === 0) {
-      currentPage.push(group);
-      currentEntryCount = groupSize;
-      if (groupSize >= pageSize) flushCurrentPage();
-      continue;
-    }
-    if (currentEntryCount + groupSize <= pageSize) {
-      currentPage.push(group);
-      currentEntryCount += groupSize;
-      continue;
-    }
-    flushCurrentPage();
-    currentPage.push(group);
-    currentEntryCount = groupSize;
-    if (groupSize >= pageSize) flushCurrentPage();
-  }
-
-  flushCurrentPage();
-  return pages;
-};
-
-export const paginateAllAbsenceCalendarLinePages = (
-  groups: AbsenceCalendarDayGroup[],
-  pageSize: number
-): string[][] => {
-  const pages = buildAbsenceCalendarPages(explodeOversizedDayGroups(groups, pageSize), pageSize);
-  return pages.map((pageGroups) => flattenAbsenceCalendarDayGroups(pageGroups));
-};
-
-export const paginateAbsenceCalendarDayGroups = (
-  groups: AbsenceCalendarDayGroup[],
-  page: number,
-  pageSize: number
-): AbsenceCalendarPaginationResult => {
-  const totalDays = groups.length;
-  const totalEntryCount = groups.reduce((sum, group) => sum + group.entries.length, 0);
-  const pages = buildAbsenceCalendarPages(explodeOversizedDayGroups(groups, pageSize), pageSize);
-  const totalPages = Math.max(1, pages.length);
-  const currentPage = Math.min(Math.max(1, page), totalPages);
-  const pageGroups = pages[currentPage - 1] ?? [];
-
-  const entriesBeforeCurrentPage = pages
-    .slice(0, currentPage - 1)
-    .reduce(
-      (sum, pageGroup) => sum + pageGroup.reduce((groupSum, group) => groupSum + group.entries.length, 0),
-      0
-    );
-  const entriesOnCurrentPage = pageGroups.reduce((sum, group) => sum + group.entries.length, 0);
-  const remainingEntryCount = Math.max(0, totalEntryCount - entriesBeforeCurrentPage - entriesOnCurrentPage);
-
-  return {
-    pageGroups,
-    currentPage,
-    totalPages,
-    totalDays,
-    totalEntryCount,
-    remainingEntryCount
-  };
 };

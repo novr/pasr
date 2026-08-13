@@ -46,12 +46,14 @@ export const slackApi = {
     config: AppConfig,
     channel: string,
     text: string,
-    blocks?: Array<Record<string, unknown>>
+    blocks?: Array<Record<string, unknown>>,
+    threadTs?: string
   ) =>
     slackApiPost<{ ts?: string }>(config, "chat.postMessage", {
       channel,
       text,
-      ...(blocks ? { blocks } : {})
+      ...(blocks ? { blocks } : {}),
+      ...(threadTs ? { thread_ts: threadTs } : {})
     }),
 
   postEphemeral: async (

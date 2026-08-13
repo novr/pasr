@@ -1,38 +1,53 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { createAbsence } from "../db/absence-repository";
 import { createMockKv, createTestConfig } from "../test/mock-kv";
-import type { AdminEphemeralReply } from "./admin-format";
-import { ABSENCE_CALENDAR_PAGE_ACTION_ID } from "./action-ids";
 
-const { postUserFacingMessageMock } = vi.hoisted(() => ({
-  postUserFacingMessageMock: vi.fn(async () => undefined)
+const { openDirectMessageMock, postChannelMessageMock } = vi.hoisted(() => ({
+  openDirectMessageMock: vi.fn(async () => "D_DM"),
+  postChannelMessageMock: vi.fn(async () => ({ ts: "123.456" }))
 }));
 
-vi.mock("./user-message", async () => {
-  const actual = await vi.importActual<typeof import("./user-message")>("./user-message");
+vi.mock("./api", async () => {
+  const actual = await vi.importActual<typeof import("./api")>("./api");
   return {
     ...actual,
-    postUserFacingMessage: postUserFacingMessageMock
+    slackApi: {
+      ...actual.slackApi,
+      openDirectMessage: openDirectMessageMock,
+      postChannelMessage: postChannelMessageMock,
+      openModal: vi.fn(async () => ({ view: { id: "V1" } }))
+    }
   };
 });
 
+const { deliverAdminEphemeralReplyMock } = vi.hoisted(() => ({
+  deliverAdminEphemeralReplyMock: vi.fn(async () => undefined)
+}));
+
+vi.mock("./admin-format", async () => {
+  const actual = await vi.importActual<typeof import("./admin-format")>("./admin-format");
+  return {
+    ...actual,
+    deliverAdminEphemeralReply: deliverAdminEphemeralReplyMock
+  };
+});
+
+import * as messageTextSplit from "./message-text-split";
 import {
   ABSENCE_CALENDAR_MODAL_CALLBACK_ID,
+  buildAbsenceCalendarDmDelivery,
   buildAbsenceCalendarModalView,
-  buildAbsenceCalendarReply,
+  buildCalendarDmAckMessage,
+  CALENDAR_DM_MAX_THREAD_MESSAGES,
+  CALENDAR_DM_TEXT_MAX,
   CHANNEL_BLOCK_ID,
+  deliverAbsenceCalendarToDm,
   END_BLOCK_ID,
   handleAbsenceCalendarInteraction,
-  handleAbsenceCalendarPageInteraction,
   START_BLOCK_ID
 } from "./absence-calendar";
 
-const replyText = (reply: AdminEphemeralReply | string): string =>
-  typeof reply === "string" ? reply : reply.text;
-
-const okFetchResponse = (): Response => ({ ok: true, text: async () => "ok" }) as Response;
-
-describe("buildAbsenceCalendarReply", () => {
+describe("buildAbsenceCalendarDmDelivery", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-05T00:30:00+09:00"));
@@ -42,151 +57,62 @@ describe("buildAbsenceCalendarReply", () => {
     vi.useRealTimers();
   });
 
-  it("paginates when a single day exceeds page size", async () => {
+  it("returns parent-only message for empty results", async () => {
     const config = createTestConfig(createMockKv());
-    for (let index = 0; index < 30; index += 1) {
-      await createAbsence(config, {
-        itemId: `A${index}`,
-        targetUser: `U${index}`,
-        startDate: "2026-08-10",
-        endDate: "2026-08-10",
-        notifyChannels: ["CNOTIFY"],
-        notifyUsers: []
-      });
-    }
-
-    const reply = await buildAbsenceCalendarReply(config, {
-      userId: "U1",
+    const delivery = await buildAbsenceCalendarDmDelivery(config, {
+      channelId: "CNOTIFY",
       from: "2026-08-05",
       to: "2026-08-31",
-      channelId: "CNOTIFY",
-      page: 1,
       todayJst: "2026-08-05"
     });
-    expect(replyText(reply)).toContain("30件 / 1日");
-    expect(replyText(reply)).toContain("ページ 1/2");
-    if (typeof reply !== "string" && reply.blocks) {
-      const actions = reply.blocks.find((block) => block.type === "actions");
-      expect(actions?.block_id).toBe("pasr_calendar_pagination_p1");
-      const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find((element) =>
-        String((element.text as { text?: string })?.text).includes("次ページ")
-      );
-      expect(String((nextButton?.text as { text?: string })?.text)).toContain("5 件");
-    }
-  });
-
-  it("lists channel absences grouped by day with pagination", async () => {
-    const config = createTestConfig(createMockKv());
-    for (let index = 0; index < 15; index += 1) {
-      await createAbsence(config, {
-        itemId: `A${index}`,
-        targetUser: `U${index}`,
-        startDate: "2026-08-10",
-        endDate: "2026-08-10",
-        notifyChannels: ["CNOTIFY"],
-        notifyUsers: []
-      });
-    }
-    for (let index = 0; index < 15; index += 1) {
-      await createAbsence(config, {
-        itemId: `B${index}`,
-        targetUser: `V${index}`,
-        startDate: "2026-08-11",
-        endDate: "2026-08-11",
-        notifyChannels: ["CNOTIFY"],
-        notifyUsers: []
-      });
-    }
-
-    const reply = await buildAbsenceCalendarReply(config, {
-      userId: "U1",
-      from: "2026-08-05",
-      to: "2026-08-31",
-      channelId: "CNOTIFY",
-      page: 1,
-      todayJst: "2026-08-05"
+    expect(delivery).toEqual({
+      parentText: "<#CNOTIFY> の不在カレンダー (2026-08-05 〜 2026-08-31 JST): 0件\n（該当なし）",
+      threadTexts: [],
+      totalCount: 0,
+      truncated: false
     });
-    expect(replyText(reply)).toContain("30件 / 2日");
-    expect(replyText(reply)).toContain("ページ 1/2");
-    expect(replyText(reply)).toContain("*2026-08-10 (月)*");
-    expect(replyText(reply)).not.toContain("*2026-08-11");
-    if (typeof reply !== "string" && reply.blocks) {
-      const actions = reply.blocks.find((block) => block.type === "actions");
-      expect(actions?.block_id).toBe("pasr_calendar_pagination_p1");
-      const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find(
-        (element) => element.text && String((element.text as { text?: string }).text).includes("次ページ")
-      );
-      expect(nextButton?.value).toContain("CNOTIFY");
-      expect(String((nextButton?.text as { text?: string })?.text)).toContain("15 件");
-    }
   });
 
-  it("expands multi-day absences under each date heading", async () => {
+  it("builds parent and thread texts grouped by day", async () => {
     const config = createTestConfig(createMockKv());
     await createAbsence(config, {
       itemId: "A1",
-      targetUser: "UALICE",
+      targetUser: "U1",
       startDate: "2026-08-10",
-      endDate: "2026-08-12",
+      endDate: "2026-08-10",
       notifyChannels: ["CNOTIFY"],
       notifyUsers: [],
       note: "通院"
     });
-
-    const reply = await buildAbsenceCalendarReply(config, {
-      userId: "U1",
-      from: "2026-08-10",
-      to: "2026-08-12",
-      channelId: "CNOTIFY",
-      page: 1,
-      todayJst: "2026-08-05"
+    await createAbsence(config, {
+      itemId: "A2",
+      targetUser: "U2",
+      startDate: "2026-08-11",
+      endDate: "2026-08-11",
+      notifyChannels: ["CNOTIFY"],
+      notifyUsers: []
     });
-    const text = replyText(reply);
-    expect(text).toContain("1件 / 3日");
-    expect(text).toContain("*2026-08-10 (月)*");
-    expect(text).toContain("*2026-08-11 (火)*");
-    expect(text).toContain("*2026-08-12 (水)*");
-    expect(text).toContain("<@UALICE> 通院");
-  });
 
-  it("starts page two on the next day group", async () => {
-    const config = createTestConfig(createMockKv());
-    for (let index = 0; index < 15; index += 1) {
-      await createAbsence(config, {
-        itemId: `A${index}`,
-        targetUser: `U${index}`,
-        startDate: "2026-08-10",
-        endDate: "2026-08-10",
-        notifyChannels: ["CNOTIFY"],
-        notifyUsers: []
-      });
-    }
-    for (let index = 0; index < 15; index += 1) {
-      await createAbsence(config, {
-        itemId: `B${index}`,
-        targetUser: `V${index}`,
-        startDate: "2026-08-11",
-        endDate: "2026-08-11",
-        notifyChannels: ["CNOTIFY"],
-        notifyUsers: []
-      });
-    }
-
-    const reply = await buildAbsenceCalendarReply(config, {
-      userId: "U1",
+    const delivery = await buildAbsenceCalendarDmDelivery(config, {
+      channelId: "CNOTIFY",
       from: "2026-08-05",
       to: "2026-08-31",
-      channelId: "CNOTIFY",
-      page: 2,
       todayJst: "2026-08-05"
     });
-    const text = replyText(reply);
-    expect(text).toContain("ページ 2/2");
-    expect(text).toContain("*2026-08-11 (火)*");
-    expect(text).not.toContain("*2026-08-10");
+    expect(typeof delivery).not.toBe("string");
+    if (typeof delivery === "string") return;
+    expect(delivery.parentText).toContain("2件 / 2日");
+    expect(delivery.truncated).toBe(false);
+    expect(delivery.threadTexts).toHaveLength(1);
+    expect(delivery.threadTexts[0]).toContain("*2026-08-10 (月)*");
+    expect(delivery.threadTexts[0]).toContain("<@U1> 通院");
+    expect(delivery.threadTexts[0]).toContain("*2026-08-11 (火)*");
   });
 
-  it("normalizes an out-of-range page in the header", async () => {
+  it("truncates thread messages when exceeding max count", async () => {
+    const splitSpy = vi
+      .spyOn(messageTextSplit, "splitLinesByTextMax")
+      .mockReturnValue(Array.from({ length: CALENDAR_DM_MAX_THREAD_MESSAGES + 5 }, (_, index) => `part-${index}`));
     const config = createTestConfig(createMockKv());
     await createAbsence(config, {
       itemId: "A1",
@@ -197,103 +123,177 @@ describe("buildAbsenceCalendarReply", () => {
       notifyUsers: []
     });
 
-    const reply = await buildAbsenceCalendarReply(config, {
-      userId: "U1",
-      from: "2026-08-10",
-      to: "2026-08-10",
+    const delivery = await buildAbsenceCalendarDmDelivery(config, {
       channelId: "CNOTIFY",
-      page: 99,
-      todayJst: "2026-08-05"
-    });
-    expect(replyText(reply)).toContain("ページ 1/1");
-  });
-
-  it("rejects from before today", async () => {
-    const config = createTestConfig(createMockKv());
-    const reply = await buildAbsenceCalendarReply(config, {
-      userId: "U1",
-      from: "2026-08-01",
-      to: "2026-08-31",
-      channelId: "CNOTIFY",
-      page: 1,
-      todayJst: "2026-08-05"
-    });
-    expect(replyText(reply)).toContain("今日以降");
-  });
-
-  it("splits long lines across display pages without omitting entries", async () => {
-    const config = createTestConfig(createMockKv());
-    const longNote = "x".repeat(500);
-    for (let index = 0; index < 8; index += 1) {
-      await createAbsence(config, {
-        itemId: `A${index}`,
-        targetUser: `U${index}`,
-        startDate: "2026-08-10",
-        endDate: "2026-08-10",
-        notifyChannels: ["CNOTIFY"],
-        notifyUsers: [],
-        note: longNote
-      });
-    }
-
-    const page1 = await buildAbsenceCalendarReply(config, {
-      userId: "U1",
       from: "2026-08-05",
       to: "2026-08-31",
-      channelId: "CNOTIFY",
-      page: 1,
       todayJst: "2026-08-05"
     });
-    expect(replyText(page1)).not.toContain("表示省略");
-    if (typeof page1 !== "string" && page1.blocks) {
-      const nextButton = (
-        page1.blocks.find((block) => block.type === "actions")?.elements as Array<
-          Record<string, unknown>
-        >
-      )?.find((element) => String((element.text as { text?: string })?.text).includes("次ページ"));
-      expect(nextButton).toBeDefined();
+    splitSpy.mockRestore();
+    expect(typeof delivery).not.toBe("string");
+    if (typeof delivery === "string") return;
+    expect(delivery.threadTexts).toHaveLength(CALENDAR_DM_MAX_THREAD_MESSAGES);
+    expect(delivery.truncated).toBe(true);
+    expect(delivery.threadTexts.at(-1)).toContain("以降は表示を省略しました");
+    for (const threadText of delivery.threadTexts) {
+      expect(threadText.length).toBeLessThanOrEqual(CALENDAR_DM_TEXT_MAX);
     }
+  });
 
-    const page2 = await buildAbsenceCalendarReply(config, {
-      userId: "U1",
+  it("keeps labeled thread texts within max length", async () => {
+    const config = createTestConfig(createMockKv());
+    const longNote = "x".repeat(11_900);
+    await createAbsence(config, {
+      itemId: "A1",
+      targetUser: "U1",
+      startDate: "2026-08-10",
+      endDate: "2026-08-10",
+      notifyChannels: ["CNOTIFY"],
+      notifyUsers: [],
+      note: longNote
+    });
+    await createAbsence(config, {
+      itemId: "A2",
+      targetUser: "U2",
+      startDate: "2026-08-11",
+      endDate: "2026-08-11",
+      notifyChannels: ["CNOTIFY"],
+      notifyUsers: [],
+      note: longNote
+    });
+
+    const delivery = await buildAbsenceCalendarDmDelivery(config, {
+      channelId: "CNOTIFY",
       from: "2026-08-05",
       to: "2026-08-31",
-      channelId: "CNOTIFY",
-      page: 2,
-      todayJst: "2026-08-05",
-      pageTurn: true
+      todayJst: "2026-08-05"
     });
-    expect(replyText(page2)).not.toContain("表示省略");
-    expect(replyText(page2)).toContain("<@U7>");
+    expect(typeof delivery).not.toBe("string");
+    if (typeof delivery === "string") return;
+    expect(delivery.threadTexts.length).toBeGreaterThan(1);
+    for (const threadText of delivery.threadTexts) {
+      expect(threadText.length).toBeLessThanOrEqual(CALENDAR_DM_TEXT_MAX);
+    }
+  });
+});
+
+describe("deliverAbsenceCalendarToDm", () => {
+  beforeEach(() => {
+    openDirectMessageMock.mockClear();
+    postChannelMessageMock.mockClear();
+  });
+
+  it("posts parent and thread replies with thread_ts", async () => {
+    const config = createTestConfig(createMockKv());
+    const result = await deliverAbsenceCalendarToDm(config, {
+      userId: "U1",
+      parentText: "parent",
+      threadTexts: ["thread-1", "thread-2"],
+      truncated: false
+    });
+    expect(openDirectMessageMock).toHaveBeenCalledWith(config, "U1");
+    expect(postChannelMessageMock).toHaveBeenNthCalledWith(1, config, "D_DM", "parent");
+    expect(postChannelMessageMock).toHaveBeenNthCalledWith(
+      2,
+      config,
+      "D_DM",
+      "thread-1",
+      undefined,
+      "123.456"
+    );
+    expect(postChannelMessageMock).toHaveBeenNthCalledWith(
+      3,
+      config,
+      "D_DM",
+      "thread-2",
+      undefined,
+      "123.456"
+    );
+    expect(result).toEqual({
+      parentOk: true,
+      threadSent: 2,
+      threadFailed: 0,
+      truncated: false,
+      emptyResult: false
+    });
+  });
+
+  it("continues after a thread post failure", async () => {
+    postChannelMessageMock
+      .mockResolvedValueOnce({ ts: "123.456" })
+      .mockRejectedValueOnce(new Error("invalid_blocks"))
+      .mockResolvedValueOnce({ ts: "123.457" });
+    const config = createTestConfig(createMockKv());
+    const result = await deliverAbsenceCalendarToDm(config, {
+      userId: "U1",
+      parentText: "parent",
+      threadTexts: ["thread-1", "thread-2"],
+      truncated: false
+    });
+    expect(result.parentOk).toBe(true);
+    expect(result.threadSent).toBe(1);
+    expect(result.threadFailed).toBe(1);
+  });
+});
+
+describe("buildCalendarDmAckMessage", () => {
+  it("returns result-specific ack text", () => {
+    expect(
+      buildCalendarDmAckMessage({
+        parentOk: false,
+        threadSent: 0,
+        threadFailed: 0,
+        truncated: false,
+        emptyResult: false
+      })
+    ).toContain("失敗");
+    expect(
+      buildCalendarDmAckMessage({
+        parentOk: true,
+        threadSent: 0,
+        threadFailed: 0,
+        truncated: false,
+        emptyResult: true
+      })
+    ).toContain("該当なし");
+    expect(
+      buildCalendarDmAckMessage({
+        parentOk: true,
+        threadSent: 2,
+        threadFailed: 1,
+        truncated: false,
+        emptyResult: false
+      })
+    ).toContain("一部の表示に失敗");
+    expect(
+      buildCalendarDmAckMessage({
+        parentOk: true,
+        threadSent: 40,
+        threadFailed: 0,
+        truncated: true,
+        emptyResult: false
+      })
+    ).toContain("省略あり");
   });
 });
 
 describe("buildAbsenceCalendarModalView", () => {
-  it("includes guidance and initial dates", () => {
+  it("stores user and response url in metadata", () => {
     const view = buildAbsenceCalendarModalView({
       userId: "U1",
-      responseUrl: "https://hooks.example",
-      deliverChannelId: "C012RUN",
+      responseUrl: "https://hooks.slack.com/commands/1/2/3",
       todayJst: "2026-08-05",
       initialChannelId: "CNOTIFY"
     });
-    expect(view.callback_id).toBe(ABSENCE_CALENDAR_MODAL_CALLBACK_ID);
+    expect(view.private_metadata).toBe(
+      JSON.stringify({
+        userId: "U1",
+        responseUrl: "https://hooks.slack.com/commands/1/2/3"
+      })
+    );
     const blocks = view.blocks as Array<Record<string, unknown>>;
-    const context = blocks[0]?.elements as Array<{ text?: string }>;
-    expect(context[0]?.text).toContain("予定");
-    const startBlock = blocks.find((block) => block.block_id === START_BLOCK_ID) as {
-      element?: { initial_date?: string; min_date?: string };
-    };
-    expect(startBlock.element?.initial_date).toBe("2026-08-05");
-    expect(startBlock.element?.min_date).toBeUndefined();
-    const endBlock = blocks.find((block) => block.block_id === END_BLOCK_ID) as {
-      element?: { min_date?: string };
-    };
-    expect(endBlock.element?.min_date).toBeUndefined();
-    const channelBlock = blocks.find((block) => block.block_id === CHANNEL_BLOCK_ID) as {
-      element?: { filter?: { include?: string[] } };
-    };
-    expect(channelBlock.element?.filter?.include).toEqual(["public", "private"]);
+    const contextText = (blocks[0]?.elements as Array<Record<string, unknown>> | undefined)?.[0]?.text;
+    expect(contextText).toContain("DM");
   });
 });
 
@@ -301,38 +301,26 @@ describe("handleAbsenceCalendarInteraction", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-05T00:30:00+09:00"));
+    openDirectMessageMock.mockClear();
+    postChannelMessageMock.mockClear();
+    deliverAdminEphemeralReplyMock.mockClear();
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("rejects submission from another user", async () => {
+  it("delivers DM calendar and ack ephemeral on submission", async () => {
     const config = createTestConfig(createMockKv());
-    const result = await handleAbsenceCalendarInteraction(config, {
-      type: "view_submission",
-      user: { id: "U_OTHER" },
-      view: {
-        callback_id: ABSENCE_CALENDAR_MODAL_CALLBACK_ID,
-        private_metadata: JSON.stringify({
-          userId: "U1",
-          responseUrl: "https://hooks.example",
-          deliverChannelId: "C_RUN"
-        }),
-        state: {
-          values: {
-            [START_BLOCK_ID]: { start_date: { selected_date: "2026-08-10" } },
-            [END_BLOCK_ID]: { end_date: { selected_date: "2026-08-10" } },
-            [CHANNEL_BLOCK_ID]: { notify_channel_select: { selected_conversation: "CNOTIFY" } }
-          }
-        }
-      }
+    await createAbsence(config, {
+      itemId: "A1",
+      targetUser: "U1",
+      startDate: "2026-08-10",
+      endDate: "2026-08-10",
+      notifyChannels: ["CNOTIFY"],
+      notifyUsers: []
     });
-    expect(result.ok).toBe(false);
-  });
 
-  it("rejects from before today on submission", async () => {
-    const config = createTestConfig(createMockKv());
     const result = await handleAbsenceCalendarInteraction(config, {
       type: "view_submission",
       user: { id: "U1" },
@@ -340,372 +328,29 @@ describe("handleAbsenceCalendarInteraction", () => {
         callback_id: ABSENCE_CALENDAR_MODAL_CALLBACK_ID,
         private_metadata: JSON.stringify({
           userId: "U1",
-          responseUrl: "https://hooks.example",
-          deliverChannelId: "C_RUN"
+          responseUrl: "https://hooks.slack.com/commands/1/2/3"
         }),
         state: {
           values: {
-            [START_BLOCK_ID]: { start_date: { selected_date: "2026-08-01" } },
+            [START_BLOCK_ID]: { start_date: { selected_date: "2026-08-05" } },
             [END_BLOCK_ID]: { end_date: { selected_date: "2026-08-31" } },
             [CHANNEL_BLOCK_ID]: { notify_channel_select: { selected_conversation: "CNOTIFY" } }
           }
         }
       }
     });
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain("今日以降");
-    expect(result.errorBlockId).toBe(START_BLOCK_ID);
-  });
 
-  it("maps end-date validation errors to end block", async () => {
-    const config = createTestConfig(createMockKv());
-    const result = await handleAbsenceCalendarInteraction(config, {
-      type: "view_submission",
-      user: { id: "U1" },
-      view: {
-        callback_id: ABSENCE_CALENDAR_MODAL_CALLBACK_ID,
-        private_metadata: JSON.stringify({
-          userId: "U1",
-          responseUrl: "https://hooks.example",
-          deliverChannelId: "C_RUN"
-        }),
-        state: {
-          values: {
-            [START_BLOCK_ID]: { start_date: { selected_date: "2026-08-10" } },
-            [END_BLOCK_ID]: { end_date: { selected_date: "2026-08-05" } },
-            [CHANNEL_BLOCK_ID]: { notify_channel_select: { selected_conversation: "CNOTIFY" } }
-          }
-        }
-      }
-    });
-    expect(result.ok).toBe(false);
-    expect(result.errorBlockId).toBe(END_BLOCK_ID);
-  });
-});
-
-describe("handleAbsenceCalendarPageInteraction", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-05T00:30:00+09:00"));
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("reports an error on invalid page value", async () => {
-    const config = createTestConfig(createMockKv());
-    const fetchMock = vi.fn(async () => okFetchResponse());
-    vi.stubGlobal("fetch", fetchMock);
-    const result = await handleAbsenceCalendarPageInteraction(config, {
-      actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
-      userId: "U1",
-      pageValue: "not-json",
-      responseUrl: "https://hooks.slack.com/actions/T/1/2"
-    });
-    expect(result.handled).toBe(true);
-    expect(result.followUp).toBeTypeOf("function");
+    expect(result.ok).toBe(true);
     await result.followUp?.();
-    expect(fetchMock).toHaveBeenCalled();
-    vi.unstubAllGlobals();
-  });
-
-  it("allows page turns even when from is before today", async () => {
-    const config = createTestConfig(createMockKv());
-    const fetchMock = vi.fn(async () => okFetchResponse());
-    vi.stubGlobal("fetch", fetchMock);
-    const result = await handleAbsenceCalendarPageInteraction(config, {
-      actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
-      userId: "U1",
-      pageValue: JSON.stringify({
-        userId: "U1",
-        from: "2026-08-01",
-        to: "2026-08-31",
-        channelId: "CNOTIFY",
-        page: 2
-      }),
-      responseUrl: "https://hooks.slack.com/actions/T/1/2"
-    });
-    expect(result.handled).toBe(true);
-    expect(result.followUp).toBeTypeOf("function");
-    await result.followUp?.();
-    expect(fetchMock).toHaveBeenCalled();
-    vi.unstubAllGlobals();
-  });
-
-  it("replaces ephemeral on next page click", async () => {
-    const config = createTestConfig(createMockKv());
-    for (let index = 0; index < 15; index += 1) {
-      await createAbsence(config, {
-        itemId: `A${index}`,
-        targetUser: `U${index}`,
-        startDate: "2026-08-10",
-        endDate: "2026-08-10",
-        notifyChannels: ["CNOTIFY"],
-        notifyUsers: []
-      });
-    }
-    for (let index = 0; index < 15; index += 1) {
-      await createAbsence(config, {
-        itemId: `B${index}`,
-        targetUser: `V${index}`,
-        startDate: "2026-08-11",
-        endDate: "2026-08-11",
-        notifyChannels: ["CNOTIFY"],
-        notifyUsers: []
-      });
-    }
-
-    const page1 = await buildAbsenceCalendarReply(config, {
-      userId: "U1",
-      from: "2026-08-05",
-      to: "2026-08-31",
-      channelId: "CNOTIFY",
-      page: 1,
-      todayJst: "2026-08-05"
-    });
-    const actions =
-      typeof page1 !== "string" && page1.blocks
-        ? page1.blocks.find((block) => block.type === "actions")
-        : undefined;
-    const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find((element) =>
-      String((element.text as { text?: string })?.text).includes("次ページ")
-    );
-    expect(nextButton?.value).toBeTypeOf("string");
-
-    postUserFacingMessageMock.mockClear();
-    const fetchMock = vi.fn(async () => okFetchResponse());
-    vi.stubGlobal("fetch", fetchMock);
-    const result = await handleAbsenceCalendarPageInteraction(config, {
-      actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
-      userId: "U1",
-      pageValue: String(nextButton?.value),
-      responseUrl: "https://hooks.slack.com/actions/T/1/2",
-      channelId: "C012RUN"
-    });
-    expect(result.followUp).toBeTypeOf("function");
-    await result.followUp?.();
-    expect(postUserFacingMessageMock).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://hooks.slack.com/actions/T/1/2",
-      expect.objectContaining({
-        body: expect.stringContaining("replace_original")
-      })
-    );
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://hooks.slack.com/actions/T/1/2",
-      expect.objectContaining({
-        body: expect.stringContaining("ページ 2/2")
-      })
-    );
-    const page2 = await buildAbsenceCalendarReply(config, {
-      userId: "U1",
-      from: "2026-08-05",
-      to: "2026-08-31",
-      channelId: "CNOTIFY",
-      page: 2,
-      todayJst: "2026-08-05",
-      pageTurn: true
-    });
-    const page2Actions =
-      typeof page2 !== "string" && page2.blocks
-        ? page2.blocks.find((block) => block.type === "actions")
-        : undefined;
-    expect(page2Actions?.block_id).toBe("pasr_calendar_pagination_p2");
-    vi.unstubAllGlobals();
-  });
-
-  it("encodes deliver channel in page button value", async () => {
-    const config = createTestConfig(createMockKv());
-    for (let index = 0; index < 15; index += 1) {
-      await createAbsence(config, {
-        itemId: `A${index}`,
-        targetUser: `U${index}`,
-        startDate: "2026-08-10",
-        endDate: "2026-08-10",
-        notifyChannels: ["CNOTIFY"],
-        notifyUsers: []
-      });
-    }
-    for (let index = 0; index < 15; index += 1) {
-      await createAbsence(config, {
-        itemId: `B${index}`,
-        targetUser: `V${index}`,
-        startDate: "2026-08-11",
-        endDate: "2026-08-11",
-        notifyChannels: ["CNOTIFY"],
-        notifyUsers: []
-      });
-    }
-
-    const reply = await buildAbsenceCalendarReply(config, {
-      userId: "U1",
-      from: "2026-08-05",
-      to: "2026-08-31",
-      channelId: "CNOTIFY",
-      deliverChannelId: "C012RUN",
-      page: 1,
-      todayJst: "2026-08-05"
-    });
-    const actions =
-      typeof reply !== "string" && reply.blocks
-        ? reply.blocks.find((block) => block.type === "actions")
-        : undefined;
-    const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find((element) =>
-      String((element.text as { text?: string })?.text).includes("次ページ")
-    );
-    expect(String(nextButton?.value)).toContain("C012RUN");
-  });
-
-  it("reports an error when page value userId does not match actor", async () => {
-    const config = createTestConfig(createMockKv());
-    const fetchMock = vi.fn(async () => okFetchResponse());
-    vi.stubGlobal("fetch", fetchMock);
-    const result = await handleAbsenceCalendarPageInteraction(config, {
-      actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
-      userId: "U1",
-      pageValue: JSON.stringify({
-        userId: "U_OTHER",
-        from: "2026-08-05",
-        to: "2026-08-31",
-        channelId: "CNOTIFY",
-        page: 2
-      }),
-      responseUrl: "https://hooks.slack.com/actions/T/1/2"
-    });
-    expect(result.handled).toBe(true);
-    expect(result.followUp).toBeTypeOf("function");
-    await result.followUp?.();
-    expect(fetchMock).toHaveBeenCalled();
-    vi.unstubAllGlobals();
-  });
-
-  it("falls back to channel post when replace_original fails", async () => {
-    const config = createTestConfig(createMockKv());
-    for (let index = 0; index < 15; index += 1) {
-      await createAbsence(config, {
-        itemId: `A${index}`,
-        targetUser: `U${index}`,
-        startDate: "2026-08-10",
-        endDate: "2026-08-10",
-        notifyChannels: ["CNOTIFY"],
-        notifyUsers: []
-      });
-    }
-    for (let index = 0; index < 15; index += 1) {
-      await createAbsence(config, {
-        itemId: `B${index}`,
-        targetUser: `V${index}`,
-        startDate: "2026-08-11",
-        endDate: "2026-08-11",
-        notifyChannels: ["CNOTIFY"],
-        notifyUsers: []
-      });
-    }
-
-    const page1 = await buildAbsenceCalendarReply(config, {
-      userId: "U1",
-      from: "2026-08-05",
-      to: "2026-08-31",
-      channelId: "CNOTIFY",
-      deliverChannelId: "C012RUN",
-      page: 1,
-      todayJst: "2026-08-05"
-    });
-    const actions =
-      typeof page1 !== "string" && page1.blocks
-        ? page1.blocks.find((block) => block.type === "actions")
-        : undefined;
-    const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find((element) =>
-      String((element.text as { text?: string })?.text).includes("次ページ")
-    );
-
-    postUserFacingMessageMock.mockClear();
-    const fetchMock = vi.fn(async () => ({ ok: false, status: 500, text: async () => "" }) as Response);
-    vi.stubGlobal("fetch", fetchMock);
-    const result = await handleAbsenceCalendarPageInteraction(config, {
-      actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
-      userId: "U1",
-      pageValue: String(nextButton?.value),
-      responseUrl: "https://hooks.slack.com/actions/T/1/2",
-      channelId: "C012RUN"
-    });
-    await result.followUp?.();
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://hooks.slack.com/actions/T/1/2",
-      expect.objectContaining({
-        body: expect.stringContaining("replace_original")
-      })
-    );
-    expect(postUserFacingMessageMock).toHaveBeenCalledWith(
+    expect(openDirectMessageMock).toHaveBeenCalled();
+    expect(postChannelMessageMock).toHaveBeenCalled();
+    expect(deliverAdminEphemeralReplyMock).toHaveBeenCalledWith(
       config,
-      expect.objectContaining({
-        channelId: "C012RUN",
+      {
         userId: "U1",
-        text: expect.stringContaining("ページ 2/2")
-      })
+        responseUrl: "https://hooks.slack.com/commands/1/2/3"
+      },
+      "Bot DM に不在カレンダーを送りました。"
     );
-    vi.unstubAllGlobals();
-  });
-
-  it("uses replace_original for DM deliver channels", async () => {
-    const config = createTestConfig(createMockKv());
-    for (let index = 0; index < 15; index += 1) {
-      await createAbsence(config, {
-        itemId: `A${index}`,
-        targetUser: `U${index}`,
-        startDate: "2026-08-10",
-        endDate: "2026-08-10",
-        notifyChannels: ["CNOTIFY"],
-        notifyUsers: []
-      });
-    }
-    for (let index = 0; index < 15; index += 1) {
-      await createAbsence(config, {
-        itemId: `B${index}`,
-        targetUser: `V${index}`,
-        startDate: "2026-08-11",
-        endDate: "2026-08-11",
-        notifyChannels: ["CNOTIFY"],
-        notifyUsers: []
-      });
-    }
-
-    const page1 = await buildAbsenceCalendarReply(config, {
-      userId: "U1",
-      from: "2026-08-05",
-      to: "2026-08-31",
-      channelId: "CNOTIFY",
-      deliverChannelId: "D01234567",
-      page: 1,
-      todayJst: "2026-08-05"
-    });
-    const actions =
-      typeof page1 !== "string" && page1.blocks
-        ? page1.blocks.find((block) => block.type === "actions")
-        : undefined;
-    const nextButton = (actions?.elements as Array<Record<string, unknown>>)?.find((element) =>
-      String((element.text as { text?: string })?.text).includes("次ページ")
-    );
-
-    postUserFacingMessageMock.mockClear();
-    const fetchMock = vi.fn(async () => okFetchResponse());
-    vi.stubGlobal("fetch", fetchMock);
-    const result = await handleAbsenceCalendarPageInteraction(config, {
-      actionId: ABSENCE_CALENDAR_PAGE_ACTION_ID,
-      userId: "U1",
-      pageValue: String(nextButton?.value),
-      responseUrl: "https://hooks.slack.com/actions/T/1/2",
-      channelId: "D01234567"
-    });
-    await result.followUp?.();
-    expect(postUserFacingMessageMock).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://hooks.slack.com/actions/T/1/2",
-      expect.objectContaining({
-        body: expect.stringContaining("replace_original")
-      })
-    );
-    vi.unstubAllGlobals();
   });
 });
