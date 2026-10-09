@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAbsence, getAbsenceById } from "../db/absence-repository";
 import { createMockKv, createTestConfig } from "../test/mock-kv";
 import {
@@ -32,11 +32,20 @@ vi.mock("./member-master-context", () => ({
   }))
 }));
 
-const baseConfig = createTestConfig(createMockKv());
-
 describe("handleAbsenceEditInteraction from app home", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-15T00:30:00+09:00"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("stores fromAppHome in modal metadata", async () => {
-    const created = await createAbsence(baseConfig, {
+    const config = createTestConfig(createMockKv());
+    const created = await createAbsence(config, {
       targetUser: "U1",
       startDate: "2026-10-01",
       endDate: "2026-10-01",
@@ -52,7 +61,7 @@ describe("handleAbsenceEditInteraction from app home", () => {
     const metadata = JSON.parse(String(view.private_metadata)) as { fromAppHome?: boolean };
     expect(metadata.fromAppHome).toBe(true);
 
-    await handleAbsenceEditInteraction(baseConfig, {
+    await handleAbsenceEditInteraction(config, {
       type: "block_actions",
       trigger_id: "TRIG1",
       user: { id: "U1" },
@@ -65,7 +74,8 @@ describe("handleAbsenceEditInteraction from app home", () => {
   });
 
   it("returns followUp to refresh home after successful submission", async () => {
-    const created = await createAbsence(baseConfig, {
+    const config = createTestConfig(createMockKv());
+    const created = await createAbsence(config, {
       targetUser: "U1",
       startDate: "2026-10-02",
       endDate: "2026-10-02",
@@ -79,7 +89,7 @@ describe("handleAbsenceEditInteraction from app home", () => {
       fromAppHome: true
     });
 
-    const result = await handleAbsenceEditInteraction(baseConfig, {
+    const result = await handleAbsenceEditInteraction(config, {
       type: "view_submission",
       user: { id: "U1" },
       view: {
@@ -101,8 +111,8 @@ describe("handleAbsenceEditInteraction from app home", () => {
     expect(result.followUp).toBeTypeOf("function");
     await result.followUp?.();
 
-    const updated = await getAbsenceById(baseConfig, created.itemId);
+    const updated = await getAbsenceById(config, created.itemId);
     expect(updated?.startDate).toBe("2026-10-03");
-    expect(refreshAppHomeAfterMutationMock).toHaveBeenCalledWith(baseConfig, "U1");
+    expect(refreshAppHomeAfterMutationMock).toHaveBeenCalledWith(config, "U1");
   });
 });
