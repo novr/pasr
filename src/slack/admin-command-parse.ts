@@ -67,7 +67,7 @@ export const parseChannelConfigCommandParts = (
   if (parts.length < 3 || parts[1] !== "empty") {
     return {
       kind: "invalid",
-      message: "使い方: /pasr-admin channel-config empty on|off|default"
+      message: "使い方: /pasr channel-config empty on|off|default"
     };
   }
   const value = parts[2];

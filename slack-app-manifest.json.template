@@ -20,7 +20,7 @@
         "command": "/pasr",
         "url": "REPLACE_WITH_WORKER_URL/slack/command",
         "description": "不在予定管理",
-        "usage_hint": "[list, update <yyyy-mm-dd>, settings]",
+        "usage_hint": "[list, update <yyyy-mm-dd>, settings, channel-config]",
         "should_escape": true
       },
       {

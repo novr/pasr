@@ -47,8 +47,8 @@
 
 - 署名は `request.text()` の生ボディ。`event_id` / `trigger_id` は KV 300 秒 dedupe
 - `view_submission` は D1 書き込みまで同期 ACK。登録通知・一覧再描画・mention confirm は `waitUntil`
-- `/pasr`: 一覧は Queue 非同期。Modal 起動（`settings` / `register` / `update`）は即時 ACK 後 `waitUntil`（`trigger_id` 期限）
-- `/pasr-admin`: allowlist 外は ACK のみで実処理なし。`users` / `absences` / `channel-config` は queue 不可（`waitUntil` + ephemeral）
+- `/pasr`: 一覧は Queue 非同期。Modal 起動（`settings` / `register` / `update`）と `channel-config` は即時 ACK 後 `waitUntil`（`trigger_id` 期限）。`channel-config` は非 admin 可（CH の空日「予定なし」上書き）
+- `/pasr-admin`: allowlist 外は ACK のみで実処理なし。`users` / `absences` / `channel-config` は queue 不可（`waitUntil` + ephemeral）。`channel-config` は `/pasr` と同処理（互換）
 - `blocks` 付き ephemeral は **section（本文）+ actions**。actions のみは本文が空に見える
 - `app_mention`: チャンネル直下のみ。AI は提案のみ、確定は確認 UI 必須。通知先は master 既定（AI 対象外）。confirm commit の `channelId` は interaction と payload の両方を照合し、commit には interaction 側を使用
 - high 信頼度 infer で日付完結時は AI スキップ。ただし `startDate`/`endDate` が `todayJst` より前ならスキップしない
