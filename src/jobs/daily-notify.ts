@@ -8,7 +8,11 @@ import {
   listAbsenceIdsEndedBefore,
   listAllAbsences
 } from "../db/absence-repository";
-import { loadChannelNotifySettingsMap, resolveNotifyWhenEmpty } from "../db/channel-notify-repository";
+import {
+  collectEmptyNotifyChannels,
+  loadChannelNotifySettingsMap,
+  resolveNotifyWhenEmpty
+} from "../db/channel-notify-repository";
 import { ensureMemberMasterActive, loadMemberMasterActiveMap } from "../db/member-master-repository";
 import { checkDbSchema } from "../db/schema-check";
 import { postOpsReport } from "./ops-report";
@@ -341,6 +345,8 @@ export const runDailyNotify = async (
     validRecords.push(record);
   }
 
+  const todays = filterToday(validRecords, day);
+  const todaysForDm = filterToday(dmCandidateRecords, day);
   if (scheduledOpsOnly) {
     result.todayAbsenceCount = filterToday(
       records.filter(
@@ -352,8 +358,7 @@ export const runDailyNotify = async (
       day
     ).length;
   } else {
-    const todays = filterToday(validRecords, day);
-    result.todayAbsenceCount = todays.length;
+    result.todayAbsenceCount = todaysForDm.length;
   }
 
   let statusSyncResult = {
@@ -375,8 +380,6 @@ export const runDailyNotify = async (
       })
     );
   } else {
-    const todays = filterToday(validRecords, day);
-    const todaysForDm = filterToday(dmCandidateRecords, day);
     const channelSettingsMap = await loadChannelNotifySettingsMap(config, { runId: context.runId });
     const notifyContext: ChannelNotifyContext = {
       settingsMap: channelSettingsMap,
@@ -385,14 +388,15 @@ export const runDailyNotify = async (
     const grouped =
       todays.length > 0
         ? groupByChannel(todays)
-        : new Map(
-            [
-              ...new Set([
-                ...validRecords.flatMap((record) => record.notifyChannels),
-                ...channelSettingsMap.keys()
-              ])
-            ].map((channel) => [channel, [] as AbsenceRecord[]])
-          );
+        : todaysForDm.length === 0
+          ? new Map(
+              collectEmptyNotifyChannels(
+                config.noticeChannels,
+                channelSettingsMap,
+                config.notifyEmptyDefault
+              ).map((channel) => [channel, [] as AbsenceRecord[]])
+            )
+          : new Map();
     await sendChannelNotifications(config, context, result, day, grouped, notifyContext);
 
     const groupedNotifyUsers = groupByNotifyUser(todaysForDm);

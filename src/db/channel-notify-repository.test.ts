@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import { createMockKv, createTestConfig } from "../test/mock-kv";
 import { createMockD1 } from "../test/mock-d1";
 import {
+  collectEmptyNotifyChannels,
   deleteChannelNotifySetting,
   loadChannelNotifySettingsMap,
   resolveNotifyWhenEmpty,
+  willReceiveEmptyNotify,
   upsertChannelNotifySetting
 } from "./channel-notify-repository";
 
@@ -38,4 +40,18 @@ describe("channel-notify-repository", () => {
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"run_id":"run_warn_test"'));
     warnSpy.mockRestore();
   });
+
+  it("collects empty notify channels from notice and explicit on only", async () => {
+    const config = createTestConfig(createMockKv());
+    await upsertChannelNotifySetting(config, "C_ON", true, "U_ADMIN");
+    await upsertChannelNotifySetting(config, "C_OFF", false, "U_ADMIN");
+    const map = await loadChannelNotifySettingsMap(config);
+
+    expect(collectEmptyNotifyChannels(["C_NOTICE"], map, true).sort()).toEqual(["C_NOTICE", "C_ON"]);
+    expect(collectEmptyNotifyChannels(["C_NOTICE"], map, false)).toEqual(["C_ON"]);
+    expect(willReceiveEmptyNotify("C_PERSONAL", ["C_NOTICE"], map, true)).toBe(false);
+    expect(willReceiveEmptyNotify("C_NOTICE", ["C_NOTICE"], map, true)).toBe(true);
+    expect(willReceiveEmptyNotify("C_NOTICE", ["C_NOTICE"], map, false)).toBe(false);
+  });
 });
+

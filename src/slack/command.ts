@@ -202,8 +202,8 @@ const buildAdminHelpText = (): string =>
     "/pasr-admin status - 直近実行の要約表示",
     "/pasr-admin users - 登録ユーザー一覧（ページ番号・ボタンでページ送り）",
     "/pasr-admin absences - 本日の不在一覧（today / ページ番号省略可）",
-    "/pasr-admin channel-config empty on|off|default - この CH の 0件時通知を上書き",
-    "/pasr-admin channel-config list - CH 別 0件時通知の上書き一覧"
+    "/pasr-admin channel-config empty on|off|default - 空日「予定なし」（notice 外は on でオプトイン）",
+    "/pasr-admin channel-config list - 空日配信の org default と CH 上書き一覧"
   ].join("\n");
 
 type CommandKind = "self" | "admin" | "unsupported";

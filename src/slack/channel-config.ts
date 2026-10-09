@@ -3,9 +3,10 @@ import {
   assertChannelNotifySettingsTable,
   deleteChannelNotifySetting,
   getChannelNotifySetting,
+  isEmptyNotifyCandidate,
   listChannelNotifySettings,
   loadChannelNotifySettingsMap,
-  resolveNotifyWhenEmpty,
+  willReceiveEmptyNotify,
   upsertChannelNotifySetting
 } from "../db/channel-notify-repository";
 import type { ValidChannelConfigCommand } from "./admin-command-parse";
@@ -13,16 +14,35 @@ import type { SlackCommandPayload } from "./command";
 
 const formatNotifyWhenEmpty = (value: boolean): string => (value ? "on" : "off");
 
+const formatEmptyNotifyDetail = (
+  config: AppConfig,
+  channelId: string,
+  hasOverride: boolean,
+  overrideOn: boolean | undefined
+): string => {
+  if (hasOverride) {
+    return `channel override ${formatNotifyWhenEmpty(Boolean(overrideOn))}`;
+  }
+  if (config.noticeChannels.includes(channelId)) {
+    return `notice CH / org default ${formatNotifyWhenEmpty(config.notifyEmptyDefault)}`;
+  }
+  return "notice 外（empty on でオプトイン）";
+};
+
 const formatChannelConfigList = async (config: AppConfig): Promise<string> => {
   const settings = await listChannelNotifySettings(config);
+  const header = [
+    `org default: ${formatNotifyWhenEmpty(config.notifyEmptyDefault)}`,
+    "空日の配信対象: notice CH（org default）と empty on の上書きのみ"
+  ];
   if (settings.length === 0) {
-    return `CH 別 0件時通知の上書きはありません（org default: ${formatNotifyWhenEmpty(config.notifyEmptyDefault)}）`;
+    return [...header, "CH 別上書きはありません"].join("\n");
   }
   const lines = settings.map(
     (setting) =>
       `<#${setting.channelId}>: ${formatNotifyWhenEmpty(setting.notifyWhenEmpty)} (by ${setting.updatedBy})`
   );
-  return [`org default: ${formatNotifyWhenEmpty(config.notifyEmptyDefault)}`, ...lines].join("\n");
+  return [...header, ...lines].join("\n");
 };
 
 export const handleChannelConfigCommand = async (
@@ -51,11 +71,26 @@ export const handleChannelConfigCommand = async (
   }
 
   const settingsMap = await loadChannelNotifySettingsMap(config);
-  const effective = resolveNotifyWhenEmpty(channelId, settingsMap, config.notifyEmptyDefault);
   const override = await getChannelNotifySetting(config, channelId);
-  const source = override ? "channel override" : "org default";
+  const willReceive = willReceiveEmptyNotify(
+    channelId,
+    config.noticeChannels,
+    settingsMap,
+    config.notifyEmptyDefault
+  );
+  const detail = formatEmptyNotifyDetail(
+    config,
+    channelId,
+    Boolean(override),
+    override?.notifyWhenEmpty
+  );
   return [
-    `<#${channelId}> の 0件時通知: ${formatNotifyWhenEmpty(effective)}（${source}）`,
-    `設定: empty ${parsed.value}`
-  ].join("\n");
+    `<#${channelId}> の空日「予定なし」: ${willReceive ? "配信する" : "配信しない"}（${detail}）`,
+    `設定: empty ${parsed.value}`,
+    !isEmptyNotifyCandidate(channelId, config.noticeChannels, settingsMap) && parsed.value === "default"
+      ? "※ notice 外の CH は org default では配信されません"
+      : undefined
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
 };
