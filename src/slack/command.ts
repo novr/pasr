@@ -24,10 +24,13 @@ import type { AdminEphemeralReply } from "./admin-format";
 import { deliverAdminEphemeralReply } from "./admin-format";
 import {
   adminCommandParseAction,
+  CHANNEL_CONFIG_USAGE,
   type AdminCommandParse,
   type DeferredAdminCommandParse,
+  type ValidChannelConfigCommand,
   isDeferredAdminCommandParse,
-  parseAdminCommandText
+  parseAdminCommandText,
+  parseChannelConfigCommandParts
 } from "./admin-command-parse";
 import { openMemberMasterSettingsModal } from "./member-master-modal";
 import { readLastRunSummary } from "../state/kv";
@@ -116,6 +119,8 @@ export type SelfCommandParse =
   | { kind: "update_invalid_date" }
   | { kind: "register" }
   | { kind: "calendar" }
+  | { kind: "channel_config"; sub: ValidChannelConfigCommand }
+  | { kind: "channel_config_invalid"; message: string }
   | { kind: "unknown"; action: string };
 
 export const parseSelfCommandText = (text: string): SelfCommandParse => {
@@ -126,6 +131,16 @@ export const parseSelfCommandText = (text: string): SelfCommandParse => {
   if (action === "list") return { kind: "list" };
   if (action === "register") return { kind: "register" };
   if (action === "calendar") return { kind: "calendar" };
+  if (action === "channel-config") {
+    const sub = parseChannelConfigCommandParts(parts);
+    if (!sub || sub.kind === "invalid") {
+      return {
+        kind: "channel_config_invalid",
+        message: sub?.message ?? CHANNEL_CONFIG_USAGE
+      };
+    }
+    return { kind: "channel_config", sub };
+  }
   if (action === "update") {
     if (parts.length === 1) return { kind: "update_list" };
     const token = parts[1];
@@ -192,7 +207,10 @@ const buildHelpText = (): string =>
     "/pasr calendar - 通知チャンネルの期間別不在一覧（Bot DM に送信）",
     "/pasr update - /pasr list と同じ",
     "/pasr update YYYY-MM-DD - 開始日指定で不在予定を編集",
-    "/pasr register - 自分の不在予定を登録"
+    "/pasr register - 自分の不在予定を登録",
+    "/pasr channel-config - この CH の空日「予定なし」配信有無を表示",
+    "/pasr channel-config empty on|off|default - この CH の空日「予定なし」を上書き",
+    "/pasr channel-config list - 空日配信の org default と CH 上書き一覧"
   ].join("\n");
 
 const buildAdminHelpText = (): string =>
@@ -202,13 +220,20 @@ const buildAdminHelpText = (): string =>
     "/pasr-admin status - 直近実行の要約表示",
     "/pasr-admin users - 登録ユーザー一覧（ページ番号・ボタンでページ送り）",
     "/pasr-admin absences - 本日の不在一覧（today / ページ番号省略可）",
-    "/pasr-admin channel-config empty on|off|default - 空日「予定なし」（notice 外は on でオプトイン）",
-    "/pasr-admin channel-config list - 空日配信の org default と CH 上書き一覧"
+    "/pasr-admin channel-config … - /pasr channel-config と同じ（互換）"
   ].join("\n");
 
 type CommandKind = "self" | "admin" | "unsupported";
 
-const SELF_ACTIONS = ["help", "list", "settings", "update", "register", "calendar"] as const;
+const SELF_ACTIONS = [
+  "help",
+  "list",
+  "settings",
+  "update",
+  "register",
+  "calendar",
+  "channel-config"
+] as const;
 
 export const getCommandKind = (command: string): CommandKind => {
   if (command === "/pasr") return "self";
@@ -345,6 +370,20 @@ const handleSelfImmediateText = async (
         }
       };
     }
+    case "channel_config_invalid":
+      return { mode: "text", text: parse.message };
+    case "channel_config":
+      return {
+        mode: "deferred",
+        ackText:
+          parse.sub.kind === "empty"
+            ? "チャンネル設定を更新しています…"
+            : "チャンネル設定を確認しています…",
+        run: async () => {
+          const text = await handleChannelConfigCommand(config, payload, parse.sub);
+          await notifySlashCommandEphemeral(config, payload, text);
+        }
+      };
     default: {
       const _never: never = parse;
       return _never;

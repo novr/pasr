@@ -66,7 +66,16 @@ describe("handleChannelConfigCommand", () => {
     );
     expect(text).toContain("配信しない");
     expect(text).toContain("notice 外");
-    expect(text).toContain("org default では配信されません");
+    expect(text).toContain("empty on でオプトイン");
+    expect(text).toContain("設定: empty default");
+  });
+
+  it("status reports current channel without mutating", async () => {
+    const config = createTestConfig(createMockKv(), { notifyEmptyDefault: true });
+    const text = await handleChannelConfigCommand(config, basePayload(), { kind: "status" });
+    expect(text).toContain("配信しない");
+    expect(text).toContain("notice 外");
+    expect(text).not.toContain("設定: empty");
   });
 
   it("lists channel overrides with fan-out note", async () => {

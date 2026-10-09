@@ -67,6 +67,19 @@ describe("slash command parsers", () => {
     expect(parseSelfCommandText("update bad-date")).toEqual({ kind: "update_item", itemId: "bad-date" });
     expect(parseSelfCommandText("update 2026-13-40")).toEqual({ kind: "update_invalid_date" });
     expect(parseSelfCommandText("calendar")).toEqual({ kind: "calendar" });
+    expect(parseSelfCommandText("channel-config")).toEqual({
+      kind: "channel_config",
+      sub: { kind: "status" }
+    });
+    expect(parseSelfCommandText("channel-config empty on")).toEqual({
+      kind: "channel_config",
+      sub: { kind: "empty", value: "on" }
+    });
+    expect(parseSelfCommandText("channel-config list")).toEqual({
+      kind: "channel_config",
+      sub: { kind: "list" }
+    });
+    expect(parseSelfCommandText("channel-config empty maybe").kind).toBe("channel_config_invalid");
   });
 
   it("isSlackAdminUser checks allowlist", () => {

@@ -138,6 +138,47 @@ describe("admin deferred handlers", () => {
     expect(dispatch.text).toContain("empty");
   });
 
+  it("self channel-config is deferred for non-admin users", async () => {
+    const config = createTestConfig(createMockKv());
+    const payload = {
+      command: "/pasr",
+      text: "channel-config empty on",
+      userId: "U_MEMBER",
+      teamId: "T1",
+      channelId: "C1",
+      triggerId: "tr1",
+      responseUrl: "https://hooks.slack.com/commands/1/2/3"
+    };
+    const dispatch = await resolveSlashCommandDispatch(config, payload);
+    expect(dispatch.mode).toBe("deferred");
+    if (dispatch.mode !== "deferred") return;
+    expect(dispatch.ackText).toContain("更新");
+    await dispatch.run();
+    expect(handleChannelConfigCommandMock).toHaveBeenCalledWith(config, payload, {
+      kind: "empty",
+      value: "on"
+    });
+  });
+
+  it("self channel-config status/list use confirm ack text", async () => {
+    const config = createTestConfig(createMockKv());
+    for (const text of ["channel-config", "channel-config list"] as const) {
+      const dispatch = await resolveSlashCommandDispatch(config, {
+        command: "/pasr",
+        text,
+        userId: "U_MEMBER",
+        teamId: "T1",
+        channelId: "C1",
+        triggerId: "tr1",
+        responseUrl: "https://hooks.slack.com/commands/1/2/3"
+      });
+      expect(dispatch.mode).toBe("deferred");
+      if (dispatch.mode !== "deferred") return;
+      expect(dispatch.ackText).toContain("確認");
+      expect(dispatch.ackText).not.toContain("更新");
+    }
+  });
+
   it("invalid users text returns immediate text not queue", async () => {
     const config = createTestConfig(createMockKv());
     const dispatch = await resolveSlashCommandDispatch(config, {
