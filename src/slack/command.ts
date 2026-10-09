@@ -24,6 +24,7 @@ import type { AdminEphemeralReply } from "./admin-format";
 import { deliverAdminEphemeralReply } from "./admin-format";
 import {
   adminCommandParseAction,
+  CHANNEL_CONFIG_USAGE,
   type AdminCommandParse,
   type DeferredAdminCommandParse,
   type ValidChannelConfigCommand,
@@ -135,7 +136,7 @@ export const parseSelfCommandText = (text: string): SelfCommandParse => {
     if (!sub || sub.kind === "invalid") {
       return {
         kind: "channel_config_invalid",
-        message: sub?.message ?? "使い方: /pasr channel-config empty on|off|default"
+        message: sub?.message ?? CHANNEL_CONFIG_USAGE
       };
     }
     return { kind: "channel_config", sub };
@@ -207,6 +208,7 @@ const buildHelpText = (): string =>
     "/pasr update - /pasr list と同じ",
     "/pasr update YYYY-MM-DD - 開始日指定で不在予定を編集",
     "/pasr register - 自分の不在予定を登録",
+    "/pasr channel-config - この CH の空日「予定なし」配信有無を表示",
     "/pasr channel-config empty on|off|default - この CH の空日「予定なし」を上書き",
     "/pasr channel-config list - 空日配信の org default と CH 上書き一覧"
   ].join("\n");
@@ -373,7 +375,10 @@ const handleSelfImmediateText = async (
     case "channel_config":
       return {
         mode: "deferred",
-        ackText: "チャンネル設定を更新しています…",
+        ackText:
+          parse.sub.kind === "empty"
+            ? "チャンネル設定を更新しています…"
+            : "チャンネル設定を確認しています…",
         run: async () => {
           const text = await handleChannelConfigCommand(config, payload, parse.sub);
           await notifySlashCommandEphemeral(config, payload, text);

@@ -29,6 +29,33 @@ const formatEmptyNotifyDetail = (
   return "notice 外（empty on でオプトイン）";
 };
 
+const formatCurrentChannelEmptyNotify = async (
+  config: AppConfig,
+  channelId: string
+): Promise<string> => {
+  const settingsMap = await loadChannelNotifySettingsMap(config);
+  const override = await getChannelNotifySetting(config, channelId);
+  const willReceive = willReceiveEmptyNotify(
+    channelId,
+    config.noticeChannels,
+    settingsMap,
+    config.notifyEmptyDefault
+  );
+  const detail = formatEmptyNotifyDetail(
+    config,
+    channelId,
+    Boolean(override),
+    override?.notifyWhenEmpty
+  );
+  const lines = [
+    `<#${channelId}> の空日「予定なし」: ${willReceive ? "配信する" : "配信しない"}（${detail}）`
+  ];
+  if (!isEmptyNotifyCandidate(channelId, config.noticeChannels, settingsMap) && !override) {
+    lines.push("※ notice 外の CH は empty on でオプトイン");
+  }
+  return lines.join("\n");
+};
+
 const formatChannelConfigList = async (config: AppConfig): Promise<string> => {
   const settings = await listChannelNotifySettings(config);
   const header = [
@@ -64,33 +91,20 @@ export const handleChannelConfigCommand = async (
   }
 
   const channelId = payload.channelId;
+  if (parsed.kind === "status") {
+    return formatCurrentChannelEmptyNotify(config, channelId);
+  }
+  if (parsed.kind !== "empty") {
+    const _never: never = parsed;
+    return _never;
+  }
+
   if (parsed.value === "default") {
     await deleteChannelNotifySetting(config, channelId);
   } else {
     await upsertChannelNotifySetting(config, channelId, parsed.value === "on", payload.userId);
   }
 
-  const settingsMap = await loadChannelNotifySettingsMap(config);
-  const override = await getChannelNotifySetting(config, channelId);
-  const willReceive = willReceiveEmptyNotify(
-    channelId,
-    config.noticeChannels,
-    settingsMap,
-    config.notifyEmptyDefault
-  );
-  const detail = formatEmptyNotifyDetail(
-    config,
-    channelId,
-    Boolean(override),
-    override?.notifyWhenEmpty
-  );
-  return [
-    `<#${channelId}> の空日「予定なし」: ${willReceive ? "配信する" : "配信しない"}（${detail}）`,
-    `設定: empty ${parsed.value}`,
-    !isEmptyNotifyCandidate(channelId, config.noticeChannels, settingsMap) && parsed.value === "default"
-      ? "※ notice 外の CH は org default では配信されません"
-      : undefined
-  ]
-    .filter((line): line is string => Boolean(line))
-    .join("\n");
+  const status = await formatCurrentChannelEmptyNotify(config, channelId);
+  return [`${status}`, `設定: empty ${parsed.value}`].join("\n");
 };

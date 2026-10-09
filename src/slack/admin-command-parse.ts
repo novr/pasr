@@ -1,13 +1,17 @@
 export type ChannelConfigEmptyValue = "on" | "off" | "default";
 
+export const CHANNEL_CONFIG_USAGE =
+  "使い方: /pasr channel-config（省略で現状）| empty on|off|default | list";
+
 export type ParsedChannelConfigCommand =
   | { kind: "empty"; value: ChannelConfigEmptyValue }
   | { kind: "list" }
+  | { kind: "status" }
   | { kind: "invalid"; message: string };
 
 export type ValidChannelConfigCommand = Extract<
   ParsedChannelConfigCommand,
-  { kind: "list" } | { kind: "empty" }
+  { kind: "list" } | { kind: "empty" } | { kind: "status" }
 >;
 
 export type ParsedUsersCommand =
@@ -61,13 +65,16 @@ export const parseChannelConfigCommandParts = (
   parts: string[]
 ): ParsedChannelConfigCommand | undefined => {
   if (parts[0] !== "channel-config") return undefined;
+  if (parts.length === 1) {
+    return { kind: "status" };
+  }
   if (parts.length === 2 && parts[1] === "list") {
     return { kind: "list" };
   }
   if (parts.length < 3 || parts[1] !== "empty") {
     return {
       kind: "invalid",
-      message: "使い方: /pasr channel-config empty on|off|default"
+      message: CHANNEL_CONFIG_USAGE
     };
   }
   const value = parts[2];

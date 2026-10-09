@@ -21,7 +21,7 @@
 ## データ・migration
 
 - D1 正本: `absences`, `member_master`, `channel_notify_settings`（`0002`）, `slack_user_oauth`（`0003`）
-- `0002` 未適用: daily CH/DM は継続。`/pasr-admin channel-config` のみ失敗
+- `0002` 未適用: daily CH/DM は継続。`/pasr channel-config` / `/pasr-admin channel-config` のみ失敗
 - `0003` 未適用: OAuth UI・Status 同期をスキップ。CH/DM は継続
 - `0004` 未適用: Status ユーザー設定の保存・参照をスキップ（org Variable のみ）。CH/DM は継続
 
@@ -47,7 +47,7 @@
 
 - 署名は `request.text()` の生ボディ。`event_id` / `trigger_id` は KV 300 秒 dedupe
 - `view_submission` は D1 書き込みまで同期 ACK。登録通知・一覧再描画・mention confirm は `waitUntil`
-- `/pasr`: 一覧は Queue 非同期。Modal 起動（`settings` / `register` / `update`）と `channel-config` は即時 ACK 後 `waitUntil`（`trigger_id` 期限）。`channel-config` は非 admin 可（CH の空日「予定なし」上書き）
+- `/pasr`: 一覧は Queue 非同期。Modal 起動（`settings` / `register` / `update`）は即時 ACK 後 `waitUntil`（`trigger_id` 期限）。`channel-config` は非 admin 可・即時 ACK 後 `waitUntil`（ephemeral、`trigger_id` 不使用。引数なし=現状、`empty`=上書き、`list`=一覧）
 - `/pasr-admin`: allowlist 外は ACK のみで実処理なし。`users` / `absences` / `channel-config` は queue 不可（`waitUntil` + ephemeral）。`channel-config` は `/pasr` と同処理（互換）
 - `blocks` 付き ephemeral は **section（本文）+ actions**。actions のみは本文が空に見える
 - `app_mention`: チャンネル直下のみ。AI は提案のみ、確定は確認 UI 必須。通知先は master 既定（AI 対象外）。confirm commit の `channelId` は interaction と payload の両方を照合し、commit には interaction 側を使用

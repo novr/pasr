@@ -22,14 +22,25 @@ describe("parseChannelConfigCommand", () => {
     expect(parseChannelConfigCommand("channel-config list")).toEqual({ kind: "list" });
   });
 
+  it("parses bare channel-config as status", () => {
+    expect(parseChannelConfigCommand("channel-config")).toEqual({ kind: "status" });
+  });
+
   it("returns undefined for other admin actions", () => {
     expect(parseChannelConfigCommand("run")).toBeUndefined();
     expect(parseChannelConfigCommand("status")).toBeUndefined();
   });
 
-  it("returns invalid for malformed input", () => {
+  it("returns invalid for malformed input with usage including status and list", () => {
     const result = parseChannelConfigCommand("channel-config empty maybe");
     expect(result?.kind).toBe("invalid");
+    if (result?.kind !== "invalid") return;
+    expect(result.message).toContain("empty");
+    const usage = parseChannelConfigCommand("channel-config foo");
+    expect(usage?.kind).toBe("invalid");
+    if (usage?.kind !== "invalid") return;
+    expect(usage.message).toContain("list");
+    expect(usage.message).toContain("現状");
   });
 });
 
