@@ -134,6 +134,7 @@ describe("runDailyNotify", () => {
     });
     const { upsertChannelNotifySetting } = await import("../db/channel-notify-repository");
     await upsertChannelNotifySetting(config, "C_EMPTY_OFF", false, "U_ADMIN");
+    await upsertChannelNotifySetting(config, "C_EMPTY_ON", true, "U_ADMIN");
 
     const result = await runDailyNotify(config, { runId: "run_empty_off", trigger: "manual" });
 
@@ -143,9 +144,12 @@ describe("runDailyNotify", () => {
     expect(result.sent).toBe(1);
   });
 
-  it("skips empty channels when org default notify_when_empty is off", async () => {
+  it("skips notice channels when org default notify_when_empty is off", async () => {
     const kv = createMockKv();
-    const config = createTestConfig(kv, { notifyEmptyDefault: false });
+    const config = createTestConfig(kv, {
+      notifyEmptyDefault: false,
+      noticeChannels: ["C_ORG_OFF"]
+    });
     await upsertMemberMaster(config, {
       targetUser: "U1",
       active: true,
@@ -169,10 +173,11 @@ describe("runDailyNotify", () => {
     expect(result.sent).toBe(0);
   });
 
-  it("uses org default empty on when channel_notify_settings table is missing", async () => {
+  it("notifies notice channels on empty days when channel_notify_settings table is missing", async () => {
     const kv = createMockKv();
     const config = createTestConfig(kv, {
-      db: createMockD1({ includeChannelNotifySettings: false })
+      db: createMockD1({ includeChannelNotifySettings: false }),
+      noticeChannels: ["C_NOTICE"]
     });
     await upsertMemberMaster(config, {
       targetUser: "U1",
@@ -193,8 +198,95 @@ describe("runDailyNotify", () => {
     const result = await runDailyNotify(config, { runId: "run_pre_migrate", trigger: "manual" });
 
     expect(result.errors).toBe(0);
-    expect(postChannelMessageMock).toHaveBeenCalledWith(expect.anything(), "C_PRE_MIGRATE", expect.anything());
+    expect(postChannelMessageMock).toHaveBeenCalledTimes(1);
+    expect(postChannelMessageMock).toHaveBeenCalledWith(expect.anything(), "C_NOTICE", expect.anything());
     expect(result.sent).toBe(1);
+  });
+
+  it("does not fan out empty notifications to absence notify_channels alone", async () => {
+    const kv = createMockKv();
+    const config = createTestConfig(kv);
+    await upsertMemberMaster(config, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-06-25",
+      endDate: "2026-06-25",
+      notifyChannels: ["C_PERSONAL"],
+      notifyUsers: [],
+      absenceType: "absence"
+    });
+
+    const result = await runDailyNotify(config, { runId: "run_no_absence_fanout", trigger: "manual" });
+
+    expect(result.todayAbsenceCount).toBe(0);
+    expect(postChannelMessageMock).not.toHaveBeenCalled();
+    expect(result.sent).toBe(0);
+  });
+
+  it("notifies notice channels on empty days", async () => {
+    const kv = createMockKv();
+    const config = createTestConfig(kv, { noticeChannels: ["C_NOTICE"] });
+    await upsertMemberMaster(config, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-06-25",
+      endDate: "2026-06-25",
+      notifyChannels: ["C_PERSONAL"],
+      notifyUsers: [],
+      absenceType: "absence"
+    });
+
+    const result = await runDailyNotify(config, { runId: "run_notice_empty", trigger: "manual" });
+
+    expect(result.todayAbsenceCount).toBe(0);
+    expect(postChannelMessageMock).toHaveBeenCalledTimes(1);
+    expect(postChannelMessageMock).toHaveBeenCalledWith(expect.anything(), "C_NOTICE", expect.anything());
+    expect(result.sent).toBe(1);
+  });
+
+  it("does not post empty channel notices on DM-only days", async () => {
+    const kv = createMockKv();
+    const config = createTestConfig(kv, { noticeChannels: ["C_NOTICE"] });
+    await upsertMemberMaster(config, {
+      targetUser: "U1",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-06-24",
+      endDate: "2026-06-24",
+      notifyChannels: [],
+      notifyUsers: ["U2"],
+      absenceType: "absence"
+    });
+
+    const result = await runDailyNotify(config, { runId: "run_dm_only_day", trigger: "manual" });
+
+    expect(result.todayAbsenceCount).toBe(1);
+    expect(result.sentChannels).toBe(0);
+    expect(result.sentDms).toBe(1);
+    expect(postChannelMessageMock).toHaveBeenCalledTimes(1);
+    expect(openDirectMessageMock).toHaveBeenCalledWith(expect.anything(), "U2");
+    expect(postChannelMessageMock).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "C_NOTICE",
+      expect.anything()
+    );
   });
 
   it("notifies override-only channels when no valid absence records exist on empty days", async () => {

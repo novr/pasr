@@ -34,8 +34,11 @@
 
 ## 日次・ops・Status
 
+- 空日の「予定なし」: 当日の CH 向け・DM 向け不在がどちらも 0 件のときだけ。配信先は `SLACK_PASR_NOTICE_CH`（`PASR_NOTIFY_EMPTY_DEFAULT` / CH 上書き）と `channel_notify_settings` 明示 on。absence の `notify_channels` からは広げない（個人CH拡散防止）。org default on でも notice 外は配信しない
 - CH 0件時 off にしても過去の「予定なし」投稿は削除・更新しない（Phase 1）
-- ops レポートは `trigger === "scheduled"` のみ（土日含む）。`sent` は CH+DM 合計。内訳は `sent_channels` / `sent_dms`
+- 当日 CH 向け不在がある日は、予定のある CH にだけ投稿（他 CH へ「予定なし」は出さない）。DM のみの日も CH へ「予定なし」は出さない
+- ops レポートは `trigger === "scheduled"` のみ（土日含む）。`sent` は CH+DM 合計。内訳は `sent_channels` / `sent_dms`。`todayAbsenceCount` は inactive 除外後の当日分（DM-only 含む）
+
 - Status 同期: scheduled daily の JST 平日。ユーザー操作（登録・編集・削除・`member_master` settings 保存）による当日 Status の即時 set / re-resolve / clear を許可（当日が absence 範囲内なら土日祝も可。settings 保存は当日 absence がある場合のみ re-resolve）。失敗はレコード単位で隔離し登録・保存成功は阻害しない
 - Status 文言・絵文字の優先順位: absence `note` > `member_master.status_default_text` / `status_emoji` > org Variable（`PASR_STATUS_DEFAULT_TEXT` / `PASR_STATUS_EMOJI`）。ユーザー設定は Status 同期専用（daily 通知には使わない）
 - `end_date < today` の absence は平日 scheduled daily 後に D1 DELETE（証票用途なし）

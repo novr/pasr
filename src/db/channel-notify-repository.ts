@@ -119,3 +119,33 @@ export const resolveNotifyWhenEmpty = (
   }
   return orgDefault;
 };
+
+/** 空日「予定なし」の候補。notice CH または channel_notify_settings 明示 on。 */
+export const isEmptyNotifyCandidate = (
+  channelId: string,
+  noticeChannels: readonly string[],
+  settingsMap: Map<string, boolean>
+): boolean => noticeChannels.includes(channelId) || settingsMap.get(channelId) === true;
+
+export const willReceiveEmptyNotify = (
+  channelId: string,
+  noticeChannels: readonly string[],
+  settingsMap: Map<string, boolean>,
+  orgDefault: boolean
+): boolean =>
+  isEmptyNotifyCandidate(channelId, noticeChannels, settingsMap) &&
+  resolveNotifyWhenEmpty(channelId, settingsMap, orgDefault);
+
+export const collectEmptyNotifyChannels = (
+  noticeChannels: readonly string[],
+  settingsMap: Map<string, boolean>,
+  orgDefault: boolean
+): string[] => {
+  const candidates = new Set<string>(noticeChannels);
+  for (const [channelId, notifyWhenEmpty] of settingsMap) {
+    if (notifyWhenEmpty) candidates.add(channelId);
+  }
+  return [...candidates].filter((channelId) =>
+    resolveNotifyWhenEmpty(channelId, settingsMap, orgDefault)
+  );
+};

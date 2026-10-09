@@ -35,18 +35,41 @@ describe("handleChannelConfigCommand", () => {
     expect(text).toContain("db: schema_missing");
   });
 
-  it("upserts empty off and reports effective value", async () => {
+  it("upserts empty off and reports no delivery", async () => {
     const config = createTestConfig(createMockKv());
     const text = await handleChannelConfigCommand(
       config,
       basePayload({ text: "channel-config empty off" }),
       { kind: "empty", value: "off" }
     );
-    expect(text).toContain("0件時通知: off");
-    expect(text).toContain("channel override");
+    expect(text).toContain("配信しない");
+    expect(text).toContain("channel override off");
   });
 
-  it("lists channel overrides", async () => {
+  it("upserts empty on and reports delivery for non-notice channel", async () => {
+    const config = createTestConfig(createMockKv());
+    const text = await handleChannelConfigCommand(
+      config,
+      basePayload({ text: "channel-config empty on" }),
+      { kind: "empty", value: "on" }
+    );
+    expect(text).toContain("配信する");
+    expect(text).toContain("channel override on");
+  });
+
+  it("reports no delivery for non-notice channel on default even when org default is on", async () => {
+    const config = createTestConfig(createMockKv(), { notifyEmptyDefault: true });
+    const text = await handleChannelConfigCommand(
+      config,
+      basePayload({ text: "channel-config empty default" }),
+      { kind: "empty", value: "default" }
+    );
+    expect(text).toContain("配信しない");
+    expect(text).toContain("notice 外");
+    expect(text).toContain("org default では配信されません");
+  });
+
+  it("lists channel overrides with fan-out note", async () => {
     const config = createTestConfig(createMockKv());
     await upsertChannelNotifySetting(config, "C1", false, "U_ADMIN");
     const text = await handleChannelConfigCommand(
@@ -55,6 +78,7 @@ describe("handleChannelConfigCommand", () => {
       { kind: "list" }
     );
     expect(text).toContain("org default: on");
+    expect(text).toContain("notice CH");
     expect(text).toContain("C1");
     expect(text).toContain("off");
   });
