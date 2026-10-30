@@ -115,4 +115,128 @@ describe("handleAbsenceEditInteraction from app home", () => {
     expect(updated?.startDate).toBe("2026-10-03");
     expect(refreshAppHomeAfterMutationMock).toHaveBeenCalledWith(config, "U1");
   });
+
+  it("keeps stored times when the submission omits the time fields", async () => {
+    const config = createTestConfig(createMockKv());
+    const created = await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-10-02",
+      endDate: "2026-10-04",
+      startTime: "18:00",
+      endTime: "13:00",
+      notifyChannels: ["C1"],
+      notifyUsers: ["U2"]
+    });
+    const view = buildAbsenceEditModalView({
+      userId: "U1",
+      record: created,
+      fromAppHome: true
+    });
+    const blocks = view.blocks as Array<Record<string, unknown>>;
+    const startTimeBlock = blocks.find((block) => block.block_id === "start_time_block");
+    const endTimeBlock = blocks.find((block) => block.block_id === "end_time_block");
+    expect((startTimeBlock?.element as Record<string, unknown>)?.initial_time).toBe("18:00");
+    expect((endTimeBlock?.element as Record<string, unknown>)?.initial_time).toBe("13:00");
+
+    const result = await handleAbsenceEditInteraction(config, {
+      type: "view_submission",
+      user: { id: "U1" },
+      view: {
+        callback_id: ABSENCE_EDIT_MODAL_CALLBACK_ID,
+        private_metadata: view.private_metadata as string,
+        state: {
+          values: {
+            start_block: { start_date: { selected_date: "2026-10-02" } },
+            end_block: { end_date: { selected_date: "2026-10-04" } },
+            note_block: { note_input: { value: "通院" } },
+            channels_block: { notify_channels_select: { selected_conversations: ["C1"] } },
+            users_block: { notify_users_select: { selected_users: ["U2"] } }
+          }
+        }
+      }
+    });
+
+    expect(result.ok).toBe(true);
+    const updated = await getAbsenceById(config, created.itemId);
+    expect(updated?.startTime).toBe("18:00");
+    expect(updated?.endTime).toBe("13:00");
+    expect(updated?.note).toBe("通院");
+  });
+
+  it("does not save when omitted times become inverted on the same day", async () => {
+    const config = createTestConfig(createMockKv());
+    const created = await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-10-02",
+      endDate: "2026-10-04",
+      startTime: "18:00",
+      endTime: "13:00",
+      notifyChannels: ["C1"],
+      notifyUsers: ["U2"]
+    });
+    const view = buildAbsenceEditModalView({ userId: "U1", record: created });
+
+    const result = await handleAbsenceEditInteraction(config, {
+      type: "view_submission",
+      user: { id: "U1" },
+      view: {
+        callback_id: ABSENCE_EDIT_MODAL_CALLBACK_ID,
+        private_metadata: view.private_metadata as string,
+        state: {
+          values: {
+            start_block: { start_date: { selected_date: "2026-10-02" } },
+            end_block: { end_date: { selected_date: "2026-10-02" } },
+            note_block: { note_input: { value: "" } },
+            channels_block: { notify_channels_select: { selected_conversations: ["C1"] } },
+            users_block: { notify_users_select: { selected_users: ["U2"] } }
+          }
+        }
+      }
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("終了日を翌日");
+    const stored = await getAbsenceById(config, created.itemId);
+    expect(stored?.endDate).toBe("2026-10-04");
+    expect(stored?.startTime).toBe("18:00");
+  });
+
+  it("clears a time when the timepicker submits null", async () => {
+    const config = createTestConfig(createMockKv());
+    const created = await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-10-02",
+      endDate: "2026-10-02",
+      startTime: "13:00",
+      endTime: "16:00",
+      notifyChannels: ["C1"],
+      notifyUsers: ["U2"]
+    });
+    const view = buildAbsenceEditModalView({ userId: "U1", record: created });
+
+    const result = await handleAbsenceEditInteraction(config, {
+      type: "view_submission",
+      user: { id: "U1" },
+      view: {
+        callback_id: ABSENCE_EDIT_MODAL_CALLBACK_ID,
+        private_metadata: view.private_metadata as string,
+        state: {
+          values: {
+            start_block: { start_date: { selected_date: "2026-10-02" } },
+            end_block: { end_date: { selected_date: "2026-10-02" } },
+            start_time_block: { start_time: { selected_time: null } },
+            end_time_block: { end_time: { selected_time: "16:00" } },
+            note_block: { note_input: { value: "" } },
+            channels_block: { notify_channels_select: { selected_conversations: ["C1"] } },
+            users_block: { notify_users_select: { selected_users: ["U2"] } }
+          }
+        }
+      }
+    });
+
+    expect(result.ok).toBe(true);
+    const updated = await getAbsenceById(config, created.itemId);
+    expect(updated?.startTime).toBeUndefined();
+    expect(updated?.endTime).toBe("16:00");
+  });
 });

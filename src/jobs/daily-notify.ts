@@ -2,7 +2,7 @@ import type { AppConfig } from "../config";
 import { filterToday, groupByChannel, type AbsenceRecord, type SkipReason } from "../domain/absence";
 import { getJstDateParts } from "../domain/jst-date";
 import { getScheduledSkipReason } from "../domain/jp-holidays";
-import { formatAttendanceNoticeLine } from "../domain/absence-registration";
+import { formatAttendanceNoticeLine, formatDayClockLabel } from "../domain/absence-registration";
 import {
   deleteAbsenceById,
   listAbsenceIdsEndedBefore,
@@ -59,14 +59,24 @@ const zeroedReasons = (): Record<SkipReason, number> => ({
   inactive_user_master: 0
 });
 
-const buildMessageLine = (record: AbsenceRecord): string =>
-  formatAttendanceNoticeLine(record.targetUser, record.note);
+const buildMessageLine = (today: string, record: AbsenceRecord): string =>
+  formatAttendanceNoticeLine(
+    record.targetUser,
+    record.note,
+    formatDayClockLabel({
+      day: today,
+      startDate: record.startDate,
+      endDate: record.endDate,
+      startTime: record.startTime,
+      endTime: record.endTime
+    })
+  );
 
 const buildMessage = (today: string, records: AbsenceRecord[]): string => {
   if (records.length === 0) {
     return [`本日（${today}）の不在予定`, "• 予定なし"].join("\n");
   }
-  const lines = records.map(buildMessageLine);
+  const lines = records.map((record) => buildMessageLine(today, record));
   return [`本日（${today}）の不在予定`, ...lines].join("\n");
 };
 
@@ -79,7 +89,7 @@ const sortNotifyUserRecords = (records: AbsenceRecord[]): AbsenceRecord[] =>
 
 const buildDirectMessage = (today: string, records: AbsenceRecord[]): string => {
   const sorted = sortNotifyUserRecords(records);
-  const lines = sorted.map(buildMessageLine);
+  const lines = sorted.map((record) => buildMessageLine(today, record));
   return [`本日の不在予定です（${today} JST）`, ...lines].join("\n");
 };
 

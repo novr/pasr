@@ -1,11 +1,15 @@
 import type { AbsenceRecord } from "./absence";
-import { formatAttendanceNoticeLine } from "./absence-registration";
+import { formatAttendanceNoticeLine, formatDayClockLabel } from "./absence-registration";
 import { addJstDays, formatJstWeekdayShort } from "./jst-date";
 
 export type AbsenceCalendarDayEntry = {
   targetUser: string;
   note?: string;
   itemId: string;
+  startDate: string;
+  endDate: string;
+  startTime?: string;
+  endTime?: string;
 };
 
 export type AbsenceCalendarDayGroup = {
@@ -38,7 +42,11 @@ export const groupAbsencesByJstDay = (
       dayEntries.set(record.itemId, {
         targetUser: record.targetUser,
         note: record.note,
-        itemId: record.itemId
+        itemId: record.itemId,
+        startDate: record.startDate,
+        endDate: record.endDate,
+        startTime: record.startTime,
+        endTime: record.endTime
       });
       if (cursor === overlapEnd) break;
       cursor = addJstDays(cursor, 1);
@@ -61,7 +69,19 @@ export const flattenAbsenceCalendarDayGroups = (groups: AbsenceCalendarDayGroup[
   for (const group of groups) {
     lines.push(formatAbsenceCalendarDayHeader(group.date));
     for (const entry of group.entries) {
-      lines.push(formatAttendanceNoticeLine(entry.targetUser, entry.note));
+      lines.push(
+        formatAttendanceNoticeLine(
+          entry.targetUser,
+          entry.note,
+          formatDayClockLabel({
+            day: group.date,
+            startDate: entry.startDate,
+            endDate: entry.endDate,
+            startTime: entry.startTime,
+            endTime: entry.endTime
+          })
+        )
+      );
     }
   }
   return lines;

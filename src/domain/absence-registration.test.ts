@@ -4,6 +4,7 @@ import {
   DAILY_NOTIFY_HOUR_JST,
   formatAttendanceNoticeLine,
   formatAttendancePeriod,
+  formatDayClockLabel,
   resolveAbsenceEndDate,
   resolveNotifyTargets,
   resolveRegistrationNotifyMode,
@@ -47,6 +48,112 @@ describe("absence-registration", () => {
   it("formatAttendancePeriod formats single day and range", () => {
     expect(formatAttendancePeriod("2026-06-20", "2026-06-20")).toBe("2026-06-20");
     expect(formatAttendancePeriod("2026-06-20", "2026-06-25")).toBe("2026-06-20 〜 2026-06-25");
+  });
+
+  it("formatAttendancePeriod attaches only the times that were entered", () => {
+    expect(
+      formatAttendancePeriod("2026-10-30", "2026-10-30", { startTime: "13:00", endTime: "16:00" })
+    ).toBe("2026-10-30 13:00–16:00");
+    expect(formatAttendancePeriod("2026-10-30", "2026-10-30", { startTime: "18:00" })).toBe(
+      "2026-10-30 18:00から"
+    );
+    expect(formatAttendancePeriod("2026-10-30", "2026-11-02", { startTime: "18:00", endTime: "13:00" })).toBe(
+      "2026-10-30 18:00から 〜 2026-11-02 13:00まで"
+    );
+    expect(formatAttendancePeriod("2026-10-30", "2026-11-02", { endTime: "13:00" })).toBe(
+      "2026-10-30 〜 2026-11-02 13:00まで"
+    );
+  });
+
+  it("formatDayClockLabel shows the end time only on the end day", () => {
+    const times = { startDate: "2026-10-30", endDate: "2026-11-02", startTime: "18:00", endTime: "13:00" };
+    expect(formatDayClockLabel({ day: "2026-10-30", ...times })).toBe("18:00から");
+    expect(formatDayClockLabel({ day: "2026-10-31", ...times })).toBeUndefined();
+    expect(formatDayClockLabel({ day: "2026-11-02", ...times })).toBe("13:00まで");
+    expect(
+      formatDayClockLabel({
+        day: "2026-10-30",
+        startDate: "2026-10-30",
+        endDate: "2026-10-30",
+        startTime: "13:00",
+        endTime: "16:00"
+      })
+    ).toBe("13:00–16:00");
+    expect(
+      formatAttendanceNoticeLine("U1", "通院", "18:00から")
+    ).toBe("• <@U1> 18:00から 通院");
+  });
+
+  it("validateAbsenceRegistration rejects a same-day range whose start time is not before the end", () => {
+    const error = validateAbsenceRegistration({
+      startDate: "2026-10-30",
+      endDate: "2026-10-30",
+      todayJst: "2026-10-30",
+      notifyMode: "none",
+      channels: ["C1"],
+      users: [],
+      active: true,
+      startTime: "18:00",
+      endTime: "13:00"
+    });
+    expect(error).toEqual({ reason: "invalid_time_order", blockId: "end_time_block" });
+  });
+
+  it("validateAbsenceRegistration rejects a same-day end time of midnight when the start is empty", () => {
+    const error = validateAbsenceRegistration({
+      startDate: "2026-10-30",
+      endDate: "2026-10-30",
+      todayJst: "2026-10-30",
+      notifyMode: "none",
+      channels: ["C1"],
+      users: [],
+      active: true,
+      endTime: "00:00"
+    });
+    expect(error).toEqual({ reason: "invalid_time_order", blockId: "end_time_block" });
+  });
+
+  it("validateAbsenceRegistration allows a start time of 23:59 through the end of that day", () => {
+    const error = validateAbsenceRegistration({
+      startDate: "2026-10-30",
+      endDate: "2026-10-30",
+      todayJst: "2026-10-30",
+      notifyMode: "none",
+      channels: ["C1"],
+      users: [],
+      active: true,
+      startTime: "23:59"
+    });
+    expect(error).toBeUndefined();
+  });
+
+  it("validateAbsenceRegistration allows midnight at the start of the next day", () => {
+    const error = validateAbsenceRegistration({
+      startDate: "2026-10-30",
+      endDate: "2026-10-31",
+      todayJst: "2026-10-30",
+      notifyMode: "none",
+      channels: ["C1"],
+      users: [],
+      active: true,
+      endTime: "00:00"
+    });
+    expect(error).toBeUndefined();
+  });
+
+  it("validateAbsenceRegistration allows a start time that continues onto the next day", () => {
+    const error = validateAbsenceRegistration({
+      startDate: "2026-10-30",
+      endDate: "2026-10-31",
+      todayJst: "2026-10-30",
+      notifyMode: "none",
+      channels: ["C1"],
+      users: [],
+      active: true,
+      startTime: "18:00",
+      endTime: "13:00"
+    });
+    expect(error).toBeUndefined();
   });
 
   it("resolveAbsenceEndDate falls back to start date when end is empty", () => {

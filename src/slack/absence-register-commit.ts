@@ -8,16 +8,17 @@ import {
 } from "../domain/absence-registration";
 import { getJstDateParts } from "../domain/jst-date";
 import { createAbsence } from "../db/absence-repository";
-import { DbSchemaMismatchError } from "../db/schema-check";
+import { ABSENCE_TIME_SCHEMA_USER_MESSAGE, assertDbSchema, DbSchemaMismatchError } from "../db/schema-check";
 import { runRegistrationNotifyAndAck } from "../jobs/registration-notify";
 import { reconcileStatusIfRecordsAffectToday } from "../jobs/status-sync";
-import { assertDbSchema } from "../db/schema-check";
 
 export type CommitAbsenceRegistrationParams = {
   userId: string;
   channelId: string;
   startDate: string;
   endDate: string;
+  startTime?: string;
+  endTime?: string;
   note?: string;
   notifyChannels: string[];
   notifyUsers: string[];
@@ -39,6 +40,10 @@ export const formatAbsenceRegistrationValidationError = (
       return "過去日は指定できません。";
     case "invalid_range":
       return "開始日は終了日以前にしてください。";
+    case "invalid_time":
+      return "時刻は HH:MM で指定してください。";
+    case "invalid_time_order":
+      return "日をまたぐなら終了日を翌日にしてください。";
     case "missing_notify_target":
       return "登録通知の設定に合わせて通知先を指定してください。";
     default: {
@@ -65,6 +70,8 @@ export const commitAbsenceRegistration = async (
   const validationError = validateAbsenceRegistration({
     startDate: params.startDate,
     endDate: params.endDate,
+    startTime: params.startTime,
+    endTime: params.endTime,
     todayJst,
     notifyMode: params.selectedMode,
     channels: params.notifyChannels,
@@ -92,6 +99,8 @@ export const commitAbsenceRegistration = async (
     absenceType: DEFAULT_ABSENCE_TYPE,
     startDate: params.startDate,
     endDate: params.endDate,
+    startTime: params.startTime,
+    endTime: params.endTime,
     notifyChannels: [...new Set(params.notifyChannels)],
     notifyUsers: [...new Set(params.notifyUsers)],
     note: params.note || undefined
@@ -101,6 +110,9 @@ export const commitAbsenceRegistration = async (
   try {
     record = await createAbsence(config, recordInput);
   } catch (error) {
+    if (error instanceof DbSchemaMismatchError) {
+      return { ok: false, error: ABSENCE_TIME_SCHEMA_USER_MESSAGE, errorBlockId: "start_time_block" };
+    }
     const message = error instanceof Error ? error.message : String(error);
     console.error(
       JSON.stringify({

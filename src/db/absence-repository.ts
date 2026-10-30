@@ -4,8 +4,23 @@ import { isSlackChannelId } from "../domain/absence-range";
 import { getDb } from "./client";
 import { serializeJsonArray } from "./json-columns";
 import { rowToAbsenceRecord, type AbsenceRow } from "./row-mapper";
+import { checkAbsenceTimeSchema, DbSchemaMismatchError } from "./schema-check";
 
 const nowIso = (): string => new Date().toISOString();
+
+const hasStoredTime = (record: { startTime?: string; endTime?: string }): boolean =>
+  Boolean(record.startTime || record.endTime);
+
+const assertTimeColumnsWhenNeeded = async (
+  config: AppConfig,
+  record: { startTime?: string; endTime?: string }
+): Promise<boolean> => {
+  const ready = (await checkAbsenceTimeSchema(config)) === "ok";
+  if (!ready && hasStoredTime(record)) {
+    throw new DbSchemaMismatchError();
+  }
+  return ready;
+};
 
 export const createAbsence = async (
   config: AppConfig,
@@ -14,26 +29,35 @@ export const createAbsence = async (
   const db = getDb(config);
   const id = record.itemId && record.itemId.length > 0 ? record.itemId : crypto.randomUUID();
   const timestamp = nowIso();
-  await db
-    .prepare(
-      `INSERT INTO absences (
+  const withTime = await assertTimeColumnsWhenNeeded(config, record);
+  const statement = withTime
+    ? db.prepare(
+        `INSERT INTO absences (
+        id, target_user, start_date, end_date, absence_type,
+        notify_channels, notify_users, note, start_time, end_time, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+    : db.prepare(
+        `INSERT INTO absences (
         id, target_user, start_date, end_date, absence_type,
         notify_channels, notify_users, note, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .bind(
-      id,
-      record.targetUser,
-      record.startDate,
-      record.endDate,
-      record.absenceType ?? DEFAULT_ABSENCE_TYPE,
-      serializeJsonArray(record.notifyChannels),
-      serializeJsonArray(record.notifyUsers),
-      record.note ?? null,
-      timestamp,
-      timestamp
-    )
-    .run();
+      );
+  const values = [
+    id,
+    record.targetUser,
+    record.startDate,
+    record.endDate,
+    record.absenceType ?? DEFAULT_ABSENCE_TYPE,
+    serializeJsonArray(record.notifyChannels),
+    serializeJsonArray(record.notifyUsers),
+    record.note ?? null
+  ];
+  if (withTime) {
+    values.push(record.startTime ?? null, record.endTime ?? null);
+  }
+  values.push(timestamp, timestamp);
+  await statement.bind(...values).run();
   const created = await getAbsenceById(config, id);
   if (!created) throw new Error("absence create verification failed");
   return created;
@@ -41,25 +65,34 @@ export const createAbsence = async (
 
 export const updateAbsence = async (config: AppConfig, record: AbsenceRecord): Promise<void> => {
   const db = getDb(config);
-  await db
-    .prepare(
-      `UPDATE absences SET
+  const withTime = await assertTimeColumnsWhenNeeded(config, record);
+  const statement = withTime
+    ? db.prepare(
+        `UPDATE absences SET
+        target_user = ?, start_date = ?, end_date = ?, absence_type = ?,
+        notify_channels = ?, notify_users = ?, note = ?, start_time = ?, end_time = ?, updated_at = ?
+       WHERE id = ?`
+      )
+    : db.prepare(
+        `UPDATE absences SET
         target_user = ?, start_date = ?, end_date = ?, absence_type = ?,
         notify_channels = ?, notify_users = ?, note = ?, updated_at = ?
        WHERE id = ?`
-    )
-    .bind(
-      record.targetUser,
-      record.startDate,
-      record.endDate,
-      record.absenceType ?? DEFAULT_ABSENCE_TYPE,
-      serializeJsonArray(record.notifyChannels),
-      serializeJsonArray(record.notifyUsers),
-      record.note ?? null,
-      nowIso(),
-      record.itemId
-    )
-    .run();
+      );
+  const values: unknown[] = [
+    record.targetUser,
+    record.startDate,
+    record.endDate,
+    record.absenceType ?? DEFAULT_ABSENCE_TYPE,
+    serializeJsonArray(record.notifyChannels),
+    serializeJsonArray(record.notifyUsers),
+    record.note ?? null
+  ];
+  if (withTime) {
+    values.push(record.startTime ?? null, record.endTime ?? null);
+  }
+  values.push(nowIso(), record.itemId);
+  await statement.bind(...values).run();
 };
 
 export const deleteAbsenceById = async (config: AppConfig, id: string): Promise<void> => {
@@ -225,25 +258,35 @@ export const insertAbsenceOrIgnore = async (
   record: AbsenceRecord,
   timestamps: { createdAt: string; updatedAt: string }
 ): Promise<boolean> => {
-  const result = await getDb(config)
-    .prepare(
-      `INSERT OR IGNORE INTO absences (
+  const withTime = await assertTimeColumnsWhenNeeded(config, record);
+  const db = getDb(config);
+  const statement = withTime
+    ? db.prepare(
+        `INSERT OR IGNORE INTO absences (
+        id, target_user, start_date, end_date, absence_type,
+        notify_channels, notify_users, note, start_time, end_time, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+    : db.prepare(
+        `INSERT OR IGNORE INTO absences (
         id, target_user, start_date, end_date, absence_type,
         notify_channels, notify_users, note, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .bind(
-      record.itemId,
-      record.targetUser,
-      record.startDate,
-      record.endDate,
-      record.absenceType ?? DEFAULT_ABSENCE_TYPE,
-      serializeJsonArray(record.notifyChannels),
-      serializeJsonArray(record.notifyUsers),
-      record.note ?? null,
-      timestamps.createdAt,
-      timestamps.updatedAt
-    )
-    .run();
+      );
+  const values: unknown[] = [
+    record.itemId,
+    record.targetUser,
+    record.startDate,
+    record.endDate,
+    record.absenceType ?? DEFAULT_ABSENCE_TYPE,
+    serializeJsonArray(record.notifyChannels),
+    serializeJsonArray(record.notifyUsers),
+    record.note ?? null
+  ];
+  if (withTime) {
+    values.push(record.startTime ?? null, record.endTime ?? null);
+  }
+  values.push(timestamps.createdAt, timestamps.updatedAt);
+  const result = await statement.bind(...values).run();
   return (result.meta.changes ?? 0) > 0;
 };

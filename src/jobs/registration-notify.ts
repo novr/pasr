@@ -59,6 +59,8 @@ export const runRegistrationNotifyAndAck = async (
       targetUser: params.record.targetUser,
       startDate: params.record.startDate,
       endDate: params.record.endDate,
+      startTime: params.record.startTime,
+      endTime: params.record.endTime,
       note: params.record.note
     });
 
@@ -125,6 +127,8 @@ export const runRegistrationNotifyAndAck = async (
     const ackText = buildRegistrationSuccessEphemeral({
       startDate: params.record.startDate,
       endDate: params.record.endDate,
+      startTime: params.record.startTime,
+      endTime: params.record.endTime,
       selectedMode: params.selectedMode,
       resolvedMode: params.resolvedMode
     });

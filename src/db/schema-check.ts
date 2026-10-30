@@ -5,6 +5,7 @@ export type DbSchemaStatus = "ok" | "schema_missing";
 export type ChannelNotifySettingsSchemaStatus = "ok" | "schema_missing";
 export type SlackUserOAuthSchemaStatus = "ok" | "schema_missing";
 export type MemberMasterStatusPrefsSchemaStatus = "ok" | "schema_missing";
+export type AbsenceTimeSchemaStatus = "ok" | "schema_missing";
 
 const CHANNEL_NOTIFY_SETTINGS_TABLE = "channel_notify_settings";
 const SLACK_USER_OAUTH_TABLE = "slack_user_oauth";
@@ -60,6 +61,16 @@ export const checkMemberMasterStatusPrefsSchema = async (
   const hasStatusEmoji = (row.results ?? []).some((column) => column.name === "status_emoji");
   return hasStatusDefaultText && hasStatusEmoji ? "ok" : "schema_missing";
 };
+
+export const checkAbsenceTimeSchema = async (
+  config: AppConfig
+): Promise<AbsenceTimeSchemaStatus> => {
+  const row = await getDb(config).prepare(`PRAGMA table_info(absences)`).all<{ name: string }>();
+  const names = new Set((row.results ?? []).map((column) => column.name));
+  return names.has("start_time") && names.has("end_time") ? "ok" : "schema_missing";
+};
+
+export const ABSENCE_TIME_SCHEMA_USER_MESSAGE = "時刻を保存するにはデータベースの更新が必要です。";
 
 export class DbSchemaMismatchError extends Error {
   constructor() {

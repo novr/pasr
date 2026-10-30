@@ -1,6 +1,7 @@
 import type { AppConfig } from "../config";
 import { DEFAULT_ABSENCE_TYPE, findOwnAbsenceByStartDate, type AbsenceRecord } from "../domain/absence";
 import {
+  ABSENCE_TIME_HINT,
   resolveAbsenceEndDate,
   validateAbsenceEdit,
   type AbsenceEditValidationError
@@ -12,8 +13,7 @@ import {
   listAbsencesByUserFuture,
   updateAbsence
 } from "../db/absence-repository";
-import { DbSchemaMismatchError } from "../db/schema-check";
-import { assertDbSchema } from "../db/schema-check";
+import { ABSENCE_TIME_SCHEMA_USER_MESSAGE, assertDbSchema, DbSchemaMismatchError } from "../db/schema-check";
 import { slackApi } from "./api";
 import { ABSENCE_EDIT_OPEN_ACTION_ID } from "./absence-list-blocks";
 import { isAppHomeBlockActions } from "./app-home-context";
@@ -73,6 +73,21 @@ const parseDateValue = (value: unknown): string => {
   return typeof selected === "string" ? selected : "";
 };
 
+const parseTimeValue = (value: unknown): string => {
+  const record = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+  const selected = record?.selected_time;
+  return typeof selected === "string" ? selected.trim() : "";
+};
+
+const timepickerElement = (actionId: string, initialTime?: string): Record<string, unknown> => {
+  const element: Record<string, unknown> = {
+    type: "timepicker",
+    action_id: actionId
+  };
+  if (initialTime) element.initial_time = initialTime;
+  return element;
+};
+
 const parsePlainTextValue = (value: unknown): string => {
   const record = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
   const text = record?.value;
@@ -89,6 +104,10 @@ const formatEditValidationError = (error: AbsenceEditValidationError): string =>
       return "開始日を過去日に変更することはできません。";
     case "invalid_range":
       return "開始日は終了日以前にしてください。";
+    case "invalid_time":
+      return "時刻は HH:MM で指定してください。";
+    case "invalid_time_order":
+      return "日をまたぐなら終了日を翌日にしてください。";
     case "missing_notify_target":
       return "通知チャンネルまたは通知ユーザーを1件以上指定してください。";
     default: {
@@ -131,6 +150,13 @@ export const buildAbsenceEditModalView = (params: {
     },
     {
       type: "input",
+      block_id: "start_time_block",
+      optional: true,
+      label: { type: "plain_text", text: "開始時刻（任意）" },
+      element: timepickerElement("start_time", params.record.startTime)
+    },
+    {
+      type: "input",
       block_id: "end_block",
       optional: true,
       label: { type: "plain_text", text: "終了日" },
@@ -142,6 +168,17 @@ export const buildAbsenceEditModalView = (params: {
     },
     {
       type: "input",
+      block_id: "end_time_block",
+      optional: true,
+      label: { type: "plain_text", text: "終了時刻（任意）" },
+      element: timepickerElement("end_time", params.record.endTime)
+    },
+    {
+      type: "context",
+      elements: [{ type: "mrkdwn", text: ABSENCE_TIME_HINT }]
+    },
+    {
+      type: "input",
       block_id: "note_block",
       optional: true,
       label: { type: "plain_text", text: "詳細（任意）" },
@@ -149,7 +186,10 @@ export const buildAbsenceEditModalView = (params: {
         type: "plain_text_input",
         action_id: "note_input",
         multiline: true,
-        initial_value: toNoteText(params.record.note ?? "")
+        placeholder: { type: "plain_text", text: "例: 通院、有給" },
+        ...(toNoteText(params.record.note ?? "").length > 0
+          ? { initial_value: toNoteText(params.record.note ?? "") }
+          : {})
       }
     },
     {
@@ -266,15 +306,37 @@ const handleEditSubmission = async (
   const values = payload.view?.state?.values ?? {};
   const startDate = parseDateValue(values.start_block?.start_date);
   const endDate = resolveAbsenceEndDate(startDate, parseDateValue(values.end_block?.end_date));
+  const startTimeState = values.start_time_block?.start_time;
+  const endTimeState = values.end_time_block?.end_time;
+  let startTime = parseTimeValue(startTimeState);
+  let endTime = parseTimeValue(endTimeState);
   const note = parsePlainTextValue(values.note_block?.note_input);
   const notifyChannels = parseSelectedChannels(values.channels_block?.notify_channels_select);
   const notifyUsers = parseSelectedUsers(values.users_block?.notify_users_select);
   const { day: todayJst } = getJstDateParts();
 
+  const timesOmitted = startTimeState === undefined || endTimeState === undefined;
+  const resolvedForTimes = timesOmitted
+    ? await resolveOwnAbsenceForEdit(config, metadata.userId, metadata.itemId)
+    : undefined;
+  if (resolvedForTimes && !resolvedForTimes.ok) {
+    return {
+      ok: false,
+      error: formatResolveOwnAbsenceForEditError(resolvedForTimes.reason),
+      errorBlockId: "start_block"
+    };
+  }
+  if (resolvedForTimes?.ok) {
+    if (startTimeState === undefined) startTime = resolvedForTimes.record.startTime ?? "";
+    if (endTimeState === undefined) endTime = resolvedForTimes.record.endTime ?? "";
+  }
+
   const master = await resolveMasterContext(config, metadata.userId);
   const validationError = validateAbsenceEdit({
     startDate,
     endDate,
+    startTime: startTime || undefined,
+    endTime: endTime || undefined,
     todayJst,
     channels: notifyChannels,
     users: notifyUsers,
@@ -289,7 +351,9 @@ const handleEditSubmission = async (
     };
   }
 
-  const resolved = await resolveOwnAbsenceForEdit(config, metadata.userId, metadata.itemId);
+  const resolved = resolvedForTimes?.ok
+    ? resolvedForTimes
+    : await resolveOwnAbsenceForEdit(config, metadata.userId, metadata.itemId);
   if (!resolved.ok) {
     return {
       ok: false,
@@ -304,6 +368,8 @@ const handleEditSubmission = async (
     absenceType: DEFAULT_ABSENCE_TYPE,
     startDate,
     endDate,
+    startTime: startTime || undefined,
+    endTime: endTime || undefined,
     notifyChannels: [...new Set(notifyChannels)],
     notifyUsers: [...new Set(notifyUsers)],
     note: note || undefined
@@ -333,6 +399,9 @@ const handleEditSubmission = async (
       }
     };
   } catch (error) {
+    if (error instanceof DbSchemaMismatchError) {
+      return { ok: false, error: ABSENCE_TIME_SCHEMA_USER_MESSAGE, errorBlockId: "start_time_block" };
+    }
     const message = error instanceof Error ? error.message : String(error);
     return {
       ok: false,

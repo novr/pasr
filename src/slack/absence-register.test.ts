@@ -66,6 +66,31 @@ describe("buildAbsenceRegisterModalView", () => {
     expect((startBlock?.element as Record<string, unknown>)?.initial_date).toBeUndefined();
     expect((noteBlock?.element as Record<string, unknown>)?.initial_value).toBeUndefined();
   });
+
+  it("places optional timepickers under the dates without initial times", () => {
+    const view = buildAbsenceRegisterModalView(baseParams);
+    const blocks = view.blocks as Array<Record<string, unknown>>;
+    const blockIds = blocks.map((block) => block.block_id).filter((id) => typeof id === "string");
+    expect(blockIds).toEqual([
+      "start_block",
+      "start_time_block",
+      "end_block",
+      "end_time_block",
+      "note_block",
+      "channels_block",
+      "users_block",
+      "notify_block"
+    ]);
+    const startTime = blocks.find((block) => block.block_id === "start_time_block");
+    expect(startTime?.optional).toBe(true);
+    expect((startTime?.element as Record<string, unknown>)?.initial_time).toBeUndefined();
+    const hint = blocks.find(
+      (block) =>
+        block.type === "context" &&
+        JSON.stringify(block.elements).includes("開始時刻を初日、終了時刻を最終日だけ案内")
+    );
+    expect(hint).toBeDefined();
+  });
 });
 
 describe("handleAbsenceRegisterInteraction", () => {
