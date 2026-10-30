@@ -24,6 +24,8 @@
 - `0002` 未適用: daily CH/DM は継続。`/pasr channel-config` / `/pasr-admin channel-config` のみ失敗
 - `0003` 未適用: OAuth UI・Status 同期をスキップ。CH/DM は継続
 - `0004` 未適用: Status ユーザー設定の保存・参照をスキップ（org Variable のみ）。CH/DM は継続
+- `0005` 未適用: 時刻の保存をスキップ（両方空の終日として継続）。時刻つきの登録・編集だけ失敗。CH/DM は継続
+- `start_time` / `end_time` は JST `HH:MM` の任意。両方空は終日。補完した 00:00 / 日の終わりは保存も表示もしない。同じ日の前後判定だけ、空の開始は 00:00、空の終了は日の終わりとして見る。日次・calendar は開始日に開始時刻、終了日に終了時刻だけ。間の日は時刻なし。その日を日次に出すかは日付のまま。Status は日付単位のまま。mention は時刻を構造化しない
 
 ## 登録通知（`src/domain/absence-registration.ts`）
 

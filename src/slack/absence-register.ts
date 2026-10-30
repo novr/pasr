@@ -1,5 +1,6 @@
 import type { AppConfig } from "../config";
 import {
+  ABSENCE_TIME_HINT,
   formatRegistrationNotifyModeLabel,
   parseRegistrationNotifyMode,
   REGISTRATION_NOTIFY_SELECT_OPTIONS,
@@ -77,6 +78,12 @@ const parseStaticSelectValue = (value: unknown): string => {
   return typeof optionRecord.value === "string" ? optionRecord.value : "";
 };
 
+const parseTimeValue = (value: unknown): string => {
+  const record = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+  const selected = record?.selected_time;
+  return typeof selected === "string" ? selected.trim() : "";
+};
+
 const parsePlainTextValue = (value: unknown): string => {
   const record = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
   const text = record?.value;
@@ -131,7 +138,7 @@ export const buildAbsenceRegisterModalView = (params: {
     type: "plain_text_input",
     action_id: "note_input",
     multiline: true,
-    placeholder: { type: "plain_text", text: "例: 通院のため午後から、午前中のみ など" }
+    placeholder: { type: "plain_text", text: "例: 通院、有給" }
   };
   if (params.initialNote) {
     noteElement.initial_value = params.initialNote;
@@ -169,10 +176,34 @@ export const buildAbsenceRegisterModalView = (params: {
     },
     {
       type: "input",
+      block_id: "start_time_block",
+      optional: true,
+      label: { type: "plain_text", text: "開始時刻（任意）" },
+      element: {
+        type: "timepicker",
+        action_id: "start_time"
+      }
+    },
+    {
+      type: "input",
       block_id: "end_block",
       optional: true,
       label: { type: "plain_text", text: "終了日" },
       element: endDateElement
+    },
+    {
+      type: "input",
+      block_id: "end_time_block",
+      optional: true,
+      label: { type: "plain_text", text: "終了時刻（任意）" },
+      element: {
+        type: "timepicker",
+        action_id: "end_time"
+      }
+    },
+    {
+      type: "context",
+      elements: [{ type: "mrkdwn", text: ABSENCE_TIME_HINT }]
     },
     {
       type: "input",
@@ -285,6 +316,8 @@ const handleAbsenceRegisterSubmission = async (
   const values = payload.view?.state?.values ?? {};
   const startDate = parseDateValue(values.start_block?.start_date);
   const endDate = resolveAbsenceEndDate(startDate, parseDateValue(values.end_block?.end_date));
+  const startTime = parseTimeValue(values.start_time_block?.start_time);
+  const endTime = parseTimeValue(values.end_time_block?.end_time);
   const note = parsePlainTextValue(values.note_block?.note_input);
   const notifyChannels = parseSelectedChannels(values.channels_block?.notify_channels_select);
   const notifyUsers = parseSelectedUsers(values.users_block?.notify_users_select);
@@ -298,6 +331,8 @@ const handleAbsenceRegisterSubmission = async (
     channelId: metadata.channelId,
     startDate,
     endDate,
+    startTime: startTime || undefined,
+    endTime: endTime || undefined,
     note: note || undefined,
     notifyChannels,
     notifyUsers,

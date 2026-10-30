@@ -554,4 +554,52 @@ describe("runDailyNotify", () => {
     expect(postChannelMessageMock).toHaveBeenCalledWith(expect.anything(), "C1", expect.anything());
     weekdaySpy.mockRestore();
   });
+
+  it("puts the start time on the start day and the end time on the end day", async () => {
+    const kv = createMockKv();
+    const config = createTestConfig(kv);
+    await upsertMemberMaster(config, {
+      targetUser: "U_TIME",
+      active: true,
+      defaultNotifyChannels: [],
+      defaultNotifyUsers: [],
+      defaultRegistrationNotify: "none"
+    });
+    await createAbsence(config, {
+      targetUser: "U_TIME",
+      startDate: "2026-06-24",
+      endDate: "2026-06-26",
+      startTime: "18:00",
+      endTime: "13:00",
+      notifyChannels: ["C_TIME"],
+      notifyUsers: ["U_WATCH"],
+      note: "早退",
+      absenceType: "absence"
+    });
+
+    const textFor = (channel: string): string => {
+      const calls = postChannelMessageMock.mock.calls as unknown[][];
+      const call = calls.find((entry) => entry[1] === channel);
+      return String(call?.[2] ?? "");
+    };
+
+    await runDailyNotify(config, { runId: "run_time_start", trigger: "manual" });
+    expect(textFor("C_TIME")).toContain("18:00から");
+    expect(textFor("C_TIME")).not.toContain("13:00");
+    expect(textFor("D_DM")).toContain("18:00から");
+    expect(textFor("D_DM")).not.toContain("13:00");
+
+    postChannelMessageMock.mockClear();
+    vi.setSystemTime(new Date("2026-06-25T00:30:00.000Z"));
+    await runDailyNotify(config, { runId: "run_time_middle", trigger: "manual" });
+    expect(textFor("C_TIME")).toContain("早退");
+    expect(textFor("C_TIME")).not.toContain("18:00");
+    expect(textFor("C_TIME")).not.toContain("13:00");
+
+    postChannelMessageMock.mockClear();
+    vi.setSystemTime(new Date("2026-06-26T00:30:00.000Z"));
+    await runDailyNotify(config, { runId: "run_time_end", trigger: "manual" });
+    expect(textFor("C_TIME")).toContain("13:00まで");
+    expect(textFor("C_TIME")).not.toContain("18:00");
+  });
 });

@@ -19,6 +19,8 @@ type AbsenceStore = {
   notify_channels: string;
   notify_users: string;
   note: string | null;
+  start_time: string | null;
+  end_time: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -74,6 +76,26 @@ export const createMockD1 = (options: MockD1Options = {}): D1Database => {
   const execute = (statement: BoundStatement): { results: unknown[]; run: RunResult } => {
     const sql = normalizeSql(statement.sql);
     const p = statement.params;
+
+    if (sql.startsWith("PRAGMA table_info(absences)")) {
+      return {
+        results: [
+          { name: "id" },
+          { name: "target_user" },
+          { name: "start_date" },
+          { name: "end_date" },
+          { name: "absence_type" },
+          { name: "notify_channels" },
+          { name: "notify_users" },
+          { name: "note" },
+          { name: "start_time" },
+          { name: "end_time" },
+          { name: "created_at" },
+          { name: "updated_at" }
+        ],
+        run: { success: true, meta: {} }
+      };
+    }
 
     if (sql.startsWith("PRAGMA table_info(member_master)")) {
       return {
@@ -310,6 +332,7 @@ export const createMockD1 = (options: MockD1Options = {}): D1Database => {
       if (ignore && absences.has(id)) {
         return { results: [], run: { success: true, meta: { changes: 0 } } };
       }
+      const withTime = sql.includes("start_time");
       const row: AbsenceStore = {
         id,
         target_user: String(p[1]),
@@ -319,15 +342,18 @@ export const createMockD1 = (options: MockD1Options = {}): D1Database => {
         notify_channels: String(p[5]),
         notify_users: String(p[6]),
         note: p[7] == null ? null : String(p[7]),
-        created_at: String(p[8]),
-        updated_at: String(p[9])
+        start_time: withTime && p[8] != null ? String(p[8]) : null,
+        end_time: withTime && p[9] != null ? String(p[9]) : null,
+        created_at: String(withTime ? p[10] : p[8]),
+        updated_at: String(withTime ? p[11] : p[9])
       };
       absences.set(id, row);
       return { results: [], run: { success: true, meta: { changes: 1 } } };
     }
 
     if (sql.startsWith("UPDATE absences SET")) {
-      const id = String(p[8]);
+      const withTime = sql.includes("start_time");
+      const id = String(withTime ? p[10] : p[8]);
       const existing = absences.get(id);
       if (!existing) return { results: [], run: { success: true, meta: { changes: 0 } } };
       absences.set(id, {
@@ -339,8 +365,10 @@ export const createMockD1 = (options: MockD1Options = {}): D1Database => {
         notify_channels: String(p[4]),
         notify_users: String(p[5]),
         note: p[6] == null ? null : String(p[6]),
+        start_time: withTime && p[7] != null ? String(p[7]) : null,
+        end_time: withTime && p[8] != null ? String(p[8]) : null,
         created_at: existing.created_at,
-        updated_at: String(p[7])
+        updated_at: String(withTime ? p[9] : p[7])
       });
       return { results: [], run: { success: true, meta: { changes: 1 } } };
     }

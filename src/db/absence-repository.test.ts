@@ -25,6 +25,23 @@ describe("absence-repository", () => {
     const loaded = await getAbsenceById(config, created.itemId);
     expect(loaded?.targetUser).toBe("U1");
     expect(loaded?.notifyChannels).toEqual(["C1"]);
+    expect(loaded?.startTime).toBeUndefined();
+    expect(loaded?.endTime).toBeUndefined();
+  });
+
+  it("stores only the clock times that were entered", async () => {
+    const config = createTestConfig(createMockKv());
+    const created = await createAbsence(config, {
+      targetUser: "U1",
+      startDate: "2026-10-30",
+      endDate: "2026-11-02",
+      startTime: "18:00",
+      notifyChannels: ["C1"],
+      notifyUsers: []
+    });
+    const loaded = await getAbsenceById(config, created.itemId);
+    expect(loaded?.startTime).toBe("18:00");
+    expect(loaded?.endTime).toBeUndefined();
   });
 
   it("lists future absences for user", async () => {

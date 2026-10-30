@@ -1,5 +1,5 @@
 import { DEFAULT_ABSENCE_TYPE, type AbsenceRecord } from "../domain/absence";
-import type { RegistrationNotifyMode } from "../domain/absence-registration";
+import { normalizeStoredClockTime, type RegistrationNotifyMode } from "../domain/absence-registration";
 import { deserializeJsonArray } from "./json-columns";
 
 export type AbsenceRow = {
@@ -11,6 +11,8 @@ export type AbsenceRow = {
   notify_channels: string;
   notify_users: string;
   note: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -34,6 +36,8 @@ export const rowToAbsenceRecord = (row: AbsenceRow): AbsenceRecord => ({
   endDate: row.end_date,
   notifyChannels: deserializeJsonArray(row.notify_channels),
   notifyUsers: deserializeJsonArray(row.notify_users),
+  startTime: normalizeStoredClockTime(row.start_time),
+  endTime: normalizeStoredClockTime(row.end_time),
   note: row.note ?? undefined
 });
 

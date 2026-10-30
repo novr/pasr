@@ -8,6 +8,8 @@ export type AbsenceRecord = {
   endDate: string;
   notifyChannels: string[];
   notifyUsers: string[];
+  startTime?: string;
+  endTime?: string;
   note?: string;
 };
 

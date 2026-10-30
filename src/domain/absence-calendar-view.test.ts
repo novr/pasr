@@ -11,6 +11,8 @@ const record = (params: {
   startDate: string;
   endDate: string;
   note?: string;
+  startTime?: string;
+  endTime?: string;
 }): AbsenceRecord => ({
   itemId: params.itemId,
   targetUser: params.targetUser,
@@ -18,6 +20,8 @@ const record = (params: {
   endDate: params.endDate,
   notifyChannels: ["C1"],
   notifyUsers: [],
+  startTime: params.startTime,
+  endTime: params.endTime,
   note: params.note
 });
 
@@ -60,10 +64,41 @@ describe("flattenAbsenceCalendarDayGroups", () => {
     const lines = flattenAbsenceCalendarDayGroups([
       {
         date: "2026-08-10",
-        entries: [{ itemId: "A1", targetUser: "U1", note: "通院" }]
+        entries: [
+          {
+            itemId: "A1",
+            targetUser: "U1",
+            note: "通院",
+            startDate: "2026-08-10",
+            endDate: "2026-08-10"
+          }
+        ]
       }
     ]);
     expect(lines[0]).toBe("*2026-08-10 (月)*");
     expect(lines[1]).toBe("• <@U1> 通院");
+  });
+
+  it("shows the start time on the first day and the end time on the last day", () => {
+    const lines = flattenAbsenceCalendarDayGroups(
+      groupAbsencesByJstDay(
+        [
+          record({
+            itemId: "A1",
+            targetUser: "U1",
+            startDate: "2026-10-30",
+            endDate: "2026-11-02",
+            note: "通院",
+            startTime: "18:00",
+            endTime: "13:00"
+          })
+        ],
+        "2026-10-30",
+        "2026-11-02"
+      )
+    );
+    expect(lines[1]).toBe("• <@U1> 18:00から 通院");
+    expect(lines[3]).toBe("• <@U1> 通院");
+    expect(lines[lines.length - 1]).toBe("• <@U1> 13:00まで 通院");
   });
 });
